@@ -27,12 +27,13 @@ const RENDER_TYPES: { id: RenderRequestType; label: string; desc: string }[] = [
 ];
 
 const STATUS_CONFIG: Record<RenderRequest["status"], { label: string; style: string; step: number }> = {
-  submitted:          { label: "Submitted",          style: "text-white/50 bg-white/6 border-white/10",          step: 1 },
-  in_queue:           { label: "In Queue",           style: "text-amber-400 bg-amber-500/10 border-amber-500/20", step: 2 },
-  in_production:      { label: "In Production",      style: "text-blue-400 bg-blue-500/10 border-blue-500/20",   step: 3 },
+  submitted:          { label: "Submitted",          style: "text-white/50 bg-white/6 border-white/12",              step: 1 },
+  in_queue:           { label: "In Queue",           style: "text-amber-400 bg-amber-500/10 border-amber-500/20",    step: 2 },
+  in_production:      { label: "In Production",      style: "text-blue-400 bg-blue-500/10 border-blue-500/20",       step: 3 },
   ready_for_review:   { label: "Ready for Review",   style: "text-violet-400 bg-violet-500/10 border-violet-500/20", step: 4 },
   delivered:          { label: "Delivered",          style: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20", step: 5 },
-  revision_requested: { label: "Revision Requested", style: "text-orange-400 bg-orange-500/10 border-orange-500/20", step: 2 },
+  completed:          { label: "Completed",          style: "text-green-400 bg-green-500/10 border-green-500/20",    step: 5 },
+  revision_requested: { label: "Revision Needed",    style: "text-orange-400 bg-orange-500/10 border-orange-500/20", step: 3 },
 };
 
 const PIPELINE_STEPS = ["Submitted", "In Queue", "In Production", "Ready for Review", "Delivered"];

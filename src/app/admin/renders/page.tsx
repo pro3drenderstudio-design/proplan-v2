@@ -12,7 +12,8 @@ const STATUS_CONFIG: Record<RenderRequestStatus, { label: string; style: string;
   in_queue:           { label: "In Queue",          style: "text-amber-400 bg-amber-500/10 border-amber-500/20",    next: "in_production"    },
   in_production:      { label: "In Production",    style: "text-blue-400 bg-blue-500/10 border-blue-500/20",       next: "ready_for_review" },
   ready_for_review:   { label: "Ready for Review", style: "text-violet-400 bg-violet-500/10 border-violet-500/20", next: "delivered"        },
-  delivered:          { label: "Delivered",        style: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+  delivered:          { label: "Delivered",        style: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20", next: "completed"       },
+  completed:          { label: "Completed",        style: "text-green-400 bg-green-500/10 border-green-500/20" },
   revision_requested: { label: "Revision Needed",  style: "text-orange-400 bg-orange-500/10 border-orange-500/20", next: "in_queue"         },
 };
 
