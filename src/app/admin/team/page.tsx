@@ -11,6 +11,8 @@ const ROLE_STYLE: Record<TeamRole, string> = {
   viewer:           "text-white/50 bg-white/6 border-white/15",
   customer_service: "text-amber-300 bg-amber-500/15 border-amber-400/30",
   artist:           "text-pink-300 bg-pink-500/15 border-pink-400/30",
+  builder_admin:    "text-sky-300 bg-sky-500/15 border-sky-400/30",
+  builder_member:   "text-teal-300 bg-teal-500/15 border-teal-400/30",
 };
 const ROLE_LABEL: Record<TeamRole, string> = {
   super_admin:      "Super Admin",
@@ -19,6 +21,8 @@ const ROLE_LABEL: Record<TeamRole, string> = {
   viewer:           "Viewer",
   customer_service: "Customer Service",
   artist:           "3D Artist",
+  builder_admin:    "Builder Admin",
+  builder_member:   "Builder Member",
 };
 
 function timeAgo(s: string) {

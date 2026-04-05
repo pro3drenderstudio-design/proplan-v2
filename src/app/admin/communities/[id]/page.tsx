@@ -50,6 +50,28 @@ export default function CommunityEditorPage() {
   const imgRef      = useRef<HTMLImageElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Share & Publish
+  const [copiedShare, setCopiedShare] = useState<"url" | "embed" | null>(null);
+
+  function copyShareUrl() {
+    if (!community?.slug || !community?.company_slug) return;
+    const url = `${window.location.origin}/community/${community.company_slug}/${community.slug}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedShare("url");
+      setTimeout(() => setCopiedShare(null), 2000);
+    });
+  }
+
+  function copyEmbedCode() {
+    if (!community?.slug || !community?.company_slug) return;
+    const url = `${window.location.origin}/community/${community.company_slug}/${community.slug}`;
+    const embed = `<iframe src="${url}" width="100%" height="700" frameborder="0" allowfullscreen style="border-radius:12px;"></iframe>`;
+    navigator.clipboard.writeText(embed).then(() => {
+      setCopiedShare("embed");
+      setTimeout(() => setCopiedShare(null), 2000);
+    });
+  }
+
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(""), 3000); }
 
   useEffect(() => {
@@ -609,6 +631,47 @@ export default function CommunityEditorPage() {
                 </div>
               )}
             </div>
+
+            {/* Share & Publish */}
+            {community.slug && community.company_slug && (
+              <div className="border-t border-white/8 p-4 flex-shrink-0 space-y-2">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-3">Share & Publish</p>
+                <button
+                  onClick={copyShareUrl}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/4 border border-white/8 hover:bg-white/8 hover:border-white/14 transition-colors text-left"
+                >
+                  <span className="text-xs font-medium text-white/60">
+                    {copiedShare === "url" ? "Copied!" : "Copy Configurator URL"}
+                  </span>
+                  {copiedShare === "url" ? (
+                    <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5 text-white/30 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  onClick={copyEmbedCode}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/4 border border-white/8 hover:bg-white/8 hover:border-white/14 transition-colors text-left"
+                >
+                  <span className="text-xs font-medium text-white/60">
+                    {copiedShare === "embed" ? "Copied!" : "Copy Embed Code"}
+                  </span>
+                  {copiedShare === "embed" ? (
+                    <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5 text-white/30 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

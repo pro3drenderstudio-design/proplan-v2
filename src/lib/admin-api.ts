@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { Project, CategoryWithOptions, PhaseColumn, ProjectRequest, Lead, Builder, TeamMember, TeamRole, SupportTicket, TicketStatus, Community, Lot, CommunityWithLots } from "@/types/database";
+import { Project, CategoryWithOptions, PhaseColumn, ProjectRequest, Lead, Builder, TeamMember, TeamRole, SupportTicket, TicketStatus, Community, Lot, CommunityWithLots, RenderRequest, RenderRequestStatus, Plan, RenderMessageAttachment } from "@/types/database";
 import { CameraCoords } from "@/utils/sketchfab-camera";
 
 // Supabase @postgrest-js v2 conditional type inference only works with generated types.
@@ -412,8 +412,129 @@ export async function updateLot(
   return true;
 }
 
+// ── Plans ─────────────────────────────────────────────────────────────────────
+
+export async function getPlans(): Promise<Plan[]> {
+  const { data, error } = await supabase.from("plans").select("*").order("sort_order");
+  if (error) { console.error("getPlans:", error.message); return []; }
+  return data as Plan[];
+}
+
+export async function updatePlan(
+  id: string,
+  updates: Partial<Pick<Plan,
+    "rendering_credits_monthly" | "ai_credits_monthly" | "max_projects" |
+    "seats_included" | "max_storage_gb" | "includes_sitemaps" |
+    "price_monthly" | "price_annually" |
+    "stripe_price_id_monthly" | "stripe_price_id_annually" | "is_active"
+  >>
+): Promise<boolean> {
+  const { error } = await (supabase.from("plans") as AnyQuery).update(updates).eq("id", id);
+  if (error) { console.error("updatePlan:", error.message); return false; }
+  return true;
+}
+
 export async function deleteLot(id: string): Promise<boolean> {
   const { error } = await (supabase.from("lots") as AnyQuery).delete().eq("id", id);
   if (error) { console.error("deleteLot:", error.message); return false; }
   return true;
+}
+
+// ── Render Requests (admin) ───────────────────────────────────────────────────
+
+export interface RenderRequestWithBuilder extends RenderRequest {
+  builder_name: string;
+  project_name: string | null;
+}
+
+export async function getAllRenderRequests(): Promise<RenderRequestWithBuilder[]> {
+  const { data, error } = await (supabase.from("render_requests") as AnyQuery)
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) { console.error("getAllRenderRequests:", error.message); return []; }
+  const reqs = (data ?? []) as RenderRequest[];
+  // Enrich with builder + project names
+  const builderIds = [...new Set(reqs.map(r => r.builder_id))];
+  const projectIds = [...new Set(reqs.map(r => r.project_id).filter(Boolean))] as string[];
+  const [{ data: builders }, { data: projects }] = await Promise.all([
+    (supabase.from("builders") as AnyQuery).select("id, company_name").in("id", builderIds),
+    projectIds.length > 0
+      ? (supabase.from("projects") as AnyQuery).select("id, name").in("id", projectIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+  const builderMap = Object.fromEntries((builders ?? []).map((b: { id: string; company_name: string }) => [b.id, b.company_name]));
+  const projectMap = Object.fromEntries((projects ?? []).map((p: { id: string; name: string }) => [p.id, p.name]));
+  return reqs.map(r => ({
+    ...r,
+    builder_name: builderMap[r.builder_id] ?? "Unknown",
+    project_name: r.project_id ? (projectMap[r.project_id] ?? null) : null,
+  }));
+}
+
+export async function updateRenderRequestStatus(
+  id: string,
+  status: RenderRequestStatus,
+  updates?: { admin_notes?: string; assigned_to?: string; deliverable_urls?: string[]; delivered_at?: string },
+): Promise<boolean> {
+  const payload: Record<string, unknown> = { status, ...updates };
+  if (status === "delivered" && !payload.delivered_at) {
+    payload.delivered_at = new Date().toISOString();
+  }
+  const { error } = await (supabase.from("render_requests") as AnyQuery)
+    .update(payload)
+    .eq("id", id);
+  if (error) { console.error("updateRenderRequestStatus:", error.message); return false; }
+  return true;
+}
+
+// ── Render Request Detail (admin) ─────────────────────────────────────────────
+
+export async function getRenderRequestByIdAdmin(id: string): Promise<RenderRequestWithBuilder | null> {
+  const { data, error } = await (supabase.from("render_requests") as AnyQuery)
+    .select("*").eq("id", id).single();
+  if (error) { console.error("getRenderRequestByIdAdmin:", error.message); return null; }
+  const req = data as RenderRequest;
+  // enrich builder name
+  const { data: builder } = await (supabase as AnyQuery)
+    .from("builders").select("company_name").eq("id", req.builder_id).single();
+  let project_name: string | null = null;
+  if (req.project_id) {
+    const { data: proj } = await (supabase as AnyQuery)
+      .from("projects").select("name").eq("id", req.project_id).single();
+    project_name = proj?.name ?? null;
+  }
+  return { ...req, builder_name: builder?.company_name ?? "Unknown", project_name };
+}
+
+export async function proposeCompletionDate(requestId: string, date: string): Promise<boolean> {
+  const res = await fetch(`/api/render-requests/${requestId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ proposed_completion_date: date, completion_date_status: "proposed" }),
+  });
+  return res.ok;
+}
+
+export async function sendAdminMessage(
+  requestId: string,
+  senderId: string,
+  senderName: string,
+  body: string | null,
+  attachments: RenderMessageAttachment[],
+  isDelivery: boolean = false,
+): Promise<import("@/types/database").RenderMessage | null> {
+  const res = await fetch(`/api/render-messages/${requestId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sender_type: "admin",
+      sender_id:   senderId,
+      sender_name: senderName,
+      body,
+      attachments,
+      is_delivery: isDelivery,
+    }),
+  });
+  if (!res.ok) return null;
+  return res.json();
 }

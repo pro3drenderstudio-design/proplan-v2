@@ -9,7 +9,11 @@ import {
   createCategory, updateCategory, deleteCategory,
   createOption, updateOption, deleteOption,
 } from "@/lib/builder-api";
-import { Project, CategoryWithOptions, Option, ProjectFile } from "@/types/database";
+import { Project, CategoryWithOptions, Option, ProjectFile, ProjectMessage, ProjectMessageAttachment } from "@/types/database";
+import { supabase } from "@/lib/supabase";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyQuery = any;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -113,7 +117,18 @@ export default function ProjectDetailClient({ id }: { id: string }) {
   const [requestNote,   setRequestNote]   = useState("");
   const [requestingUpd, setRequestingUpd] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef  = useRef<HTMLInputElement>(null);
+  const chatFileRef   = useRef<HTMLInputElement>(null);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  // Chat state
+  const [chatMsgs,      setChatMsgs]      = useState<ProjectMessage[]>([]);
+  const [chatBody,      setChatBody]      = useState("");
+  const [chatAtts,      setChatAtts]      = useState<ProjectMessageAttachment[]>([]);
+  const [chatUploading, setChatUploading] = useState(false);
+  const [chatSending,   setChatSending]   = useState(false);
+  const [builderId,     setBuilderId]     = useState("");
+  const [senderName,    setSenderName]    = useState("Builder");
 
   // Load all data
   useEffect(() => {
@@ -128,6 +143,64 @@ export default function ProjectDetailClient({ id }: { id: string }) {
       setLoading(false);
     });
   }, [id]);
+
+  // Chat identity + polling
+  useEffect(() => {
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return;
+      const { data: profile } = await (supabase as AnyQuery)
+        .from("profiles").select("full_name, builder_id").eq("id", user.id).single();
+      setSenderName(profile?.full_name ?? "Builder");
+      setBuilderId(profile?.builder_id ?? user.id);
+    });
+    const load = () => fetch(`/api/project-messages/${id}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(msgs => setChatMsgs(Array.isArray(msgs) ? msgs : []))
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, [id]);
+
+  useEffect(() => { chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMsgs]);
+
+  async function handleChatFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    setChatUploading(true);
+    const results = await Promise.all(files.map(async file => {
+      const fd = new FormData(); fd.append("file", file);
+      const res = await fetch("/api/upload/render-attachment", { method: "POST", body: fd });
+      return res.ok ? res.json() as Promise<ProjectMessageAttachment> : null;
+    }));
+    setChatAtts(prev => [...prev, ...(results.filter(Boolean) as ProjectMessageAttachment[])]);
+    setChatUploading(false);
+    if (chatFileRef.current) chatFileRef.current.value = "";
+  }
+
+  async function handleChatSend(e: React.FormEvent) {
+    e.preventDefault();
+    const bodyTrim = chatBody.trim();
+    if (!bodyTrim && !chatAtts.length) return;
+    setChatSending(true);
+    const res = await fetch(`/api/project-messages/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sender_type: "builder",
+        sender_id:   builderId,
+        sender_name: senderName,
+        body:        bodyTrim || null,
+        attachments: chatAtts,
+      }),
+    });
+    if (res.ok) {
+      const newMsg = await res.json() as ProjectMessage;
+      setChatMsgs(prev => [...prev, newMsg]);
+      setChatBody(""); setChatAtts([]);
+    }
+    setChatSending(false);
+  }
 
   function showToast(msg: string) {
     setToast(msg);
@@ -353,7 +426,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
       </div>
 
       {/* ── Two-column layout ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
 
         {/* ── Left: Main content ── */}
         <div className="space-y-5">
@@ -685,23 +758,76 @@ export default function ProjectDetailClient({ id }: { id: string }) {
             </div>
           </div>
 
-          {/* Internal Notes */}
-          <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 p-5">
-            <h3 className="text-[10px] font-semibold uppercase tracking-widest text-white/25 mb-3">Internal Notes</h3>
-            <textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              rows={5}
-              placeholder="Add internal notes about this project…"
-              className="w-full bg-[#141414] border border-white/8 rounded-xl px-3 py-2.5 text-sm text-white/60 placeholder-white/15 focus:outline-none focus:ring-1 focus:ring-blue-500/60 resize-none transition-colors italic"
-            />
-            <button
-              onClick={saveNotes}
-              disabled={savingNotes || notes === (project.notes ?? "")}
-              className="mt-2 w-full py-2 rounded-xl bg-white/6 hover:bg-white/10 disabled:opacity-40 text-white/60 text-xs font-semibold transition-colors border border-white/8"
-            >
-              {savingNotes ? "Saving…" : "Save Note"}
-            </button>
+          {/* Chat */}
+          <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 flex flex-col" style={{ minHeight: "480px" }}>
+            <div className="px-4 py-3 border-b border-white/8 flex-shrink-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">Messages · ProPlan Studio Team</p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ maxHeight: "420px" }}>
+              {chatMsgs.length === 0 && (
+                <p className="text-center text-white/20 text-xs py-8">No messages yet. Send a message to our team.</p>
+              )}
+              {chatMsgs.map(msg => {
+                const isBuilder = msg.sender_type === "builder";
+                const imgs  = msg.attachments.filter(a => a.type.startsWith("image/"));
+                const fls   = msg.attachments.filter(a => !a.type.startsWith("image/"));
+                return (
+                  <div key={msg.id} className={`flex flex-col gap-1 max-w-[90%] ${isBuilder ? "items-end ml-auto" : "items-start mr-auto"}`}>
+                    <div className={`px-3 py-2.5 rounded-2xl text-sm ${isBuilder ? "bg-blue-600/80 text-white rounded-br-sm" : "bg-[#1a1a1a] border border-white/10 text-white/85 rounded-bl-sm"}`}>
+                      {msg.body && <p className="whitespace-pre-wrap">{msg.body}</p>}
+                      {imgs.length > 0 && (
+                        <div className="grid grid-cols-3 gap-1 mt-1.5">
+                          {imgs.map((a, i) => (
+                            <a key={i} href={a.url} target="_blank" rel="noreferrer" className="block rounded-lg overflow-hidden aspect-square bg-white/5 hover:opacity-80">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {fls.map((a, i) => (
+                        <a key={i} href={a.url} target="_blank" rel="noreferrer" download
+                          className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/60 mt-1 hover:text-white/80 transition-colors">
+                          <span className="truncate">{a.name}</span>
+                          <span className="ml-auto text-white/25 flex-shrink-0">{(a.size/1024).toFixed(0)}KB</span>
+                        </a>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-white/20 px-1">{msg.sender_name} · {new Date(msg.created_at).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</p>
+                  </div>
+                );
+              })}
+              <div ref={chatBottomRef} />
+            </div>
+            {chatAtts.length > 0 && (
+              <div className="px-4 pt-2 flex flex-wrap gap-1.5 border-t border-white/6">
+                {chatAtts.map((a, i) => (
+                  <div key={i} className="flex items-center gap-1 bg-white/8 border border-white/10 rounded-lg px-2 py-0.5 text-xs text-white/50">
+                    <span className="truncate max-w-[100px]">{a.name}</span>
+                    <button onClick={() => setChatAtts(prev => prev.filter((_,j) => j !== i))} className="text-white/30 hover:text-white/70">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="p-3 border-t border-white/8 flex-shrink-0">
+              <input ref={chatFileRef} type="file" multiple className="hidden" onChange={handleChatFileSelect} />
+              <form onSubmit={handleChatSend} className="flex items-end gap-2">
+                <button type="button" onClick={() => chatFileRef.current?.click()} disabled={chatUploading}
+                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-white/6 border border-white/10 text-white/30 hover:text-white/60 disabled:opacity-40 transition-colors">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"/>
+                  </svg>
+                </button>
+                <textarea value={chatBody} onChange={e => setChatBody(e.target.value)}
+                  onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); if (!chatSending && !chatUploading && (chatBody.trim() || chatAtts.length)) handleChatSend(e as unknown as React.FormEvent); } }}
+                  placeholder="Message ProPlan Studio…" rows={2}
+                  className="flex-1 bg-[#141414] border border-white/10 rounded-xl px-3 py-2 text-sm text-white/80 placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-blue-500/60 resize-none transition-colors" />
+                <button type="submit" disabled={chatSending || chatUploading || (!chatBody.trim() && !chatAtts.length)}
+                  className="flex-shrink-0 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-bold transition-colors">
+                  {chatSending ? "…" : "Send"}
+                </button>
+              </form>
+            </div>
           </div>
 
         </div>

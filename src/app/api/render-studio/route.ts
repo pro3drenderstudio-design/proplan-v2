@@ -55,6 +55,17 @@ function buildPrompt(body: {
   landscape: string;
   revision?: string;
   isRevision?: boolean;
+  brickColor?: string;
+  roofColor?: string;
+  roofType?: string;
+  shutterColor?: string;
+  doorColor?: string;
+  garageDoorColor?: string;
+  windowTrimColor?: string;
+  trimColor?: string;
+  sidingColor?: string;
+  sidingType?: string;
+  porchPostColor?: string;
 }): string {
   const { renderType, style, lighting, season, landscape, revision, isRevision } = body;
 
@@ -77,6 +88,7 @@ function buildPrompt(body: {
       STYLE_PROMPTS[style] ?? "",
       "soft ambient interior lighting, warm and inviting atmosphere",
       "professional architectural visualization, 8k ultra-detailed, clean white walls",
+      "pure white background outside the floor plan boundary, white paper background",
     ].filter(Boolean).join(", ");
   }
 
@@ -90,12 +102,28 @@ function buildPrompt(body: {
     ].filter(Boolean).join(", ");
   }
 
-  // elevation
+  // elevation — build optional color spec
+  const colorSpecs: string[] = [];
+  if (body.brickColor) colorSpecs.push(`${body.brickColor} brick`);
+  if (body.sidingColor && body.sidingType) colorSpecs.push(`${body.sidingColor} ${body.sidingType} siding`);
+  else if (body.sidingColor) colorSpecs.push(`${body.sidingColor} siding`);
+  else if (body.sidingType) colorSpecs.push(`${body.sidingType} siding`);
+  if (body.roofColor && body.roofType) colorSpecs.push(`${body.roofColor} ${body.roofType} roof`);
+  else if (body.roofColor) colorSpecs.push(`${body.roofColor} roof`);
+  else if (body.roofType) colorSpecs.push(`${body.roofType} roof`);
+  if (body.trimColor) colorSpecs.push(`${body.trimColor} exterior trim`);
+  if (body.windowTrimColor) colorSpecs.push(`${body.windowTrimColor} window trim`);
+  if (body.doorColor) colorSpecs.push(`${body.doorColor} front door`);
+  if (body.garageDoorColor) colorSpecs.push(`${body.garageDoorColor} garage door`);
+  if (body.shutterColor) colorSpecs.push(`${body.shutterColor} shutters`);
+  if (body.porchPostColor) colorSpecs.push(`${body.porchPostColor} porch posts`);
+
   return [
     "convert this architectural elevation drawing into a photorealistic exterior render",
     "faithful to the reference geometry — identical windows, doors, roofline, garage",
     "professional real estate photography, award-winning architectural photography",
     STYLE_PROMPTS[style] ?? "",
+    colorSpecs.length > 0 ? colorSpecs.join(", ") : "",
     LIGHTING_PROMPTS[lighting] ?? "",
     SEASON_PROMPTS[season] ?? "",
     LANDSCAPE_PROMPTS[landscape] ?? "",
@@ -112,7 +140,7 @@ export async function POST(req: NextRequest) {
 
   let body: {
     imageBase64?: string;
-    imageUrl?: string;          // pre-hosted URL (used for revisions)
+    imageUrl?: string;
     renderType: string;
     style: string;
     lighting: string;
@@ -120,6 +148,18 @@ export async function POST(req: NextRequest) {
     landscape: string;
     revision?: string;
     isRevision?: boolean;
+    builderId?: string | null;
+    brickColor?: string;
+    roofColor?: string;
+    roofType?: string;
+    shutterColor?: string;
+    doorColor?: string;
+    garageDoorColor?: string;
+    windowTrimColor?: string;
+    trimColor?: string;
+    sidingColor?: string;
+    sidingType?: string;
+    porchPostColor?: string;
   };
 
   try {
@@ -241,6 +281,7 @@ export async function POST(req: NextRequest) {
       landscape:   body.landscape   ?? null,
       image_url:   savedImageUrl,
       is_revision: body.isRevision  ?? false,
+      builder_id:  body.builderId   ?? null,
     })
     .select("id")
     .single();

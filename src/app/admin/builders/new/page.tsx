@@ -111,6 +111,11 @@ export default function AddBuilderPage() {
       monthly_quotes_count:    0,
       storage_used_gb:         0,
       client_since:            new Date().toISOString(),
+      stripe_customer_id:      null,
+      stripe_subscription_id:  null,
+      stripe_subscription_status: null,
+      current_period_end:      null,
+      plan_id:                 null,
     });
 
     setSaving(false);

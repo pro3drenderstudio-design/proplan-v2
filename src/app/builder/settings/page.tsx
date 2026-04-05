@@ -1,12 +1,16 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getBuilderSubscription } from "@/lib/builder-api";
+import type { Plan } from "@/types/database";
 
-type Tab = "company" | "notifications";
+type Tab = "company" | "billing" | "notifications";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "company",       label: "Company Profile" },
+  { id: "billing",       label: "Billing & Plan"  },
   { id: "notifications", label: "Notifications"   },
 ];
 
@@ -25,8 +29,10 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 const INPUT = "w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-blue-500/60 focus:border-blue-500/40 transition-colors";
 
-export default function SettingsPage() {
-  const [tab,     setTab]     = useState<Tab>("company");
+function SettingsContent() {
+  const searchParams = useSearchParams();
+  const initialTab   = (searchParams.get("tab") as Tab) ?? "company";
+  const [tab,     setTab]     = useState<Tab>(initialTab);
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [loading, setLoading] = useState(true);
@@ -34,6 +40,13 @@ export default function SettingsPage() {
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoPreview,   setLogoPreview]   = useState<string | null>(null);
   const logoRef = useRef<HTMLInputElement>(null);
+
+  // Billing
+  const [subscription, setSubscription] = useState<{
+    builder: { plan_tier: string; stripe_subscription_status: string | null; current_period_end: string | null; billing_cycle: string; rendering_credits: number; rendering_credits_total: number; seats_included: number; seats_used: number };
+    plan: Plan | null;
+  } | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
 
   const [company, setCompany] = useState({
     company_name:    "",
@@ -93,6 +106,9 @@ export default function SettingsPage() {
         if (builder.logo_url) setLogoPreview(builder.logo_url);
       }
       setLoading(false);
+
+      // Load subscription info
+      getBuilderSubscription().then(sub => { if (sub) setSubscription(sub as typeof subscription); });
     }
     load();
   }, []);
@@ -169,6 +185,112 @@ export default function SettingsPage() {
           </button>
         ))}
       </div>
+
+      {/* ── Billing & Plan ── */}
+      {tab === "billing" && (
+        <div className="space-y-5">
+          {/* Current plan card */}
+          <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 p-6">
+            <h2 className="text-sm font-bold text-white/80 mb-4">Current Plan</h2>
+            {subscription ? (
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xl font-extrabold text-white capitalize">
+                      {subscription.plan?.display_name ?? subscription.builder.plan_tier}
+                    </span>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full border font-semibold ${
+                      subscription.builder.stripe_subscription_status === "active"   ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" :
+                      subscription.builder.stripe_subscription_status === "trialing" ? "text-blue-400 bg-blue-500/10 border-blue-500/20" :
+                      subscription.builder.stripe_subscription_status === "past_due" ? "text-red-400 bg-red-500/10 border-red-500/20" :
+                      "text-white/40 bg-white/6 border-white/10"
+                    }`}>
+                      {subscription.builder.stripe_subscription_status ?? "active"}
+                    </span>
+                  </div>
+                  <p className="text-sm text-white/40 capitalize">
+                    {subscription.builder.billing_cycle} billing
+                    {subscription.builder.current_period_end && (
+                      <> · renews {new Date(subscription.builder.current_period_end).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</>
+                    )}
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!builderId) return;
+                    setPortalLoading(true);
+                    const res = await fetch("/api/stripe/portal", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ builderId }),
+                    });
+                    const { url, error } = await res.json();
+                    setPortalLoading(false);
+                    if (url) window.location.href = url;
+                    else alert(error ?? "Could not open billing portal.");
+                  }}
+                  disabled={portalLoading}
+                  className="px-4 py-2.5 rounded-xl bg-white/8 hover:bg-white/12 border border-white/10 text-white text-sm font-semibold disabled:opacity-40 transition-colors"
+                >
+                  {portalLoading ? "Opening…" : "Manage Subscription →"}
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-white/40">No active subscription.</p>
+                <a href="/builder/subscribe"
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
+                  Choose a Plan →
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* Usage */}
+          {subscription && (
+            <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 p-6">
+              <h2 className="text-sm font-bold text-white/80 mb-4">Usage This Month</h2>
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { label: "Render Credits", used: (subscription.builder.rendering_credits_total - subscription.builder.rendering_credits), total: subscription.builder.rendering_credits_total },
+                  { label: "Team Seats",     used: subscription.builder.seats_used,     total: subscription.builder.seats_included },
+                ].map(item => {
+                  const pct = item.total > 0 ? Math.min((item.used / item.total) * 100, 100) : 0;
+                  const isLow = pct >= 80;
+                  return (
+                    <div key={item.label}>
+                      <div className="flex justify-between mb-1.5">
+                        <span className="text-xs text-white/40">{item.label}</span>
+                        <span className={`text-xs font-semibold ${isLow ? "text-orange-400" : "text-white/50"}`}>
+                          {item.used} / {item.total}
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-white/6 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${isLow ? "bg-orange-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {subscription?.builder.stripe_subscription_status === "past_due" && (
+            <div className="bg-red-500/8 border border-red-500/25 rounded-xl px-5 py-4">
+              <p className="text-sm font-semibold text-red-400 mb-1">Payment failed</p>
+              <p className="text-xs text-red-400/70">Your last payment was unsuccessful. Please update your payment method to avoid service interruption.</p>
+              <button onClick={async () => {
+                if (!builderId) return;
+                setPortalLoading(true);
+                const res = await fetch("/api/stripe/portal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ builderId }) });
+                const { url } = await res.json();
+                setPortalLoading(false);
+                if (url) window.location.href = url;
+              }} className="mt-3 text-xs text-red-300 underline">Update payment method →</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Company Profile ── */}
       {tab === "company" && (
@@ -272,6 +394,7 @@ export default function SettingsPage() {
       )}
 
       {/* ── Notifications ── */}
+
       {tab === "notifications" && (
         <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 divide-y divide-white/6">
           {[
@@ -304,5 +427,13 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 flex items-center justify-center h-64"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>}>
+      <SettingsContent />
+    </Suspense>
   );
 }

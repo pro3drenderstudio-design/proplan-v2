@@ -403,6 +403,15 @@ export default function RenderStudioPage() {
   const [landscape,  setLandscape]  = useState<LandscapeId>("lush");
   const [revision,   setRevision]   = useState("");
 
+  // Elevation optional color fields
+  const [elevColors, setElevColors] = useState({
+    brickColor: "", roofColor: "", roofType: "", shutterColor: "", doorColor: "",
+    garageDoorColor: "", windowTrimColor: "", trimColor: "", sidingColor: "", sidingType: "", porchPostColor: "",
+  });
+  function setElev(key: keyof typeof elevColors, val: string) {
+    setElevColors(prev => ({ ...prev, [key]: val }));
+  }
+
   const [referenceDataUrl, setReferenceDataUrl] = useState<string | null>(null);
   const [renderDataUrl,    setRenderDataUrl]    = useState<string | null>(null);
   const [renderSavedUrl,   setRenderSavedUrl]   = useState<string | null>(null);
@@ -417,10 +426,24 @@ export default function RenderStudioPage() {
 
   async function loadArchive() {
     setArchiveLoading(true);
+    // Get builder_id first
+    const { data: { user } } = await supabase.auth.getUser();
+    let builderId: string | null = null;
+    if (user) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: profile } = await (supabase.from("profiles") as any)
+        .select("builder_id").eq("id", user.id).single();
+      builderId = profile?.builder_id ?? null;
+    }
+    // Check impersonation
+    if (typeof window !== "undefined") {
+      const imp = window.localStorage.getItem("proplan_impersonate_builder_id");
+      if (imp) builderId = imp;
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase.from("renders") as any)
-      .select("*")
-      .order("created_at", { ascending: false });
+    let query = (supabase.from("renders") as any).select("*").order("created_at", { ascending: false });
+    if (builderId) query = query.eq("builder_id", builderId);
+    const { data } = await query;
     setRecords((data as RenderRecord[]) ?? []);
     setArchiveLoading(false);
   }
@@ -470,10 +493,29 @@ export default function RenderStudioPage() {
     setError("");
 
     try {
+      // Get builderId to associate render with the builder
+      let builderId: string | null = null;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: profile } = await (supabase.from("profiles") as any)
+          .select("builder_id").eq("id", user.id).single();
+        builderId = profile?.builder_id ?? null;
+      }
+      if (typeof window !== "undefined") {
+        const imp = window.localStorage.getItem("proplan_impersonate_builder_id");
+        if (imp) builderId = imp;
+      }
+
       const requestBody: Record<string, unknown> = {
         renderType, style, lighting, season, landscape,
         revision:   isRevision ? revision : undefined,
         isRevision,
+        builderId,
+        // include elevation colors if set
+        ...(renderType === "elevation" ? Object.fromEntries(
+          Object.entries(elevColors).filter(([, v]) => v.trim())
+        ) : {}),
       };
 
       if (isRevision && renderSavedUrl) {
@@ -669,6 +711,37 @@ export default function RenderStudioPage() {
                 <SectionLabel>Landscape Style</SectionLabel>
                 <div className="flex flex-wrap gap-1.5">
                   {LANDSCAPES.map(l => <PillButton key={l.id} value={l.id} current={landscape} onClick={setLandscape}>{l.label}</PillButton>)}
+                </div>
+              </div>
+
+              {/* Elevation optional colors */}
+              <div>
+                <SectionLabel>Exterior Colours <span className="normal-case font-normal text-white/20">(optional)</span></SectionLabel>
+                <div className="space-y-2">
+                  {[
+                    { key: "brickColor",      label: "Brick Color",         ph: "e.g. Red, Tan, Cream" },
+                    { key: "sidingColor",     label: "Siding Color",        ph: "e.g. White, Beige" },
+                    { key: "sidingType",      label: "Siding Type",         ph: "e.g. Hardie Board, Vinyl" },
+                    { key: "roofColor",       label: "Roof Color",          ph: "e.g. Charcoal, Brown" },
+                    { key: "roofType",        label: "Roof Type",           ph: "e.g. Asphalt Shingle, Metal" },
+                    { key: "trimColor",       label: "Trim Color",          ph: "e.g. White, Black" },
+                    { key: "windowTrimColor", label: "Window Trim Color",   ph: "e.g. Black, White" },
+                    { key: "doorColor",       label: "Front Door Color",    ph: "e.g. Navy Blue, Red" },
+                    { key: "garageDoorColor", label: "Garage Door Color",   ph: "e.g. White, Taupe" },
+                    { key: "shutterColor",    label: "Shutter Color",       ph: "e.g. Black, Hunter Green" },
+                    { key: "porchPostColor",  label: "Porch Post Color",    ph: "e.g. White, Wood" },
+                  ].map(({ key, label, ph }) => (
+                    <div key={key}>
+                      <label className="block text-[9px] font-semibold uppercase tracking-widest text-white/25 mb-1">{label}</label>
+                      <input
+                        type="text"
+                        value={elevColors[key as keyof typeof elevColors]}
+                        onChange={e => setElev(key as keyof typeof elevColors, e.target.value)}
+                        placeholder={ph}
+                        className="w-full bg-[#141414] border border-white/8 rounded-lg px-3 py-1.5 text-xs text-white/70 placeholder-white/20 focus:outline-none focus:border-blue-500/40 transition-colors"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             </>

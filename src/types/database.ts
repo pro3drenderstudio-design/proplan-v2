@@ -256,6 +256,12 @@ export interface Builder {
   monthly_quotes_count: number;
   storage_used_gb: number;
   client_since: string;
+  // Stripe
+  stripe_customer_id:          string | null;
+  stripe_subscription_id:      string | null;
+  stripe_subscription_status:  string | null;  // active | trialing | past_due | canceled | paused
+  current_period_end:          string | null;
+  plan_id:                     string | null;
   created_at: string;
   updated_at: string;
 }
@@ -263,7 +269,7 @@ export interface Builder {
 // =============================================================================
 // team_members
 // =============================================================================
-export type TeamRole = "super_admin" | "manager" | "editor" | "viewer" | "customer_service" | "artist";
+export type TeamRole = "super_admin" | "manager" | "editor" | "viewer" | "customer_service" | "artist" | "builder_admin" | "builder_member";
 
 export interface TeamMember {
   id: string;
@@ -343,6 +349,107 @@ export interface Lot {
 
 export interface CommunityWithLots extends Community {
   lots: Lot[];
+}
+
+// =============================================================================
+// plans
+// =============================================================================
+export interface Plan {
+  id:                         string;
+  name:                       string;   // 'launch' | 'studio' | 'scale'
+  display_name:               string;
+  price_monthly:              number;   // cents
+  price_annually:             number;   // cents
+  rendering_credits_monthly:  number;   // -1 = unlimited
+  ai_credits_monthly:         number;
+  max_projects:               number;   // -1 = unlimited
+  seats_included:             number;
+  max_storage_gb:             number;
+  includes_sitemaps:          boolean;
+  stripe_price_id_monthly:    string | null;
+  stripe_price_id_annually:   string | null;
+  is_active:                  boolean;
+  sort_order:                 number;
+  created_at:                 string;
+  updated_at:                 string;
+}
+
+// =============================================================================
+// render_requests
+// =============================================================================
+export type RenderRequestType     = "exterior_elevation" | "interior" | "aerial" | "floor_plan" | "custom";
+export type RenderRequestPriority = "standard" | "rush";
+export type RenderRequestStatus   =
+  | "submitted"
+  | "in_queue"
+  | "in_production"
+  | "ready_for_review"
+  | "delivered"
+  | "revision_requested"
+  | "completed";
+
+export interface RenderRequest {
+  id:                        string;
+  builder_id:                string;
+  project_id:                string | null;
+  type:                      RenderRequestType;
+  configuration_notes:       string | null;
+  reference_files:           string[];
+  priority:                  RenderRequestPriority;
+  credits_used:              number;
+  status:                    RenderRequestStatus;
+  revision_notes:            string | null;
+  deliverable_urls:          string[];
+  assigned_to:               string | null;
+  admin_notes:               string | null;
+  title:                     string | null;
+  created_at:                string;
+  delivered_at:              string | null;
+  proposed_completion_date:  string | null;
+  completion_date_status:    "none" | "proposed" | "accepted" | "declined" | "counter_proposed";
+}
+
+// =============================================================================
+// render_messages
+// =============================================================================
+export interface RenderMessageAttachment {
+  url:  string;
+  name: string;
+  type: string;   // mime type
+  size: number;   // bytes
+}
+
+export interface RenderMessage {
+  id:                string;
+  render_request_id: string;
+  sender_type:       "builder" | "admin";
+  sender_id:         string;
+  sender_name:       string;
+  body:              string | null;
+  attachments:       RenderMessageAttachment[];
+  is_delivery:       boolean;
+  created_at:        string;
+}
+
+// =============================================================================
+// project_messages
+// =============================================================================
+export interface ProjectMessageAttachment {
+  url:  string;
+  name: string;
+  type: string;
+  size: number;
+}
+
+export interface ProjectMessage {
+  id:          string;
+  project_id:  string;
+  sender_type: "builder" | "admin";
+  sender_id:   string;
+  sender_name: string;
+  body:        string | null;
+  attachments: ProjectMessageAttachment[];
+  created_at:  string;
 }
 
 // =============================================================================

@@ -2,7 +2,11 @@ import { supabase } from "@/lib/supabase";
 import {
   Project, ProjectRequest, Lead, LeadStatus,
   Category, Option, CategoryWithOptions, ProjectFile,
+  RenderRequest, RenderRequestType, RenderRequestPriority,
+  Plan, Builder, RenderMessage, RenderMessageAttachment,
 } from "@/types/database";
+
+export type { RenderRequest, RenderRequestType, RenderRequestPriority, Plan, Builder, RenderMessage, RenderMessageAttachment };
 
 export type { ProjectRequest, Lead, LeadStatus };
 
@@ -23,7 +27,9 @@ export async function getProjectRequests(): Promise<ProjectRequest[]> {
   return data as ProjectRequest[];
 }
 
-export async function createProjectRequest(req: NewProjectRequest): Promise<ProjectRequest | null> {
+export async function createProjectRequest(
+  req: NewProjectRequest,
+): Promise<(ProjectRequest & { _projectId?: string }) | null> {
   const { data, error } = await (supabase.from("project_requests") as AnyQuery)
     .insert(req)
     .select()
@@ -31,9 +37,10 @@ export async function createProjectRequest(req: NewProjectRequest): Promise<Proj
   if (error) { console.error("createProjectRequest:", error.message); return null; }
 
   // Mirror to projects table via service-role API route (bypasses RLS)
+  let projectId: string | undefined;
   try {
     const companySlug = await getBuilderCompanySlug();
-    await fetch("/api/projects", {
+    const projRes = await fetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -49,11 +56,15 @@ export async function createProjectRequest(req: NewProjectRequest): Promise<Proj
         status:        "pending_review",
       }),
     });
+    if (projRes.ok) {
+      const proj = await projRes.json() as { id: string };
+      projectId = proj.id;
+    }
   } catch (e) {
     console.warn("createProjectRequest: could not mirror to projects table:", e);
   }
 
-  return data as ProjectRequest;
+  return { ...(data as ProjectRequest), _projectId: projectId };
 }
 
 // ── Projects ──────────────────────────────────────────────────────────────────
@@ -319,4 +330,171 @@ export async function updateLeadNotes(leadId: string, notes: string): Promise<bo
     .eq("id", leadId);
   if (error) { console.error("updateLeadNotes:", error.message); return false; }
   return true;
+}
+
+// ── Builder ID helper ─────────────────────────────────────────────────────────
+
+async function getBuilderId(): Promise<string | null> {
+  try {
+    if (typeof window !== "undefined") {
+      const impersonateId = window.localStorage.getItem(IMPERSONATE_KEY);
+      if (impersonateId) return impersonateId;
+    }
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    const { data: profile } = await (supabase as AnyQuery)
+      .from("profiles").select("builder_id").eq("id", user.id).single();
+    return profile?.builder_id ?? null;
+  } catch { return null; }
+}
+
+// ── Render Requests ───────────────────────────────────────────────────────────
+
+export type NewRenderRequest = Pick<RenderRequest,
+  "project_id" | "type" | "configuration_notes" | "reference_files" | "priority"
+> & { title?: string | null };
+
+export async function getRenderRequests(): Promise<RenderRequest[]> {
+  const builderId = await getBuilderId();
+  if (!builderId) return [];
+  const { data, error } = await (supabase.from("render_requests") as AnyQuery)
+    .select("*")
+    .eq("builder_id", builderId)
+    .order("created_at", { ascending: false });
+  if (error) { console.error("getRenderRequests:", error.message); return []; }
+  return data as RenderRequest[];
+}
+
+export async function createRenderRequest(req: NewRenderRequest): Promise<RenderRequest | null> {
+  const builderId = await getBuilderId();
+  if (!builderId) return null;
+  const creditsUsed = req.priority === "rush" ? 2 : 1;
+  const { data, error } = await (supabase.from("render_requests") as AnyQuery)
+    .insert({
+      ...req,
+      builder_id:   builderId,
+      credits_used: creditsUsed,
+      status:       "submitted",
+    })
+    .select()
+    .single();
+  if (error) { console.error("createRenderRequest:", error.message); return null; }
+  return data as RenderRequest;
+}
+
+export async function requestRenderRevision(id: string, revisionNotes: string): Promise<boolean> {
+  const { error } = await (supabase.from("render_requests") as AnyQuery)
+    .update({ status: "revision_requested", revision_notes: revisionNotes })
+    .eq("id", id);
+  if (error) { console.error("requestRenderRevision:", error.message); return false; }
+  return true;
+}
+
+export async function getBuilderSubscription(): Promise<{
+  builder: Pick<Builder, "id" | "company_name" | "plan_tier" | "plan_id" | "stripe_subscription_status" | "current_period_end" | "billing_cycle" | "rendering_credits" | "rendering_credits_total" | "max_projects" | "seats_included" | "seats_used">;
+  plan: Plan | null;
+} | null> {
+  const builderId = await getBuilderId();
+  if (!builderId) return null;
+  const { data: builder, error } = await (supabase as AnyQuery)
+    .from("builders")
+    .select("id, company_name, plan_tier, plan_id, stripe_subscription_status, current_period_end, billing_cycle, rendering_credits, rendering_credits_total, max_projects, seats_included, seats_used")
+    .eq("id", builderId)
+    .single();
+  if (error || !builder) return null;
+  let plan: Plan | null = null;
+  if (builder.plan_id) {
+    const { data: p } = await (supabase as AnyQuery).from("plans").select("*").eq("id", builder.plan_id).single();
+    plan = p ?? null;
+  }
+  return { builder, plan };
+}
+
+export async function getAllPlans(): Promise<Plan[]> {
+  const { data, error } = await supabase.from("plans").select("*").eq("is_active", true).order("sort_order");
+  if (error) { console.error("getAllPlans:", error.message); return []; }
+  return data as Plan[];
+}
+
+export async function getBuilderCredits(): Promise<{ used: number; total: number } | null> {
+  const builderId = await getBuilderId();
+  if (!builderId) return null;
+  const { data, error } = await (supabase as AnyQuery)
+    .from("builders")
+    .select("rendering_credits, rendering_credits_total")
+    .eq("id", builderId)
+    .single();
+  if (error) { console.error("getBuilderCredits:", error.message); return null; }
+  return {
+    used:  (data.rendering_credits_total ?? 0) - (data.rendering_credits ?? 0),
+    total: data.rendering_credits_total ?? 0,
+  };
+}
+
+// ── Render Request Detail + Chat ──────────────────────────────────────────────
+
+export async function getRenderRequestById(id: string): Promise<RenderRequest | null> {
+  const { data, error } = await (supabase.from("render_requests") as AnyQuery)
+    .select("*").eq("id", id).single();
+  if (error) { console.error("getRenderRequestById:", error.message); return null; }
+  return data as RenderRequest;
+}
+
+export async function getRenderMessages(requestId: string): Promise<RenderMessage[]> {
+  const res = await fetch(`/api/render-messages/${requestId}`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function sendBuilderMessage(
+  requestId: string,
+  body: string | null,
+  attachments: RenderMessageAttachment[],
+): Promise<RenderMessage | null> {
+  const builderId = await getBuilderId();
+  // Get sender name from profile
+  const { data: { user } } = await supabase.auth.getUser();
+  let senderName = "Builder";
+  if (user) {
+    const { data: profile } = await (supabase as AnyQuery)
+      .from("profiles").select("full_name").eq("id", user.id).single();
+    senderName = profile?.full_name ?? senderName;
+  }
+  const res = await fetch(`/api/render-messages/${requestId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sender_type: "builder",
+      sender_id:   builderId ?? user?.id ?? "unknown",
+      sender_name: senderName,
+      body,
+      attachments,
+      is_delivery: false,
+    }),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function respondToCompletionDate(
+  requestId: string,
+  accept: boolean,
+): Promise<boolean> {
+  const res = await fetch(`/api/render-requests/${requestId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      completion_date_status: accept ? "accepted" : "declined",
+    }),
+  });
+  return res.ok;
+}
+
+export async function proposeCounterDate(requestId: string, date: string): Promise<boolean> {
+  const res = await fetch(`/api/render-requests/${requestId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ proposed_completion_date: date, completion_date_status: "counter_proposed" }),
+  });
+  return res.ok;
 }
