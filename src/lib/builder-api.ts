@@ -20,6 +20,7 @@ type AnyQuery = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 export async function getProjectRequests(): Promise<ProjectRequest[]> {
   const builderId = await getBuilderId();
+  if (!builderId) return [];
   const { data, error } = await supabase
     .from("project_requests")
     .select("*")
