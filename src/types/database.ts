@@ -128,7 +128,9 @@ export interface ProjectRequest {
   starting_price: number | null;
   description: string | null;
   categories_config: RequestCategory[] | null;
-  status: "pending_review" | "in_development" | "in_review" | "live" | "archived";
+  status: "awaiting_payment" | "pending_review" | "in_development" | "in_review" | "live" | "archived";
+  builder_id: string | null;
+  payment_reminders_sent: number;
   created_at: string;
   updated_at: string;
 }
@@ -249,6 +251,8 @@ export interface Builder {
   seats_used: number;
   rendering_credits: number;
   rendering_credits_total: number;
+  ai_credits_remaining: number;
+  ai_credits_total: number;
   max_projects: number;
   max_monthly_quotes: number;
   max_storage_gb: number;
@@ -368,6 +372,12 @@ export interface Plan {
   includes_sitemaps:          boolean;
   stripe_price_id_monthly:    string | null;
   stripe_price_id_annually:   string | null;
+  // Fees & credit packs (managed in admin)
+  model_setup_fee:            number;   // cents, default $1,000
+  extra_ai_pack_qty:          number;   // credits per top-up pack
+  extra_ai_pack_price:        number;   // cents per pack
+  extra_render_pack_qty:      number;   // renders per top-up pack
+  extra_render_pack_price:    number;   // cents per pack
   is_active:                  boolean;
   sort_order:                 number;
   created_at:                 string;

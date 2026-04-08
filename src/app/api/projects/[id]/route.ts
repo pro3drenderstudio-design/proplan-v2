@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { notifyProjectStatusChange } from "@/lib/notify";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -18,6 +19,8 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
+  const newStatus = updates.status as string | undefined;
+
   // Always stamp updated_at
   updates.updated_at = new Date().toISOString();
 
@@ -29,6 +32,12 @@ export async function PATCH(
   if (error) {
     console.error("PATCH /api/projects/[id]:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Fire status-change notification (non-blocking)
+  if (newStatus) {
+    notifyProjectStatusChange(id, newStatus)
+      .catch(err => console.error("notifyProjectStatusChange failed:", err));
   }
 
   return NextResponse.json({ ok: true });

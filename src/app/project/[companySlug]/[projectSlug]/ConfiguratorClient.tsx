@@ -48,16 +48,18 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
   const [showQuoteModal, setShowQuoteModal]     = useState(false);
   const [quoteScreenshot, setQuoteScreenshot]   = useState<string | null>(null);
   const [notFound, setNotFound]                 = useState(false);
+  const [optionsPanelOpen, setOptionsPanelOpen] = useState(false);
 
   // Lot context passed from community map
   const searchParams = useSearchParams();
   const lotInfo = useMemo(() => {
-    const lotId        = searchParams.get("lotId");
-    const lotNumber    = searchParams.get("lotNumber");
-    const communitySlug = searchParams.get("communitySlug");
-    const communityName = searchParams.get("communityName");
+    const lotId           = searchParams.get("lotId");
+    const lotNumber       = searchParams.get("lotNumber");
+    const communitySlug   = searchParams.get("communitySlug");
+    const communityName   = searchParams.get("communityName");
+    const lotPriceModifier = parseInt(searchParams.get("lotPriceModifier") ?? "0", 10);
     if (!lotId || !lotNumber) return null;
-    return { lotId, lotNumber, communitySlug: communitySlug ?? "", communityName: communityName ?? "" };
+    return { lotId, lotNumber, communitySlug: communitySlug ?? "", communityName: communityName ?? "", priceModifier: lotPriceModifier };
   }, [searchParams]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -84,12 +86,13 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
   }, [selectedOptions]);
 
   const totalPrice = useMemo(() => {
-    const base   = project?.base_price ?? 0;
-    const addons = Object.values(selectedOptions).reduce(
+    const base     = project?.base_price ?? 0;
+    const addons   = Object.values(selectedOptions).reduce(
       (sum, opt) => sum + (opt.price_impact ?? 0), 0
     );
-    return base + addons;
-  }, [project, selectedOptions]);
+    const lotPremium = lotInfo?.priceModifier ?? 0;
+    return base + addons + lotPremium;
+  }, [project, selectedOptions, lotInfo]);
 
   const floors    = Math.min(project?.floors ?? 1, 3) as LevelId;
   const phaseIndex = PHASES.findIndex(p => p.id === config.currentPhase);
@@ -254,7 +257,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                 Total Estimate
               </p>
               <p
-                className="text-xl font-extrabold text-white leading-none"
+                className="text-base sm:text-xl font-extrabold text-white leading-none"
                 style={{ fontFamily: "var(--font-syne), sans-serif" }}
               >
                 {totalPrice.toLocaleString("en-US", {
@@ -263,6 +266,12 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                   maximumFractionDigits: 0,
                 })}
               </p>
+              {lotInfo && lotInfo.priceModifier !== 0 && (
+                <p className="text-[10px] mt-0.5" style={{ color: "rgba(251,191,36,0.8)" }}>
+                  {lotInfo.priceModifier > 0 ? "+" : "−"}
+                  {Math.abs(lotInfo.priceModifier).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} {lotInfo.lotNumber} premium
+                </p>
+              )}
             </div>
           </div>
 
@@ -276,15 +285,45 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                 Object.entries(selectedOptions).map(([catId, opt]) => [catId, opt.id])
               )}
               onOptionSelect={handleOptionSelect}
+              isOpen={optionsPanelOpen}
             />
           )}
 
-          {/* Bottom bar */}
-          <div className="absolute bottom-5 left-0 right-0 z-50 flex items-center justify-center gap-3">
+          {/* Options panel backdrop on mobile */}
+          {optionsPanelOpen && (
+            <div
+              className="fixed inset-0 z-40 md:hidden"
+              onClick={() => setOptionsPanelOpen(false)}
+            />
+          )}
+
+          {/* Options FAB — mobile only, above bottom bar */}
+          {allCategories.length > 0 && (
+            <button
+              onClick={() => setOptionsPanelOpen(v => !v)}
+              className="md:hidden absolute bottom-[88px] right-4 z-[60] w-12 h-12 rounded-full flex items-center justify-center transition-all duration-150 shadow-xl"
+              style={{
+                background: optionsPanelOpen ? "rgba(59,130,246,0.9)" : "rgba(15,15,15,0.85)",
+                backdropFilter: "blur(24px)",
+                WebkitBackdropFilter: "blur(24px)",
+                border: optionsPanelOpen ? "1.5px solid rgba(59,130,246,0.6)" : "1.5px solid rgba(255,255,255,0.18)",
+                boxShadow: optionsPanelOpen ? "0 4px 24px rgba(59,130,246,0.45)" : "0 4px 20px rgba(0,0,0,0.6)",
+              }}
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4" style={{ color: optionsPanelOpen ? "white" : "rgba(255,255,255,0.75)" }}>
+                <path d="M2 4.75A.75.75 0 0 1 2.75 4h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75ZM2 8a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 8Zm0 3.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" />
+              </svg>
+            </button>
+          )}
+
+          {/* Bottom bar — Prev | FloorToggle | Next/Quote */}
+          <div className="absolute bottom-5 left-0 right-0 z-50 flex items-center justify-center gap-2 sm:gap-3">
+
+            {/* Previous — icon-only circle on mobile */}
             <button
               onClick={handlePrevStep}
               disabled={phaseIndex === 0}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all duration-150 disabled:opacity-25"
+              className="w-10 h-10 sm:w-auto sm:h-auto flex items-center justify-center sm:gap-2 sm:px-5 sm:py-2.5 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all duration-150 disabled:opacity-25"
               style={{
                 background: "rgba(0,0,0,0.55)",
                 backdropFilter: "blur(24px)",
@@ -293,10 +332,10 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                 color: "rgba(255,255,255,0.6)",
               }}
             >
-              <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
                 <path fillRule="evenodd" d="M9.78 4.22a.75.75 0 0 1 0 1.06L7.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06l-3.25-3.25a.75.75 0 0 1 0-1.06l3.25-3.25a.75.75 0 0 1 1.06 0z" clipRule="evenodd" />
               </svg>
-              Previous
+              <span className="hidden sm:inline">Previous</span>
             </button>
 
             <FloorToggle
@@ -306,6 +345,27 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
               onLevelChange={handleLevelChange}
             />
 
+            {/* Options toggle — desktop only (mobile uses FAB above) */}
+            {allCategories.length > 0 && (
+              <button
+                onClick={() => setOptionsPanelOpen(v => !v)}
+                className="hidden md:flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all duration-150"
+                style={{
+                  background: optionsPanelOpen ? "rgba(59,130,246,0.25)" : "rgba(0,0,0,0.55)",
+                  backdropFilter: "blur(24px)",
+                  WebkitBackdropFilter: "blur(24px)",
+                  border: optionsPanelOpen ? "1px solid rgba(59,130,246,0.45)" : "1px solid rgba(255,255,255,0.09)",
+                  color: optionsPanelOpen ? "rgba(147,197,253,1)" : "rgba(255,255,255,0.6)",
+                }}
+              >
+                <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+                  <path d="M2 4.75A.75.75 0 0 1 2.75 4h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75ZM2 8a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 8Zm0 3.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" />
+                </svg>
+                Options
+              </button>
+            )}
+
+            {/* Next Step / Get Quote */}
             {isExterior ? (
               <button
                 onClick={async () => {
@@ -320,8 +380,6 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                     const target = (saved?.target ?? phase?.camera.target   ?? [0, 0, 0])  as [number, number, number];
                     const fov    = saved?.fov ?? phase?.camera.fov ?? 45;
                     api.setFov(fov);
-                    // The setCameraLookAt callback fires when the command is acknowledged,
-                    // not when the animation finishes. Wait the full duration instead.
                     api.setCameraLookAt(pos, target, TRANSITION_DURATION);
                     setTimeout(resolve, TRANSITION_DURATION * 1000 + 400);
                   });
@@ -336,7 +394,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                   setQuoteScreenshot(snap);
                   setShowQuoteModal(true);
                 }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all duration-150"
+                className="flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all duration-150"
                 style={{
                   background: "rgba(16,185,129,0.85)",
                   backdropFilter: "blur(24px)",
@@ -346,7 +404,8 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                   boxShadow: "0 4px 20px rgba(16,185,129,0.3)",
                 }}
               >
-                Get Quote
+                <span className="sm:hidden">Quote</span>
+                <span className="hidden sm:inline">Get Quote</span>
                 <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
                   <path d="M7.25 1a.75.75 0 0 1 1.5 0v6.69l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06L7.25 7.69V1Z"/>
                   <path d="M3.25 11a.75.75 0 0 0 0 1.5h9.5a.75.75 0 0 0 0-1.5h-9.5Z"/>
@@ -356,7 +415,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
               <button
                 onClick={handleNextStep}
                 disabled={phaseIndex === PHASES.length - 1}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all duration-150 disabled:opacity-25"
+                className="flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all duration-150 disabled:opacity-25"
                 style={{
                   background: "rgba(37,99,235,0.90)",
                   backdropFilter: "blur(24px)",
@@ -366,7 +425,8 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                   boxShadow: "0 4px 20px rgba(37,99,235,0.30)",
                 }}
               >
-                Next Step
+                <span className="sm:hidden">Next</span>
+                <span className="hidden sm:inline">Next Step</span>
                 <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
                   <path fillRule="evenodd" d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06z" clipRule="evenodd" />
                 </svg>

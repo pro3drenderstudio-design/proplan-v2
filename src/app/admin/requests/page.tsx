@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
-import { getAllProjects, getAllBuildersBySlug } from "@/lib/admin-api";
-import { Project, Builder } from "@/types/database";
+import { useRouter } from "next/navigation";
+import { getAllProjects, getAllBuildersBySlug, getAwaitingPaymentRequests, deleteProjectRequest } from "@/lib/admin-api";
+import { Project, Builder, ProjectRequest } from "@/types/database";
 
 const STATUS_MAP: Record<NonNullable<Project["status"]>, { label: string; style: string }> = {
   pending_review: { label: "New Request",   style: "text-amber-400 bg-amber-400/10 border-amber-400/30" },
@@ -69,9 +70,12 @@ function exportToCSV(projects: Project[], builders: Record<string, Builder>, sta
 const PER_PAGE = 12;
 
 export default function ProductionQueuePage() {
-  const [projects,      setProjects]      = useState<Project[]>([]);
-  const [builders,      setBuilders]      = useState<Record<string, Builder>>({});
-  const [loading,       setLoading]       = useState(true);
+  const router = useRouter();
+  const [projects,       setProjects]       = useState<Project[]>([]);
+  const [unpaidRequests, setUnpaidRequests] = useState<ProjectRequest[]>([]);
+  const [deletingId,     setDeletingId]     = useState<string | null>(null);
+  const [builders,       setBuilders]       = useState<Record<string, Builder>>({});
+  const [loading,        setLoading]        = useState(true);
   const [search,        setSearch]        = useState("");
   const [statusFilter,  setStatusFilter]  = useState<string>("all");
   const [builderFilter, setBuilderFilter] = useState<string>("all");
@@ -82,12 +86,21 @@ export default function ProductionQueuePage() {
   const filterRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    Promise.all([getAllProjects(), getAllBuildersBySlug()]).then(([p, b]) => {
+    Promise.all([getAllProjects(), getAllBuildersBySlug(), getAwaitingPaymentRequests()]).then(([p, b, u]) => {
       setProjects(p);
       setBuilders(b);
+      setUnpaidRequests(u);
       setLoading(false);
     });
   }, []);
+
+  async function handleDeleteRequest(id: string) {
+    if (!confirm("Remove this unpaid request? This cannot be undone.")) return;
+    setDeletingId(id);
+    await deleteProjectRequest(id);
+    setUnpaidRequests(prev => prev.filter(r => r.id !== id));
+    setDeletingId(null);
+  }
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -133,12 +146,12 @@ export default function ProductionQueuePage() {
     <div className="flex flex-col h-full overflow-hidden">
 
       {/* Header */}
-      <div className="px-6 py-4 border-b border-white/8 flex-shrink-0 flex items-center justify-between">
-        <div>
+      <div className="px-4 md:px-6 py-4 border-b border-white/8 flex-shrink-0 flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-base font-bold text-white">Production Pipeline</h1>
-          <p className="text-xs text-white/35 mt-0.5">Manage active floor plan conversions and mapping tasks.</p>
+          <p className="text-xs text-white/35 mt-0.5 hidden sm:block">Manage active floor plan conversions and mapping tasks.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
 
           {/* Filter button */}
           <div className="relative" ref={filterRef}>
@@ -240,7 +253,7 @@ export default function ProductionQueuePage() {
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
         {/* Stat Cards */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div
             onClick={() => { setStatusFilter("pending_review"); setPage(1); }}
             className="bg-[#1a1a1a] border border-white/8 rounded-xl p-4 flex items-center justify-between cursor-pointer hover:border-amber-400/30 transition-colors">
@@ -276,8 +289,39 @@ export default function ProductionQueuePage() {
           </div>
         </div>
 
+        {/* Awaiting Payment */}
+        {unpaidRequests.length > 0 && (
+          <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl overflow-hidden mb-1">
+            <div className="px-5 py-3 border-b border-amber-500/15 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <p className="text-xs font-bold text-amber-400 uppercase tracking-widest">Awaiting Payment ({unpaidRequests.length})</p>
+            </div>
+            <div className="divide-y divide-amber-500/10">
+              {unpaidRequests.map(req => (
+                <div key={req.id} className="flex items-center justify-between px-5 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">{req.project_name}</p>
+                    <p className="text-[10px] text-white/35 mt-0.5">
+                      {req.home_type?.replace(/_/g, " ")} · {req.beds}bd {req.baths}ba
+                      {req.square_footage ? ` · ${req.square_footage.toLocaleString()} sqft` : ""}
+                      {" · "}Submitted {new Date(req.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteRequest(req.id)}
+                    disabled={deletingId === req.id}
+                    className="flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-lg border border-red-500/25 text-red-400 hover:bg-red-500/10 disabled:opacity-40 transition-colors"
+                  >
+                    {deletingId === req.id ? "Removing…" : "Remove"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Filter tabs */}
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {[
             { key: "all",            label: "All" },
             { key: "pending_review", label: "New Requests" },
@@ -298,12 +342,14 @@ export default function ProductionQueuePage() {
             <SearchIcon className="w-3.5 h-3.5 text-white/25 flex-shrink-0" />
             <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
               placeholder="Search projects..."
-              className="bg-transparent text-xs text-white/70 placeholder-white/25 w-40 outline-none" />
+              className="bg-transparent text-xs text-white/70 placeholder-white/25 w-32 sm:w-40 outline-none" />
           </div>
         </div>
 
         {/* Table */}
         <div className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+        <div className="min-w-[600px]">
           <div className="grid grid-cols-12 gap-4 px-5 py-3 text-[9px] font-bold uppercase tracking-widest text-white/25 border-b border-white/8">
             <div className="col-span-4">Project Name</div>
             <div className="col-span-3">Builder Client</div>
@@ -346,7 +392,7 @@ export default function ProductionQueuePage() {
                 const status  = STATUS_MAP[project.status ?? "pending_review"];
                 const builder = project.company_slug ? builders[project.company_slug] : null;
                 return (
-                  <Link key={project.id} href={`/admin/requests/${project.id}`} className="grid grid-cols-12 gap-4 items-center px-5 py-3.5 hover:bg-white/3 transition-colors cursor-pointer">
+                  <div key={project.id} onClick={() => router.push(`/admin/requests/${project.id}`)} className="grid grid-cols-12 gap-4 items-center px-5 py-3.5 hover:bg-white/3 transition-colors cursor-pointer">
                     {/* Project */}
                     <div className="col-span-4 flex items-center gap-3">
                       {project.thumbnail_url ? (
@@ -399,18 +445,18 @@ export default function ProductionQueuePage() {
                     {/* Action */}
                     <div className="col-span-1 flex justify-end">
                       {project.status === "pending_review" && (
-                        <Link href={`/admin/requests/${project.id}`}
-                          onClick={e => e.stopPropagation()}
+                        <button
+                          onClick={e => { e.preventDefault(); router.push(`/admin/requests/${project.id}`); }}
                           className="text-[10px] px-2.5 py-1.5 bg-amber-400/10 border border-amber-400/25 text-amber-400 font-medium rounded-lg hover:bg-amber-400/20 transition-colors whitespace-nowrap">
                           Review
-                        </Link>
+                        </button>
                       )}
                       {(project.status === "in_development" || project.status === "in_review") && (
-                        <Link href={`/admin/node-bridge?project=${project.id}`}
-                          onClick={e => e.stopPropagation()}
+                        <button
+                          onClick={e => { e.preventDefault(); router.push(`/admin/node-bridge?project=${project.id}`); }}
                           className="text-[10px] px-2.5 py-1.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-500 transition-colors whitespace-nowrap">
                           Node Bridge
-                        </Link>
+                        </button>
                       )}
                       {project.status === "live" && project.slug && project.company_slug && (
                         <a href={`/project/${project.company_slug}/${project.slug}`}
@@ -421,12 +467,13 @@ export default function ProductionQueuePage() {
                         </a>
                       )}
                     </div>
-                  </Link>
+                  </div>
                 );
               })}
             </div>
           )}
-
+        </div>{/* min-w-[600px] */}
+        </div>{/* overflow-x-auto */}
           {!loading && filtered.length > 0 && (
             <div className="flex items-center justify-between px-5 py-3.5 border-t border-white/8">
               <p className="text-xs text-white/30">

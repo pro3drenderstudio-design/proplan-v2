@@ -140,7 +140,8 @@ export default function BuilderCRMPage() {
             </Link>
           </div>
         ) : (
-          <div className="px-6 py-4">
+          <div className="px-6 py-4 overflow-x-auto">
+          <div className="min-w-[640px]">
             {/* Table header */}
             <div className="grid grid-cols-12 gap-4 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-white/25 border-b border-white/8 mb-1">
               <div className="col-span-3">Company</div>
@@ -217,6 +218,7 @@ export default function BuilderCRMPage() {
                 </Link>
               ))}
             </div>
+          </div>{/* min-w-[640px] */}
           </div>
         )}
       </div>

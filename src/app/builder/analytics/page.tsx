@@ -153,7 +153,7 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-4 md:p-8 max-w-6xl mx-auto">
 
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
@@ -181,7 +181,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {[
           { label: "Configurator Views", value: "—",                  sub: "Tracking coming soon",         accent: "text-white/30"    },
           { label: "Total Leads",        value: String(leads.length), sub: `Last ${range}`,                 accent: "text-blue-400"    },
@@ -201,10 +201,10 @@ export default function AnalyticsPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-3 gap-5 mb-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
 
         {/* Leads over time */}
-        <div className="col-span-2 bg-[#0e0e0e] rounded-2xl border border-white/8 p-5">
+        <div className="md:col-span-2 bg-[#0e0e0e] rounded-2xl border border-white/8 p-5">
           <h2
             className="font-bold text-white text-sm mb-4"
             style={{ fontFamily: "var(--font-syne), sans-serif" }}
@@ -258,7 +258,7 @@ export default function AnalyticsPage() {
 
       </div>
 
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
 
         {/* Conversion funnel */}
         <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 p-5">

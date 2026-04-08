@@ -64,7 +64,12 @@ const NAV_ITEMS = [
   { href: "/builder/support",       label: "Support",          icon: "support"        },
 ] as const;
 
-export default function BuilderSidebar() {
+interface BuilderSidebarProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+}
+
+export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSidebarProps) {
   const pathname = usePathname();
   const menuRef  = useRef<HTMLDivElement>(null);
 
@@ -117,7 +122,20 @@ export default function BuilderSidebar() {
   }
 
   return (
-    <aside className="w-60 flex-shrink-0 bg-[#080808] border-r border-white/6 flex flex-col h-screen">
+    <>
+      {/* Mobile backdrop */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-40 md:hidden"
+          onClick={onClose}
+        />
+      )}
+      <aside className={[
+        "fixed inset-y-0 left-0 z-50 w-60 flex-shrink-0 bg-[#080808] border-r border-white/6 flex flex-col h-screen",
+        "transform transition-transform duration-300",
+        "md:relative md:translate-x-0 md:z-auto",
+        isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+      ].join(" ")}>
 
       {/* Logo */}
       <div className="relative px-5 py-4 border-b border-white/6 overflow-hidden">
@@ -137,6 +155,7 @@ export default function BuilderSidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onClose}
               className={[
                 "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all",
                 isActive
@@ -220,6 +239,7 @@ export default function BuilderSidebar() {
         )}
       </div>
 
-    </aside>
+      </aside>
+    </>
   );
 }

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { getAllPlans } from "@/lib/builder-api";
 import { Plan } from "@/types/database";
 import { supabase } from "@/lib/supabase";
+import { buildPlanFeatures } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
 
@@ -20,100 +21,110 @@ function CheckIcon() {
   );
 }
 
-const PLAN_HIGHLIGHT: Record<string, boolean> = { studio: true };
-
-const PLAN_FEATURES: Record<string, string[]> = {
-  launch: [
-    "2 active home model configurators",
-    "15 traditional 3D renders / mo",
-    "150 AI concept renders / mo",
-    "Lead CRM + contact management",
-    "Basic analytics dashboard",
-    "Email support",
-  ],
-  studio: [
-    "5 active home model configurators",
-    "50 traditional 3D renders / mo",
-    "400 AI concept renders / mo",
-    "Lead CRM + analytics + exports",
-    "1 interactive site map",
-    "Priority support",
-    "Brand customization (logo + colors)",
-  ],
-  scale: [
-    "Unlimited home model configurators",
-    "Unlimited traditional 3D renders*",
-    "1,000 AI concept renders / mo",
-    "Full analytics suite + API access",
-    "Unlimited interactive site maps",
-    "Dedicated Customer Success Manager",
-    "White-label configurator URL",
-    "SLA-backed support",
-  ],
-};
+// Features are built dynamically from the active plan via buildPlanFeatures()
 
 function SubscribeContent() {
-  const params  = useSearchParams();
+  const params   = useSearchParams();
   const canceled = params.get("canceled") === "1";
 
-  const [plans,        setPlans]        = useState<Plan[]>([]);
-  const [billing,      setBilling]      = useState<"monthly" | "annually">("monthly");
-  const [loading,      setLoading]      = useState(true);
-  const [loadingPlan,  setLoadingPlan]  = useState<string | null>(null);
-  const [builderId,    setBuilderId]    = useState<string | null>(null);
-  const [error,        setError]        = useState<string | null>(null);
+  const [plan,          setPlan]         = useState<Plan | null>(null);
+  const [loading,       setLoading]      = useState(true);
+  const [authLoading,   setAuthLoading]  = useState(true);
+  const [submitting,    setSubmitting]   = useState(false);
+  const [builderId,     setBuilderId]    = useState<string | null>(null);
+  const [error,         setError]        = useState<string | null>(null);
+  const [billing,       setBilling]      = useState<"monthly" | "annually">("monthly");
 
   useEffect(() => {
-    getAllPlans().then(p => { setPlans(p); setLoading(false); });
+    getAllPlans().then(plans => {
+      setPlan(plans[0] ?? null);
+      setLoading(false);
+    });
 
-    // Get current builder ID
     supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) return;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: profile } = await (supabase.from("profiles") as any)
-        .select("builder_id").eq("id", user.id).single();
-      if (profile?.builder_id) setBuilderId(profile.builder_id);
+      if (!user) { setAuthLoading(false); return; }
+
+      try {
+        // Primary: look up builder_id via profiles
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: profile } = await (supabase.from("profiles") as any)
+          .select("builder_id").eq("id", user.id).single();
+
+        let resolvedId: string | null = profile?.builder_id ?? null;
+
+        // Fallback: find builder by auth user email
+        if (!resolvedId && user.email) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: builder } = await (supabase.from("builders") as any)
+            .select("id").eq("contact_email", user.email).maybeSingle();
+          if (builder?.id) {
+            resolvedId = builder.id;
+            // Heal the profile so next time the primary lookup works
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (supabase.from("profiles") as any)
+              .update({ builder_id: resolvedId }).eq("id", user.id);
+          }
+        }
+
+        if (!resolvedId) { setAuthLoading(false); return; }
+        setBuilderId(resolvedId);
+
+        // If already subscribed, go straight to dashboard
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: builder } = await (supabase.from("builders") as any)
+          .select("stripe_subscription_status").eq("id", resolvedId).single();
+        if (builder?.stripe_subscription_status === "active") {
+          window.location.href = "/builder/dashboard";
+          return;
+        }
+      } catch {
+        // auth lookup failed — button will show helpful message
+      }
+
+      setAuthLoading(false);
     });
   }, []);
 
-  async function handleSelect(plan: Plan) {
-    if (!builderId) { setError("Unable to identify your account. Please refresh."); return; }
-
+  async function handleSubscribe() {
+    if (!builderId || !plan) { setError("Unable to identify your account. Please refresh."); return; }
     const priceId = billing === "annually" ? plan.stripe_price_id_annually : plan.stripe_price_id_monthly;
     if (!priceId) {
-      setError(`Stripe is not yet configured for the ${plan.display_name} plan. Please contact us.`);
+      setError("This billing cycle is not yet configured. Please contact us.");
       return;
     }
 
-    setLoadingPlan(plan.id);
+    setSubmitting(true);
     setError(null);
     try {
       const res = await fetch("/api/stripe/checkout", {
-        method: "POST",
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ builderId, planId: plan.id, billingCycle: billing }),
+        body:    JSON.stringify({ builderId, planId: plan.id, billingCycle: billing }),
       });
       const { url, error: apiError } = await res.json();
-      if (apiError || !url) { setError(apiError ?? "Failed to start checkout."); setLoadingPlan(null); return; }
+      if (apiError || !url) { setError(apiError ?? "Failed to start checkout."); setSubmitting(false); return; }
       window.location.href = url;
     } catch {
       setError("Something went wrong. Please try again.");
-      setLoadingPlan(null);
+      setSubmitting(false);
     }
   }
 
-  const annualSaving = "Save 17%";
+  const monthlyPrice  = plan ? plan.price_monthly  : 150000;
+  const annualPrice   = plan ? plan.price_annually  : 1650000;
+  const annualPerMonth = Math.round(annualPrice / 12);
+  const annualSavings  = monthlyPrice * 12 - annualPrice;
 
   return (
     <div className="min-h-screen bg-[#080808] text-white">
 
       {/* Header */}
-      <div className="text-center pt-16 pb-10 px-6">
+      <div className="text-center pt-16 pb-12 px-6">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/logo_light.png" alt="ProPlan Studio" className="h-8 object-contain mx-auto mb-8" />
-        <h1 className="text-3xl font-extrabold text-white mb-3">Choose your plan</h1>
+        <h1 className="text-3xl font-extrabold text-white mb-3">Start your subscription</h1>
         <p className="text-white/40 text-sm max-w-md mx-auto">
-          Professional 3D renderings, configurators, and lead capture — all in one subscription.
+          One plan. Unlimited models, renders, and site maps — everything your team needs.
         </p>
 
         {canceled && (
@@ -121,124 +132,144 @@ function SubscribeContent() {
             Checkout was canceled. No charge was made.
           </div>
         )}
+      </div>
 
-        {/* Billing toggle */}
-        <div className="flex items-center justify-center gap-3 mt-8">
-          <button onClick={() => setBilling("monthly")}
-            className={`text-sm font-medium transition-colors ${billing === "monthly" ? "text-white" : "text-white/30"}`}>
+      {/* Billing toggle */}
+      <div className="flex justify-center mb-8 px-6">
+        <div className="inline-flex items-center bg-white/5 border border-white/10 rounded-xl p-1 gap-1">
+          <button
+            onClick={() => setBilling("monthly")}
+            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              billing === "monthly" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"
+            }`}
+          >
             Monthly
           </button>
           <button
-            onClick={() => setBilling(b => b === "monthly" ? "annually" : "monthly")}
-            className="relative w-11 h-6 rounded-full bg-blue-600 transition-colors"
+            onClick={() => setBilling("annually")}
+            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 ${
+              billing === "annually" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"
+            }`}
           >
-            <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${billing === "annually" ? "translate-x-6" : "translate-x-1"}`} />
-          </button>
-          <button onClick={() => setBilling("annually")}
-            className={`text-sm font-medium transition-colors ${billing === "annually" ? "text-white" : "text-white/30"}`}>
-            Annual
-            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 font-semibold">
-              {annualSaving}
+            Yearly
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              1 mo free
             </span>
           </button>
         </div>
       </div>
 
-      {/* Plan cards */}
-      <div className="max-w-5xl mx-auto px-6 pb-20">
+      {/* Plan card */}
+      <div className="max-w-lg mx-auto px-6 pb-20">
         {loading ? (
-          <div className="grid grid-cols-3 gap-5">
-            {[1,2,3].map(i => <div key={i} className="h-96 bg-white/5 rounded-2xl animate-pulse" />)}
-          </div>
-        ) : error ? (
+          <div className="h-96 bg-white/5 rounded-2xl animate-pulse" />
+        ) : error && !plan ? (
           <div className="text-center py-10">
             <p className="text-red-400 text-sm">{error}</p>
-            <button onClick={() => setError(null)} className="mt-3 text-blue-400 text-xs">Try again</button>
+          </div>
+        ) : plan ? (
+          <div className="bg-blue-600/10 border-2 border-blue-500/50 rounded-2xl p-8 shadow-xl shadow-blue-500/10">
+            <div className="mb-1">
+              <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-blue-500 text-white tracking-wider uppercase">
+                ProPlan Studio
+              </span>
+            </div>
+            <p className="text-xs text-white/35 mt-3 mb-6">Full platform access — cancel anytime.</p>
+
+            <div className="mb-6">
+              {billing === "annually" ? (
+                <>
+                  <div className="flex items-end gap-2">
+                    <span className="text-4xl font-extrabold text-white">{fmtPrice(annualPerMonth)}</span>
+                    <span className="text-white/30 text-sm mb-1.5">/mo</span>
+                    <span className="text-white/30 text-sm mb-1.5 line-through">{fmtPrice(monthlyPrice)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <p className="text-[11px] text-white/25">Billed {fmtPrice(annualPrice)}/yr</p>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                      Save {fmtPrice(annualSavings)}/yr
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-end gap-1">
+                    <span className="text-4xl font-extrabold text-white">{fmtPrice(monthlyPrice)}</span>
+                    <span className="text-white/30 text-sm mb-1.5">/mo</span>
+                  </div>
+                  <p className="text-[11px] text-white/25 mt-1">Billed monthly · Cancel anytime</p>
+                </>
+              )}
+            </div>
+
+            {/* Quick stats */}
+            <div className="grid grid-cols-3 gap-2 mb-7 bg-white/5 rounded-xl p-3">
+              <div className="text-center">
+                <p className="text-base font-bold text-white">
+                  {plan.max_projects === -1 ? "∞" : plan.max_projects}
+                </p>
+                <p className="text-[9px] text-white/25 mt-0.5">Models</p>
+              </div>
+              <div className="text-center border-x border-white/8">
+                <p className="text-base font-bold text-white">
+                  {plan.rendering_credits_monthly === -1 ? "∞" : plan.rendering_credits_monthly}
+                </p>
+                <p className="text-[9px] text-white/25 mt-0.5">Renders</p>
+              </div>
+              <div className="text-center">
+                <p className="text-base font-bold text-white">
+                  {plan.ai_credits_monthly.toLocaleString()}
+                </p>
+                <p className="text-[9px] text-white/25 mt-0.5">AI Credits</p>
+              </div>
+            </div>
+
+            <ul className="space-y-2.5 mb-8">
+              {buildPlanFeatures(plan).map(f => (
+                <li key={f} className="flex items-start gap-2">
+                  <CheckIcon />
+                  <span className="text-sm text-white/55 leading-relaxed">{f}</span>
+                </li>
+              ))}
+            </ul>
+
+            {/* Setup fee note */}
+            <div className="bg-white/4 border border-white/8 rounded-xl px-4 py-3 mb-6">
+              <p className="text-xs text-white/50 leading-relaxed">
+                <span className="text-white/80 font-semibold">+{fmtPrice(plan.model_setup_fee ?? 100000)} setup fee</span> per model configurator — charged separately when you request a new model setup.
+              </p>
+            </div>
+
+            {error && <p className="text-red-400 text-sm mb-4 text-center">{error}</p>}
+
+            {!authLoading && !builderId ? (
+              <div className="w-full py-3.5 rounded-xl text-sm text-center bg-white/5 border border-white/10 text-white/40">
+                Account not linked — please contact support to activate your subscription.
+              </div>
+            ) : (
+              <button
+                onClick={handleSubscribe}
+                disabled={submitting || authLoading || !builderId}
+                className="w-full py-3.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white shadow-lg shadow-blue-500/25 transition-colors"
+              >
+                {authLoading
+                  ? "Loading account…"
+                  : submitting
+                    ? "Redirecting to checkout…"
+                    : billing === "annually"
+                      ? `Subscribe — ${fmtPrice(annualPrice)} / yr`
+                      : `Subscribe — ${fmtPrice(monthlyPrice)} / mo`}
+              </button>
+            )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {plans.map(plan => {
-              const highlight  = !!PLAN_HIGHLIGHT[plan.name];
-              const price      = billing === "annually" ? Math.round(plan.price_annually / 12) : plan.price_monthly;
-              const isLoading  = loadingPlan === plan.id;
-              const features   = PLAN_FEATURES[plan.name] ?? [];
-
-              return (
-                <div
-                  key={plan.id}
-                  className={`relative rounded-2xl p-6 flex flex-col ${
-                    highlight
-                      ? "bg-blue-600/10 border-2 border-blue-500/50 shadow-xl shadow-blue-500/10"
-                      : "bg-[#141414] border border-white/10"
-                  }`}
-                >
-                  {highlight && (
-                    <div className="absolute -top-3 left-6 text-[10px] font-bold px-3 py-1 rounded-full bg-blue-500 text-white tracking-wider">
-                      Most Popular
-                    </div>
-                  )}
-
-                  <div className="mb-5">
-                    <h2 className="text-base font-bold text-white mb-1">{plan.display_name}</h2>
-                    <div className="flex items-end gap-1">
-                      <span className="text-3xl font-extrabold text-white">{fmtPrice(price)}</span>
-                      <span className="text-white/30 text-xs mb-1">/mo</span>
-                    </div>
-                    {billing === "annually" && (
-                      <p className="text-[11px] text-white/30 mt-0.5">{fmtPrice(plan.price_annually)}/year billed annually</p>
-                    )}
-                  </div>
-
-                  {/* Quick stats */}
-                  <div className="grid grid-cols-3 gap-1.5 mb-5 bg-white/5 rounded-xl p-3">
-                    <div className="text-center">
-                      <p className="text-sm font-bold text-white">
-                        {plan.max_projects === -1 ? "∞" : plan.max_projects}
-                      </p>
-                      <p className="text-[9px] text-white/25 mt-0.5">Models</p>
-                    </div>
-                    <div className="text-center border-x border-white/8">
-                      <p className="text-sm font-bold text-white">
-                        {plan.rendering_credits_monthly === -1 ? "∞" : plan.rendering_credits_monthly}
-                      </p>
-                      <p className="text-[9px] text-white/25 mt-0.5">Renders</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-sm font-bold text-white">
-                        {plan.ai_credits_monthly.toLocaleString()}
-                      </p>
-                      <p className="text-[9px] text-white/25 mt-0.5">AI Credits</p>
-                    </div>
-                  </div>
-
-                  <ul className="space-y-2 flex-1 mb-6">
-                    {features.map(f => (
-                      <li key={f} className="flex items-start gap-2">
-                        <CheckIcon />
-                        <span className="text-xs text-white/55 leading-relaxed">{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <button
-                    onClick={() => handleSelect(plan)}
-                    disabled={!!loadingPlan}
-                    className={`w-full py-3 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                      highlight
-                        ? "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/25"
-                        : "bg-white/10 hover:bg-white/15 text-white"
-                    }`}
-                  >
-                    {isLoading ? "Redirecting to checkout…" : `Start with ${plan.display_name}`}
-                  </button>
-                </div>
-              );
-            })}
+          <div className="text-center py-10 text-white/30 text-sm">
+            No plan available. Please contact us.
           </div>
         )}
 
         <p className="text-center text-[10px] text-white/20 mt-6">
-          *Unlimited renders on Scale have a fair-use policy. · No setup fees. Cancel anytime.
+          Secure checkout via Stripe · No setup fees for the subscription itself
         </p>
       </div>
     </div>

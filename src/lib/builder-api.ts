@@ -19,9 +19,11 @@ type AnyQuery = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 // ── Project Requests ──────────────────────────────────────────────────────────
 
 export async function getProjectRequests(): Promise<ProjectRequest[]> {
+  const builderId = await getBuilderId();
   const { data, error } = await supabase
     .from("project_requests")
     .select("*")
+    .eq("builder_id", builderId)
     .order("created_at", { ascending: false });
   if (error) { console.error("getProjectRequests:", error.message); return []; }
   return data as ProjectRequest[];
@@ -29,42 +31,32 @@ export async function getProjectRequests(): Promise<ProjectRequest[]> {
 
 export async function createProjectRequest(
   req: NewProjectRequest,
-): Promise<(ProjectRequest & { _projectId?: string }) | null> {
+): Promise<ProjectRequest | null> {
+  const builderId = await getBuilderId();
+
   const { data, error } = await (supabase.from("project_requests") as AnyQuery)
-    .insert(req)
+    .insert({ ...req, status: "awaiting_payment", builder_id: builderId, payment_reminders_sent: 0 })
     .select()
     .single();
   if (error) { console.error("createProjectRequest:", error.message); return null; }
 
-  // Mirror to projects table via service-role API route (bypasses RLS)
-  let projectId: string | undefined;
+  return data as ProjectRequest;
+}
+
+export async function initiateSetupFeeCheckout(requestId: string): Promise<string | null> {
   try {
-    const companySlug = await getBuilderCompanySlug();
-    const projRes = await fetch("/api/projects", {
+    const res = await fetch("/api/stripe/setup-fee", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name:          req.project_name,
-        company_slug:  companySlug,
-        home_type:     req.home_type,
-        floors:        req.floors,
-        beds:          req.beds,
-        baths:         req.baths,
-        sqft:          req.square_footage,
-        base_price:    req.starting_price ?? 0,
-        description:   req.description,
-        status:        "pending_review",
-      }),
+      body: JSON.stringify({ requestId }),
     });
-    if (projRes.ok) {
-      const proj = await projRes.json() as { id: string };
-      projectId = proj.id;
-    }
+    const { url, error } = await res.json();
+    if (error || !url) { console.error("initiateSetupFeeCheckout:", error); return null; }
+    return url as string;
   } catch (e) {
-    console.warn("createProjectRequest: could not mirror to projects table:", e);
+    console.error("initiateSetupFeeCheckout:", e);
+    return null;
   }
-
-  return { ...(data as ProjectRequest), _projectId: projectId };
 }
 
 // ── Projects ──────────────────────────────────────────────────────────────────
@@ -391,14 +383,14 @@ export async function requestRenderRevision(id: string, revisionNotes: string): 
 }
 
 export async function getBuilderSubscription(): Promise<{
-  builder: Pick<Builder, "id" | "company_name" | "plan_tier" | "plan_id" | "stripe_subscription_status" | "current_period_end" | "billing_cycle" | "rendering_credits" | "rendering_credits_total" | "max_projects" | "seats_included" | "seats_used">;
+  builder: Pick<Builder, "id" | "company_name" | "plan_tier" | "plan_id" | "stripe_subscription_status" | "current_period_end" | "billing_cycle" | "rendering_credits" | "rendering_credits_total" | "max_projects" | "seats_included" | "seats_used"> & { ai_credits_remaining: number; ai_credits_total: number };
   plan: Plan | null;
 } | null> {
   const builderId = await getBuilderId();
   if (!builderId) return null;
   const { data: builder, error } = await (supabase as AnyQuery)
     .from("builders")
-    .select("id, company_name, plan_tier, plan_id, stripe_subscription_status, current_period_end, billing_cycle, rendering_credits, rendering_credits_total, max_projects, seats_included, seats_used")
+    .select("id, company_name, plan_tier, plan_id, stripe_subscription_status, current_period_end, billing_cycle, rendering_credits, rendering_credits_total, max_projects, seats_included, seats_used, ai_credits_remaining, ai_credits_total")
     .eq("id", builderId)
     .single();
   if (error || !builder) return null;

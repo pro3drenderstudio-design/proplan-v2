@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getPlans, updatePlan } from "@/lib/admin-api";
+import { getPlans } from "@/lib/admin-api";
 import { Plan } from "@/types/database";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -10,16 +10,15 @@ function fmtPrice(cents: number) {
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
-const PLAN_STYLE: Record<string, string> = {
-  launch: "from-white/5 to-white/3 border-white/10",
-  studio: "from-blue-600/10 to-blue-600/5 border-blue-500/25",
-  scale:  "from-violet-600/10 to-violet-600/5 border-violet-500/25",
-};
-const PLAN_ACCENT: Record<string, string> = {
-  launch: "text-white/70",
-  studio: "text-blue-400",
-  scale:  "text-violet-400",
-};
+// Resolved at render time — first active plan gets blue accent, rest get neutral
+function planStyle(_name: string, index: number): string {
+  return index === 0
+    ? "from-blue-600/10 to-blue-600/5 border-blue-500/25"
+    : "from-white/5 to-white/3 border-white/10";
+}
+function planAccent(_name: string, index: number): string {
+  return index === 0 ? "text-blue-400" : "text-white/70";
+}
 
 // ── Inline editable number field ──────────────────────────────────────────────
 
@@ -93,6 +92,60 @@ function EditableToggle({ value, onChange, label }: { value: boolean; onChange: 
   );
 }
 
+function EditablePrice({
+  value,
+  onChange,
+  label,
+  suffix,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  label: string;
+  suffix?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  // Display in dollars, store in cents
+  const [raw, setRaw] = useState(String(value / 100));
+
+  function commit() {
+    setEditing(false);
+    const dollars = parseFloat(raw.replace(/[^0-9.]/g, ""));
+    if (!isNaN(dollars) && dollars > 0) onChange(Math.round(dollars * 100));
+    else setRaw(String(value / 100));
+  }
+
+  const display = (value / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[9px] font-bold uppercase tracking-widest text-white/25">{label}</span>
+      {editing ? (
+        <div className="relative">
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-sm text-white/40">$</span>
+          <input
+            autoFocus
+            type="text"
+            value={raw}
+            onChange={e => setRaw(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setEditing(false); setRaw(String(value / 100)); } }}
+            className="w-full bg-[#1a1a1a] border border-blue-500/40 rounded-lg pl-5 pr-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500/40"
+          />
+        </div>
+      ) : (
+        <button
+          onClick={() => { setEditing(true); setRaw(String(value / 100)); }}
+          className="text-left px-2 py-1.5 rounded-lg bg-white/4 hover:bg-white/8 border border-transparent hover:border-white/10 transition-all group"
+        >
+          <span className="text-sm font-bold text-white">{display}</span>
+          {suffix && <span className="text-xs text-white/30 ml-1">{suffix}</span>}
+          <span className="ml-2 text-[10px] text-white/20 group-hover:text-white/40 transition-colors">edit</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function EditableStripeId({ value, onChange, label }: { value: string | null; onChange: (v: string | null) => void; label: string }) {
   const [editing, setEditing] = useState(false);
   const [raw,     setRaw]     = useState(value ?? "");
@@ -135,11 +188,12 @@ function EditableStripeId({ value, onChange, label }: { value: string | null; on
 
 // ── Plan Card ─────────────────────────────────────────────────────────────────
 
-function PlanCard({ plan, onSave }: { plan: Plan; onSave: (id: string, updates: Partial<Plan>) => Promise<void> }) {
+function PlanCard({ plan, index, onSave }: { plan: Plan; index: number; onSave: (id: string, updates: Partial<Plan>) => Promise<{ stripe_price_id_monthly?: string; stripe_price_id_annually?: string; error?: string } | null> }) {
   const [draft,   setDraft]   = useState<Plan>({ ...plan });
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [dirty,   setDirty]   = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
   function update<K extends keyof Plan>(key: K, val: Plan[K]) {
     setDraft(prev => ({ ...prev, [key]: val }));
@@ -148,7 +202,10 @@ function PlanCard({ plan, onSave }: { plan: Plan; onSave: (id: string, updates: 
 
   async function handleSave() {
     setSaving(true);
-    await onSave(draft.id, {
+    setSaveErr(null);
+    const result = await onSave(draft.id, {
+      price_monthly:              draft.price_monthly,
+      price_annually:             draft.price_annually,
       rendering_credits_monthly:  draft.rendering_credits_monthly,
       ai_credits_monthly:         draft.ai_credits_monthly,
       max_projects:               draft.max_projects,
@@ -157,12 +214,24 @@ function PlanCard({ plan, onSave }: { plan: Plan; onSave: (id: string, updates: 
       includes_sitemaps:          draft.includes_sitemaps,
       stripe_price_id_monthly:    draft.stripe_price_id_monthly,
       stripe_price_id_annually:   draft.stripe_price_id_annually,
+      model_setup_fee:            draft.model_setup_fee,
+      extra_ai_pack_qty:          draft.extra_ai_pack_qty,
+      extra_ai_pack_price:        draft.extra_ai_pack_price,
+      extra_render_pack_qty:      draft.extra_render_pack_qty,
+      extra_render_pack_price:    draft.extra_render_pack_price,
       is_active:                  draft.is_active,
     });
     setSaving(false);
-    setSaved(true);
-    setDirty(false);
-    setTimeout(() => setSaved(false), 2000);
+    if (result?.error) {
+      setSaveErr(result.error);
+    } else {
+      // Reflect newly created Stripe price IDs in the draft immediately
+      if (result?.stripe_price_id_monthly)  setDraft(prev => ({ ...prev, stripe_price_id_monthly: result.stripe_price_id_monthly! }));
+      if (result?.stripe_price_id_annually) setDraft(prev => ({ ...prev, stripe_price_id_annually: result.stripe_price_id_annually! }));
+      setSaved(true);
+      setDirty(false);
+      setTimeout(() => setSaved(false), 2000);
+    }
   }
 
   function handleReset() {
@@ -171,22 +240,22 @@ function PlanCard({ plan, onSave }: { plan: Plan; onSave: (id: string, updates: 
   }
 
   return (
-    <div className={`bg-gradient-to-b ${PLAN_STYLE[plan.name] ?? PLAN_STYLE.launch} border rounded-2xl overflow-hidden`}>
+    <div className={`bg-gradient-to-b ${planStyle(plan.name, index)} border rounded-2xl overflow-hidden`}>
 
       {/* Header */}
       <div className="px-6 py-5 border-b border-white/8">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <h2 className={`text-lg font-extrabold ${PLAN_ACCENT[plan.name] ?? "text-white"}`}>{plan.display_name}</h2>
+              <h2 className={`text-lg font-extrabold ${planAccent(plan.name, index)}`}>{plan.display_name}</h2>
               {!draft.is_active && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 font-semibold">Inactive</span>
               )}
             </div>
             <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-white">{fmtPrice(plan.price_monthly)}</span>
+              <span className="text-2xl font-bold text-white">{fmtPrice(draft.price_monthly)}</span>
               <span className="text-white/30 text-xs">/mo</span>
-              <span className="text-white/20 text-xs ml-2">· {fmtPrice(plan.price_annually)}/yr</span>
+              <span className="text-white/20 text-xs ml-2">· {fmtPrice(draft.price_annually)}/yr</span>
             </div>
           </div>
           <EditableToggle value={draft.is_active} onChange={v => update("is_active", v)} label="Active" />
@@ -195,6 +264,25 @@ function PlanCard({ plan, onSave }: { plan: Plan; onSave: (id: string, updates: 
 
       {/* Editable limits */}
       <div className="p-6 space-y-4">
+        {/* Pricing */}
+        <div className="pb-4 border-b border-white/8 space-y-3">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Pricing</p>
+          <div className="grid grid-cols-2 gap-4">
+            <EditablePrice
+              value={draft.price_monthly}
+              onChange={v => update("price_monthly", v)}
+              label="Monthly Price"
+              suffix="/mo"
+            />
+            <EditablePrice
+              value={draft.price_annually}
+              onChange={v => update("price_annually", v)}
+              label="Annual Price"
+              suffix="/yr"
+            />
+          </div>
+        </div>
+
         <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-3">Plan Limits</p>
 
         <div className="grid grid-cols-2 gap-4">
@@ -237,6 +325,58 @@ function PlanCard({ plan, onSave }: { plan: Plan; onSave: (id: string, updates: 
 
         <EditableToggle value={draft.includes_sitemaps} onChange={v => update("includes_sitemaps", v)} label="Includes Site Maps" />
 
+        {/* Credits & Fees */}
+        <div className="pt-4 border-t border-white/8 space-y-4">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Credits &amp; Fees</p>
+
+          <EditablePrice
+            value={draft.model_setup_fee}
+            onChange={v => update("model_setup_fee", v)}
+            label="Model Setup Fee (one-time per model)"
+            suffix="/model"
+          />
+
+          <div className="bg-white/3 rounded-xl p-3 space-y-3">
+            <p className="text-[9px] font-semibold uppercase tracking-widest text-amber-400/60">AI Credit Top-up Pack</p>
+            <div className="grid grid-cols-2 gap-3">
+              <EditableNumber
+                value={draft.extra_ai_pack_qty}
+                onChange={v => update("extra_ai_pack_qty", v)}
+                label="Credits per Pack"
+                suffix="credits"
+                min={1}
+              />
+              <EditablePrice
+                value={draft.extra_ai_pack_price}
+                onChange={v => update("extra_ai_pack_price", v)}
+                label="Pack Price"
+                suffix="/pack"
+              />
+            </div>
+          </div>
+
+          {draft.rendering_credits_monthly !== -1 && (
+            <div className="bg-white/3 rounded-xl p-3 space-y-3">
+              <p className="text-[9px] font-semibold uppercase tracking-widest text-violet-400/60">Render Credit Top-up Pack</p>
+              <div className="grid grid-cols-2 gap-3">
+                <EditableNumber
+                  value={draft.extra_render_pack_qty}
+                  onChange={v => update("extra_render_pack_qty", v)}
+                  label="Renders per Pack"
+                  suffix="renders"
+                  min={1}
+                />
+                <EditablePrice
+                  value={draft.extra_render_pack_price}
+                  onChange={v => update("extra_render_pack_price", v)}
+                  label="Pack Price"
+                  suffix="/pack"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Stripe IDs */}
         <div className="pt-4 border-t border-white/8 space-y-3">
           <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Stripe Price IDs</p>
@@ -254,18 +394,23 @@ function PlanCard({ plan, onSave }: { plan: Plan; onSave: (id: string, updates: 
       </div>
 
       {/* Save bar */}
-      <div className={`px-6 py-4 border-t border-white/8 flex items-center justify-between transition-opacity ${dirty ? "opacity-100" : "opacity-40"}`}>
-        <button onClick={handleReset} disabled={!dirty || saving}
-          className="text-xs text-white/40 hover:text-white/60 disabled:cursor-not-allowed transition-colors">
-          Reset
-        </button>
-        <button
-          onClick={handleSave}
-          disabled={!dirty || saving}
-          className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold transition-colors"
-        >
-          {saving ? "Saving…" : saved ? "Saved ✓" : "Save Changes"}
-        </button>
+      <div className={`px-6 py-4 border-t border-white/8 space-y-2 transition-opacity ${dirty || saveErr ? "opacity-100" : "opacity-40"}`}>
+        {saveErr && (
+          <p className="text-xs text-red-400 text-center">{saveErr}</p>
+        )}
+        <div className="flex items-center justify-between">
+          <button onClick={handleReset} disabled={!dirty || saving}
+            className="text-xs text-white/40 hover:text-white/60 disabled:cursor-not-allowed transition-colors">
+            Reset
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!dirty || saving}
+            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold transition-colors"
+          >
+            {saving ? "Saving…" : saved ? "Saved ✓" : "Save Changes"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -282,8 +427,21 @@ export default function AdminPlansPage() {
   }, []);
 
   async function handleSave(id: string, updates: Partial<Plan>) {
-    await updatePlan(id, updates);
-    setPlans(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+    const res = await fetch(`/api/admin/plans/${id}`, {
+      method:  "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(updates),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      return { error: json?.error ?? "Save failed. Check server logs." };
+    }
+    // Merge Stripe price IDs back into global plan state
+    const merged: Partial<Plan> = { ...updates };
+    if (json?.stripe_price_id_monthly)  merged.stripe_price_id_monthly  = json.stripe_price_id_monthly;
+    if (json?.stripe_price_id_annually) merged.stripe_price_id_annually = json.stripe_price_id_annually;
+    setPlans(prev => prev.map(p => p.id === id ? { ...p, ...merged } : p));
+    return json;
   }
 
   return (
@@ -315,9 +473,9 @@ export default function AdminPlansPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {plans.map(plan => (
-                <PlanCard key={plan.id} plan={plan} onSave={handleSave} />
+            <div className={`grid grid-cols-1 ${plans.length > 1 ? "lg:grid-cols-3" : "lg:grid-cols-2 max-w-2xl"} gap-6`}>
+              {plans.map((plan, i) => (
+                <PlanCard key={plan.id} plan={plan} index={i} onSave={handleSave} />
               ))}
             </div>
           </>

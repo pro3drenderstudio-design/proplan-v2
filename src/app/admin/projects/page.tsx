@@ -242,6 +242,10 @@ export default function AdminProjectsPage() {
 
             {/* Actions */}
             <div className="space-y-2 pt-2">
+              <Link href={`/admin/projects/${detail.id}`}
+                className="w-full flex items-center justify-center py-2 rounded-lg bg-violet-600/20 border border-violet-500/30 text-violet-400 text-sm font-medium hover:bg-violet-600/30 transition-colors">
+                Edit Categories &amp; Options →
+              </Link>
               <Link href={`/admin/node-bridge?project=${detail.id}`}
                 className="w-full flex items-center justify-center py-2 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 text-sm font-medium hover:bg-blue-600/30 transition-colors">
                 Open Node Bridge →

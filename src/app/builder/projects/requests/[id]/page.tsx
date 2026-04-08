@@ -101,6 +101,7 @@ function BuilderProjectRequestContent() {
   const [builderId,   setBuilderId]   = useState("");
   const [senderName,  setSenderName]  = useState("Builder");
 
+  const [chatOpen,    setChatOpen]    = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef    = useRef<HTMLDivElement>(null);
 
@@ -194,12 +195,12 @@ function BuilderProjectRequestContent() {
   const canSend = !sending && !uploading && (msgBody.trim().length > 0 || attachments.length > 0);
 
   if (loading) return (
-    <div className="p-6 grid grid-cols-[1fr_380px] gap-6">
+    <div className="p-4 md:p-6 space-y-4 md:grid md:grid-cols-[1fr_380px] md:gap-6 md:space-y-0">
       <div className="space-y-4">
         <div className="h-32 bg-[#0e0e0e] rounded-2xl animate-pulse" />
         <div className="h-24 bg-[#0e0e0e] rounded-2xl animate-pulse" />
       </div>
-      <div className="h-[600px] bg-[#0e0e0e] rounded-2xl animate-pulse" />
+      <div className="hidden md:block h-[600px] bg-[#0e0e0e] rounded-2xl animate-pulse" />
     </div>
   );
 
@@ -226,19 +227,21 @@ function BuilderProjectRequestContent() {
           </svg>
           Back to Projects
         </Link>
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-extrabold text-white">{project.name}</h1>
-          <span className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold flex-shrink-0 ${STATUS_STYLE[status] ?? STATUS_STYLE.pending_review}`}>
-            {STATUS_LABEL[status] ?? status}
-          </span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <h1 className="text-lg font-extrabold text-white truncate">{project.name}</h1>
+            <span className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold flex-shrink-0 ${STATUS_STYLE[status] ?? STATUS_STYLE.pending_review}`}>
+              {STATUS_LABEL[status] ?? status}
+            </span>
+          </div>
         </div>
       </div>
 
       {/* Two-column body */}
-      <div className="grid grid-cols-[1fr_400px] gap-0 h-[calc(100%-80px)]">
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_400px] gap-0 h-[calc(100%-80px)]">
 
         {/* ── Left: Project Info ───────────────────────────────────────── */}
-        <div className="overflow-y-auto p-6 space-y-5 border-r border-white/8">
+        <div className="overflow-y-auto p-4 md:p-6 space-y-5 md:border-r border-white/8">
 
           {/* Pipeline */}
           <div className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-5">
@@ -302,11 +305,37 @@ function BuilderProjectRequestContent() {
           )}
         </div>
 
+        {/* Messages FAB — mobile only */}
+        <div className="md:hidden fixed bottom-6 right-6 z-40">
+          <button
+            onClick={() => setChatOpen(true)}
+            className="relative w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shadow-xl shadow-blue-600/40 transition-colors"
+            aria-label="Open messages"
+          >
+            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 4v-4z" />
+            </svg>
+            {messages.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{messages.length}</span>
+            )}
+          </button>
+        </div>
+
         {/* ── Right: Chat ──────────────────────────────────────────────── */}
-        <div className="flex flex-col bg-[#0a0a0a]">
+        {chatOpen && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setChatOpen(false)} />}
+        <div className={[
+          "flex flex-col bg-[#0a0a0a]",
+          // Mobile: fixed bottom drawer
+          "fixed inset-x-0 bottom-0 z-50 h-[75vh] rounded-t-2xl",
+          "transform transition-transform duration-300",
+          chatOpen ? "translate-y-0" : "translate-y-full",
+          // Desktop: right panel
+          "md:relative md:translate-y-0 md:rounded-none md:h-auto md:border-l md:border-white/8",
+        ].join(" ")}>
           {/* Chat header */}
-          <div className="px-5 py-3.5 border-b border-white/8 flex-shrink-0">
+          <div className="px-5 py-3.5 border-b border-white/8 flex-shrink-0 flex items-center justify-between">
             <p className="text-xs font-bold text-white/50 uppercase tracking-wide">Messages · ProPlan Studio Team</p>
+            <button onClick={() => setChatOpen(false)} className="md:hidden w-7 h-7 flex items-center justify-center rounded-full bg-white/8 text-white/40 hover:text-white transition-colors text-lg">×</button>
           </div>
 
           {/* Messages */}

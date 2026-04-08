@@ -66,6 +66,8 @@ export default function ProjectDetailPage() {
   const [loading,     setLoading]     = useState(true);
   const [updating,    setUpdating]    = useState(false);
   const [reassigning, setReassigning] = useState(false);
+  const [builderDropOpen, setBuilderDropOpen] = useState(false);
+  const builderDropRef = useRef<HTMLDivElement>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [toast,       setToast]       = useState("");
   const [editing,     setEditing]     = useState(false);
@@ -88,6 +90,7 @@ export default function ProjectDetailPage() {
   const [chatSending,   setChatSending]   = useState(false);
   const [adminId,       setAdminId]       = useState("");
   const [adminName,     setAdminName]     = useState("Admin");
+  const [chatOpen,      setChatOpen]      = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const chatFileRef   = useRef<HTMLInputElement>(null);
 
@@ -128,6 +131,17 @@ export default function ProjectDetailPage() {
   }, [id]);
 
   useEffect(() => { chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMsgs]);
+
+  useEffect(() => {
+    if (!builderDropOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (builderDropRef.current && !builderDropRef.current.contains(e.target as Node)) {
+        setBuilderDropOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [builderDropOpen]);
 
   async function handleChatFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
@@ -322,7 +336,7 @@ export default function ProjectDetailPage() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {project.status === "live" && project.slug && project.company_slug && (
               <a href={`/project/${project.company_slug}/${project.slug}`} target="_blank" rel="noreferrer"
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/15 border border-green-400/25 text-xs text-green-400 font-medium rounded-lg hover:bg-green-500/25 transition-colors">
@@ -343,13 +357,13 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* Two-column body */}
-      <div className="flex-1 overflow-hidden flex">
+      <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
 
         {/* ── Left: Project Info ───────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
           {/* Meta cards */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
               { label: "Created",     value: new Date(project.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) },
               { label: "Builder",     value: builder?.company_name ?? project.company_slug ?? "—" },
@@ -547,8 +561,8 @@ export default function ProjectDetailPage() {
                 </span>
               )}
             </div>
-            <div className="grid grid-cols-3">
-              <div className="border-r border-white/8 flex items-center justify-center py-10">
+            <div className="grid grid-cols-1 md:grid-cols-3">
+              <div className="md:border-r border-b md:border-b-0 border-white/8 flex items-center justify-center py-10">
                 <div className="text-center">
                   {project.thumbnail_url ? (
                     <>
@@ -689,11 +703,42 @@ export default function ProjectDetailPage() {
             )}
             <div className="px-4 py-3 space-y-2.5 border-t border-white/5">
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Reassign Builder</p>
-              <select value={project.company_slug ?? ""} disabled={reassigning} onChange={e => handleReassign(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/70 focus:outline-none focus:border-blue-500/60 disabled:opacity-50">
-                <option value="">— Unassigned —</option>
-                {allBuilders.map(b => <option key={b.id} value={b.company_slug}>{b.company_name}</option>)}
-              </select>
+              <div className="relative" ref={builderDropRef}>
+                <button
+                  type="button"
+                  disabled={reassigning}
+                  onClick={() => setBuilderDropOpen(v => !v)}
+                  className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/70 text-left flex items-center justify-between hover:border-white/20 disabled:opacity-50 transition-colors"
+                >
+                  <span>{allBuilders.find(b => b.company_slug === project.company_slug)?.company_name ?? "— Unassigned —"}</span>
+                  <svg className={`w-3 h-3 text-white/30 transition-transform ${builderDropOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {builderDropOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-[#1e1e1e] border border-white/12 rounded-lg shadow-2xl z-50 max-h-48 overflow-y-auto">
+                    <button
+                      onClick={() => { handleReassign(""); setBuilderDropOpen(false); }}
+                      className="w-full text-left px-3 py-2 text-xs text-white/40 hover:bg-white/5 hover:text-white/70 transition-colors"
+                    >
+                      — Unassigned —
+                    </button>
+                    {allBuilders.map(b => (
+                      <button
+                        key={b.id}
+                        onClick={() => { handleReassign(b.company_slug ?? ""); setBuilderDropOpen(false); }}
+                        className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-white/5 ${
+                          b.company_slug === project.company_slug
+                            ? "text-blue-400 bg-blue-500/10"
+                            : "text-white/65 hover:text-white/80"
+                        }`}
+                      >
+                        {b.company_name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               {builder && (
                 <Link href="/admin/builders" className="text-[10px] text-blue-400 hover:underline block">
                   View Builder Profile →
@@ -747,11 +792,37 @@ export default function ProjectDetailPage() {
 
         </div>
 
+        {/* Messages FAB — mobile only */}
+        <div className="md:hidden fixed bottom-6 right-6 z-40">
+          <button
+            onClick={() => setChatOpen(true)}
+            className="relative w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shadow-xl shadow-blue-600/40 transition-colors"
+            aria-label="Open messages"
+          >
+            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 4v-4z" />
+            </svg>
+            {chatMsgs.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{chatMsgs.length}</span>
+            )}
+          </button>
+        </div>
+
         {/* ── Right: Chat ──────────────────────────────────────────────── */}
-        <div className="w-[400px] flex-shrink-0 border-l border-white/8 flex flex-col bg-[#0d0d0d]">
+        {chatOpen && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setChatOpen(false)} />}
+        <div className={[
+          "flex-shrink-0 flex flex-col bg-[#0d0d0d]",
+          // Mobile: fixed bottom drawer
+          "fixed inset-x-0 bottom-0 z-50 h-[75vh] rounded-t-2xl",
+          "transform transition-transform duration-300",
+          chatOpen ? "translate-y-0" : "translate-y-full",
+          // Desktop: right panel
+          "md:relative md:translate-y-0 md:rounded-none md:w-[400px] md:border-l md:border-white/8 md:h-auto",
+        ].join(" ")}>
           {/* Chat header */}
-          <div className="px-5 py-3.5 border-b border-white/8 flex-shrink-0">
+          <div className="px-5 py-3.5 border-b border-white/8 flex-shrink-0 flex items-center justify-between">
             <p className="text-xs font-bold text-white/50 uppercase tracking-wide">Messages · Builder Communication</p>
+            <button onClick={() => setChatOpen(false)} className="md:hidden w-7 h-7 flex items-center justify-center rounded-full bg-white/8 text-white/40 hover:text-white transition-colors text-lg">×</button>
           </div>
 
           {/* Messages */}

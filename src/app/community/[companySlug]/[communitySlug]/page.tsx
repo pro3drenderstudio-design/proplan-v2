@@ -100,7 +100,36 @@ export default function CommunityMapPage({
   const [selectedLot,   setSelectedLot]   = useState<LotWithProject | null>(null);
   const [tooltip,       setTooltip]       = useState<{ x: number; y: number } | null>(null);
   const [imgRect,       setImgRect]       = useState({ left: 0, top: 0, w: 0, h: 0 });
-  const imgRef = useRef<HTMLImageElement>(null);
+  const [mapZoom,       setMapZoom]       = useState(1);
+  const [panOffset,     setPanOffset]     = useState({ x: 0, y: 0 });
+  const [isDragging,    setIsDragging]    = useState(false);
+  const imgRef     = useRef<HTMLImageElement>(null);
+  const mapWrapRef = useRef<HTMLDivElement>(null);
+  const panStart   = useRef({ cx: 0, cy: 0, px: 0, py: 0 });
+  const hasDragged = useRef(false);
+
+  function handleMapWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1.1 : 0.9;
+    setMapZoom(prev => Math.max(0.5, Math.min(4, prev * delta)));
+  }
+
+  function handlePanStart(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest("[data-lot]")) return;
+    hasDragged.current = false;
+    setIsDragging(true);
+    panStart.current = { cx: e.clientX, cy: e.clientY, px: panOffset.x, py: panOffset.y };
+  }
+
+  function handlePanMove(e: React.MouseEvent) {
+    if (!isDragging) return;
+    const dx = e.clientX - panStart.current.cx;
+    const dy = e.clientY - panStart.current.cy;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasDragged.current = true;
+    setPanOffset({ x: panStart.current.px + dx, y: panStart.current.py + dy });
+  }
+
+  function handlePanEnd() { setIsDragging(false); }
 
   useEffect(() => {
     params.then(p => { setCompanySlug(p.companySlug); setCommunitySlug(p.communitySlug); });
@@ -190,9 +219,21 @@ export default function CommunityMapPage({
     <div className="relative h-screen bg-[#080808] overflow-hidden">
 
       {/* ── Map canvas ───────────────────────────────────────────────────────── */}
-      <div className="absolute inset-0">
+      <div
+        className="absolute inset-0 overflow-hidden"
+        onWheel={handleMapWheel}
+        onMouseDown={handlePanStart}
+        onMouseMove={handlePanMove}
+        onMouseUp={handlePanEnd}
+        onMouseLeave={handlePanEnd}
+        style={{ cursor: isDragging ? "grabbing" : "grab" }}
+      >
         {community.site_map_url ? (
-          <div className="relative w-full h-full">
+          <div
+            ref={mapWrapRef}
+            className="relative w-full h-full"
+            style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapZoom})`, transformOrigin: "center center", transition: isDragging ? "none" : "transform 0.1s ease" }}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               ref={imgRef}
@@ -256,10 +297,11 @@ export default function CommunityMapPage({
                         strokeDasharray={isSel ? "5 3" : undefined}
                         className="cursor-pointer"
                         style={{ transition: "fill 0.15s, stroke-width 0.15s" }}
-                        onMouseEnter={e => { setHoveredLot(lot.id); setTooltip({ x: e.clientX, y: e.clientY }); }}
+                        data-lot="true"
+                        onMouseEnter={e => { if (!hasDragged.current) { setHoveredLot(lot.id); setTooltip({ x: e.clientX, y: e.clientY }); } }}
                         onMouseMove={e => setTooltip({ x: e.clientX, y: e.clientY })}
                         onMouseLeave={() => { setHoveredLot(null); setTooltip(null); }}
-                        onClick={() => setSelectedLot(prev => prev?.id === lot.id ? null : lot)}
+                        onClick={() => { if (!hasDragged.current) setSelectedLot(prev => prev?.id === lot.id ? null : lot); }}
                       />
                       {/* Label */}
                       <text
@@ -340,6 +382,25 @@ export default function CommunityMapPage({
             );
           })}
         </div>
+      </div>
+
+      {/* ── Zoom controls ────────────────────────────────────────────────────── */}
+      <div className="absolute bottom-5 right-5 z-20 flex flex-col gap-1" style={{ ...GLASS, borderRadius: 12, padding: "6px" }}>
+        <button onClick={() => setMapZoom(v => Math.min(4, v + 0.15))}
+          className="w-8 h-8 flex items-center justify-center text-white/50 hover:text-white transition-colors text-lg leading-none rounded-lg hover:bg-white/8">+</button>
+        <div className="text-center">
+          <span className="text-[9px] text-white/25 tabular-nums block">{Math.round(mapZoom * 100)}%</span>
+        </div>
+        <button onClick={() => setMapZoom(v => Math.max(0.5, v - 0.15))}
+          className="w-8 h-8 flex items-center justify-center text-white/50 hover:text-white transition-colors text-lg leading-none rounded-lg hover:bg-white/8">−</button>
+        {(mapZoom !== 1 || panOffset.x !== 0 || panOffset.y !== 0) && (
+          <button onClick={() => { setMapZoom(1); setPanOffset({ x: 0, y: 0 }); }}
+            className="w-8 h-8 flex items-center justify-center text-white/30 hover:text-white/60 transition-colors rounded-lg hover:bg-white/8" title="Reset zoom">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* ── Community info card — bottom left ────────────────────────────────── */}
@@ -549,7 +610,7 @@ export default function CommunityMapPage({
                     {/* CTA */}
                     {selectedLot.status === "available" && (
                       <Link
-                        href={`/project/${proj.company_slug}/${proj.slug}?lotId=${encodeURIComponent(selectedLot.id)}&lotNumber=${encodeURIComponent(selectedLot.lot_number)}&communitySlug=${encodeURIComponent(community.slug)}&communityName=${encodeURIComponent(community.name)}`}
+                        href={`/project/${proj.company_slug}/${proj.slug}?lotId=${encodeURIComponent(selectedLot.id)}&lotNumber=${encodeURIComponent(selectedLot.lot_number)}&communitySlug=${encodeURIComponent(community.slug)}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${selectedLot.price_modifier ?? 0}`}
                         className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110"
                         style={{ background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" }}
                       >

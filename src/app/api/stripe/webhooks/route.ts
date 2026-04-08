@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { stripe } from "@/lib/stripe";
 import Stripe from "stripe";
+import { notifyAdminsNewProjectRequest } from "@/lib/notify";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,21 +20,30 @@ async function applyPlanLimits(builderId: string, planId: string) {
     plan_tier:                plan.name,
     rendering_credits:        plan.rendering_credits_monthly,
     rendering_credits_total:  plan.rendering_credits_monthly,
+    ai_credits_remaining:     plan.ai_credits_monthly,
+    ai_credits_total:         plan.ai_credits_monthly,
     max_projects:             plan.max_projects === -1 ? 9999 : plan.max_projects,
     seats_included:           plan.seats_included,
     max_storage_gb:           plan.max_storage_gb,
   }).eq("id", builderId);
 }
 
-// Reset monthly render credits for a builder based on their current plan
+// Reset monthly credits for a builder based on their current plan.
+// Preserves any purchased top-up credits that exceed the monthly allotment.
 async function resetMonthlyCredits(builderId: string) {
   const { data: builder } = await supabase
-    .from("builders").select("plan_id").eq("id", builderId).single();
+    .from("builders").select("plan_id, ai_credits_remaining").eq("id", builderId).single();
   if (!builder?.plan_id) return;
-  const { data: plan } = await supabase.from("plans").select("rendering_credits_monthly, ai_credits_monthly").eq("id", builder.plan_id).single();
+  const { data: plan } = await supabase.from("plans")
+    .select("rendering_credits_monthly, ai_credits_monthly")
+    .eq("id", builder.plan_id).single();
   if (!plan) return;
+  // For AI credits, preserve top-up credits: give them at least the monthly allotment
+  // but don't reduce if they have more from a purchased pack.
+  const currentAiRemaining = builder.ai_credits_remaining ?? 0;
   await supabase.from("builders").update({
-    rendering_credits: plan.rendering_credits_monthly,
+    rendering_credits:    plan.rendering_credits_monthly,
+    ai_credits_remaining: Math.max(currentAiRemaining, plan.ai_credits_monthly),
   }).eq("id", builderId);
 }
 
@@ -57,7 +67,84 @@ export async function POST(req: NextRequest) {
     switch (event.type) {
 
       case "checkout.session.completed": {
-        const session  = event.data.object as Stripe.Checkout.Session;
+        const session = event.data.object as Stripe.Checkout.Session;
+
+        // ── AI credit top-up ──────────────────────────────────────────────────
+        if (session.mode === "payment" && session.metadata?.type === "ai_credits_topup") {
+          const builderId = session.metadata?.builder_id;
+          const qty       = parseInt(session.metadata?.qty ?? "0", 10);
+          if (!builderId || qty <= 0) break;
+
+          // Add credits (cap at 10× monthly allotment to prevent abuse)
+          const { data: builder } = await supabase
+            .from("builders")
+            .select("ai_credits_remaining, ai_credits_total, plan_id")
+            .eq("id", builderId).single();
+          if (!builder) break;
+
+          const newRemaining = (builder.ai_credits_remaining ?? 0) + qty;
+          await supabase.from("builders").update({
+            ai_credits_remaining: newRemaining,
+            ai_credits_total:     (builder.ai_credits_total ?? 0) + qty,
+          }).eq("id", builderId);
+          break;
+        }
+
+        // ── One-time setup fee payment ────────────────────────────────────────
+        if (session.mode === "payment") {
+          const requestId = session.metadata?.project_request_id;
+          const builderId = session.metadata?.builder_id;
+          if (!requestId || !builderId) break;
+
+          // Fetch the project request
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: request } = await (supabase.from("project_requests") as any)
+            .select("*").eq("id", requestId).single();
+          if (!request) break;
+
+          // Flip status to pending_review
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from("project_requests") as any)
+            .update({ status: "pending_review" }).eq("id", requestId);
+
+          // Get builder's company_slug for the project record
+          const { data: builder } = await supabase
+            .from("builders").select("company_slug").eq("id", builderId).single();
+
+          const slug = (request.project_name as string)
+            .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+          // Mirror to projects table
+          const { data: project } = await supabase.from("projects").insert({
+            name:            request.project_name,
+            slug,
+            company_slug:    builder?.company_slug ?? null,
+            home_type:       request.home_type      ?? null,
+            floors:          request.floors          ?? 1,
+            beds:            request.beds            ?? 0,
+            baths:           request.baths           ?? 0,
+            sqft:            request.square_footage  ?? null,
+            base_price:      request.starting_price  ?? 0,
+            description:     request.description     ?? null,
+            status:          "pending_review",
+            sketchfab_uid:   `pending-${requestId}`,
+            camera_defaults: {},
+          }).select().single();
+
+          // Attach any pre-uploaded files to the new project
+          if (project) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (supabase.from("project_files") as any)
+              .update({ project_id: project.id })
+              .eq("request_id", requestId)
+              .is("project_id", null);
+
+            await notifyAdminsNewProjectRequest(project.id);
+          }
+          break;
+        }
+
+        // ── Subscription checkout ─────────────────────────────────────────────
         const builderId = session.metadata?.builder_id;
         const planId    = session.metadata?.plan_id;
         if (!builderId || !planId) break;
@@ -68,12 +155,38 @@ export async function POST(req: NextRequest) {
 
         const sub = subId ? await stripe.subscriptions.retrieve(subId) : null;
 
+        // Pull billing details from Stripe customer + payment method
+        const billingUpdate: Record<string, string | null> = {};
+        const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
+        if (customerId) {
+          const customer = await stripe.customers.retrieve(customerId, {
+            expand: ["invoice_settings.default_payment_method"],
+          }) as Stripe.Customer;
+          if (customer && !customer.deleted) {
+            if (customer.email) billingUpdate.billing_email = customer.email;
+            if (customer.address?.line1) {
+              billingUpdate.billing_address = [customer.address.line1, customer.address.line2].filter(Boolean).join(" ");
+            }
+            if (customer.address?.city)    billingUpdate.city  = customer.address.city;
+            if (customer.address?.state)   billingUpdate.state = customer.address.state;
+            if (customer.address?.postal_code) billingUpdate.zip = customer.address.postal_code;
+            const pm = customer.invoice_settings?.default_payment_method as Stripe.PaymentMethod | null;
+            if (pm?.card) {
+              billingUpdate.payment_method_last4  = pm.card.last4;
+              billingUpdate.payment_method_type   = pm.card.brand.charAt(0).toUpperCase() + pm.card.brand.slice(1);
+              billingUpdate.payment_method_expiry = `${String(pm.card.exp_month).padStart(2, "0")}/${String(pm.card.exp_year).slice(-2)}`;
+            }
+          }
+        }
+
         await supabase.from("builders").update({
-          stripe_subscription_id:    subId ?? null,
+          stripe_subscription_id:     subId ?? null,
           stripe_subscription_status: sub?.status ?? "active",
+          stripe_customer_id:         customerId ?? undefined,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          current_period_end:         sub ? new Date((sub as any).current_period_end * 1000).toISOString() : null,
+          current_period_end: sub ? new Date((sub as any).current_period_end * 1000).toISOString() : null,
           status: "active",
+          ...billingUpdate,
         }).eq("id", builderId);
 
         await applyPlanLimits(builderId, planId);

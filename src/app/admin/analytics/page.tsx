@@ -83,7 +83,7 @@ export default function AnalyticsPage() {
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
         {/* Stat cards */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {statCards.map(c => (
             <div key={c.label} className={`bg-[#1a1a1a] border border-white/8 rounded-xl p-4 ${loading ? "animate-pulse" : ""}`}>
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/30 mb-2">{c.label}</p>
@@ -93,7 +93,7 @@ export default function AnalyticsPage() {
           ))}
         </div>
 
-        <div className="grid grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
 
           {/* Lead Status Breakdown */}
           <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
@@ -126,7 +126,7 @@ export default function AnalyticsPage() {
           </div>
 
           {/* Top Projects by Lead Volume */}
-          <div className="col-span-2 bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
+          <div className="md:col-span-2 bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
             <h3 className="text-xs font-bold text-white mb-4">Top Projects by Lead Volume</h3>
             {topProjects.length === 0 ? (
               <p className="text-xs text-white/25 text-center py-8">No lead data yet</p>
@@ -166,7 +166,8 @@ export default function AnalyticsPage() {
           {leads.length === 0 ? (
             <div className="py-12 text-center text-white/25 text-xs">No leads yet</div>
           ) : (
-            <>
+            <div className="overflow-x-auto">
+            <div className="min-w-[520px]">
               <div className="grid grid-cols-12 gap-4 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-white/25 border-b border-white/5">
                 <span className="col-span-3">Lead</span>
                 <span className="col-span-3">Project</span>
@@ -207,7 +208,8 @@ export default function AnalyticsPage() {
                   </div>
                 ))}
               </div>
-            </>
+            </div>
+            </div>
           )}
         </div>
       </div>

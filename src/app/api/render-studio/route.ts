@@ -66,6 +66,18 @@ function buildPrompt(body: {
   sidingColor?: string;
   sidingType?: string;
   porchPostColor?: string;
+  // Floor plan interior fields
+  floorType?: string;
+  floorColor?: string;
+  wallColor?: string;
+  interiorDoorColor?: string;
+  windowFrameColor?: string;
+  cabinetColor?: string;
+  cabinetStyle?: string;
+  countertopMaterial?: string;
+  countertopColor?: string;
+  accentWallColor?: string;
+  showTextLabels?: boolean;
 }): string {
   const { renderType, style, lighting, season, landscape, revision, isRevision } = body;
 
@@ -80,14 +92,34 @@ function buildPrompt(body: {
   }
 
   if (renderType === "floor_plan") {
+    // Build interior color spec
+    const interiorSpecs: string[] = [];
+    if (body.floorColor && body.floorType) interiorSpecs.push(`${body.floorColor} ${body.floorType} flooring`);
+    else if (body.floorColor) interiorSpecs.push(`${body.floorColor} floors`);
+    else if (body.floorType) interiorSpecs.push(`${body.floorType} flooring`);
+    if (body.wallColor) interiorSpecs.push(`${body.wallColor} walls`);
+    if (body.accentWallColor) interiorSpecs.push(`${body.accentWallColor} accent wall`);
+    if (body.interiorDoorColor) interiorSpecs.push(`${body.interiorDoorColor} interior doors`);
+    if (body.windowFrameColor) interiorSpecs.push(`${body.windowFrameColor} window frames`);
+    if (body.cabinetColor && body.cabinetStyle) interiorSpecs.push(`${body.cabinetColor} ${body.cabinetStyle} cabinets`);
+    else if (body.cabinetColor) interiorSpecs.push(`${body.cabinetColor} cabinets`);
+    else if (body.cabinetStyle) interiorSpecs.push(`${body.cabinetStyle} cabinets`);
+    if (body.countertopColor && body.countertopMaterial) interiorSpecs.push(`${body.countertopColor} ${body.countertopMaterial} countertops`);
+    else if (body.countertopMaterial) interiorSpecs.push(`${body.countertopMaterial} countertops`);
+
     return [
       "convert this 2D floor plan into a photorealistic 3D top-down architectural visualization",
+      body.showTextLabels
+        ? "include clear room labels, dimension annotations, and text overlays on the floor plan"
+        : "no text labels, no room labels, no dimensions, no annotations, no text overlays, no numbers, no letters",
       "furnished rooms with realistic furniture, materials and textures",
-      "hardwood floors in living areas, tile in bathrooms and kitchen, carpet in bedrooms",
+      interiorSpecs.length > 0
+        ? interiorSpecs.join(", ")
+        : "hardwood floors in living areas, tile in bathrooms and kitchen, carpet in bedrooms",
       "realistic soft furnishings, kitchen appliances, bathroom fixtures",
       STYLE_PROMPTS[style] ?? "",
       "soft ambient interior lighting, warm and inviting atmosphere",
-      "professional architectural visualization, 8k ultra-detailed, clean white walls",
+      "professional architectural visualization, 8k ultra-detailed",
       "pure white background outside the floor plan boundary, white paper background",
     ].filter(Boolean).join(", ");
   }
@@ -160,6 +192,17 @@ export async function POST(req: NextRequest) {
     sidingColor?: string;
     sidingType?: string;
     porchPostColor?: string;
+    floorType?: string;
+    floorColor?: string;
+    wallColor?: string;
+    interiorDoorColor?: string;
+    windowFrameColor?: string;
+    cabinetColor?: string;
+    cabinetStyle?: string;
+    countertopMaterial?: string;
+    countertopColor?: string;
+    accentWallColor?: string;
+    showTextLabels?: boolean;
   };
 
   try {

@@ -89,7 +89,8 @@ export default function BuilderDetailPage() {
   const [loading,      setLoading]      = useState(true);
   const [editing,      setEditing]      = useState(false);
   const [editForm,     setEditForm]     = useState<Partial<Builder>>({});
-  const [saving,       setSaving]       = useState(false);
+  const [saving,         setSaving]         = useState(false);
+  const [syncing,        setSyncing]        = useState(false);
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
@@ -138,6 +139,23 @@ export default function BuilderDetailPage() {
     setBuilder({ ...builder, ...editForm } as Builder);
     setEditing(false);
     setSaving(false);
+  }
+
+  async function handleSyncStripe() {
+    if (!builder) return;
+    setSyncing(true);
+    const res = await fetch("/api/admin/builders/sync-stripe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ builder_id: builder.id }),
+    });
+    if (res.ok) {
+      await loadData();
+    } else {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      alert(`Sync failed: ${body.error ?? res.statusText}`);
+    }
+    setSyncing(false);
   }
 
   if (loading) {
@@ -725,21 +743,44 @@ export default function BuilderDetailPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-[9px] uppercase tracking-widest text-white/25 mb-1">Rendering Credits</p>
-                  <p className="text-lg font-bold text-white">{builder.rendering_credits.toLocaleString()} <span className="text-white/30 font-normal text-sm">/ {builder.rendering_credits_total.toLocaleString()}</span></p>
-                  <div className="w-32 bg-white/6 rounded-full h-1.5 mt-1 ml-auto">
-                    <div
-                      className="h-1.5 rounded-full bg-blue-500"
-                      style={{ width: `${(builder.rendering_credits / builder.rendering_credits_total) * 100}%` }}
-                    />
-                  </div>
+                  {builder.rendering_credits_total === -1 || builder.rendering_credits_total >= 9999 ? (
+                    <p className="text-lg font-bold text-white">∞ <span className="text-white/30 font-normal text-sm">Unlimited</span></p>
+                  ) : (
+                    <>
+                      <p className="text-lg font-bold text-white">
+                        {builder.rendering_credits.toLocaleString()}
+                        <span className="text-white/30 font-normal text-sm"> / {builder.rendering_credits_total.toLocaleString()}</span>
+                      </p>
+                      <div className="w-32 bg-white/6 rounded-full h-1.5 mt-1 ml-auto">
+                        <div
+                          className="h-1.5 rounded-full bg-blue-500"
+                          style={{ width: `${Math.min((builder.rendering_credits / builder.rendering_credits_total) * 100, 100)}%` }}
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Billing Information */}
             <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
-              <div className="mb-4">
+              <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xs font-bold text-white">Billing Information</h3>
+                <button
+                  onClick={handleSyncStripe}
+                  disabled={syncing}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-white/50 hover:text-white/70 rounded-lg transition-colors disabled:opacity-40"
+                >
+                  {syncing ? (
+                    <div className="w-3 h-3 border border-white/40 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  )}
+                  Sync from Stripe
+                </button>
               </div>
 
               <div className="space-y-3">

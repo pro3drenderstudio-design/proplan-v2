@@ -86,7 +86,8 @@ export default function SignupPage() {
     });
 
     setLoading(false);
-    router.push("/builder/dashboard");
+    // New builders must subscribe before accessing the dashboard
+    window.location.href = "/builder/subscribe";
   }
 
   const inputClass = "w-full bg-white/5 border border-white/12 rounded-xl px-4 py-3 text-sm text-white placeholder-white/20 outline-none focus:border-blue-500/60 transition-colors";

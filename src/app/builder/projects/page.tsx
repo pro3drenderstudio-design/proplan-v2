@@ -7,6 +7,8 @@ import {
   getBuilderProjects,
   getProjectRequests,
   createProjectRequest,
+  initiateSetupFeeCheckout,
+  getBuilderSubscription,
   ProjectRequest,
 } from "@/lib/builder-api";
 import { Project, RequestCategory } from "@/types/database";
@@ -55,6 +57,10 @@ const EMPTY_FORM = {
 type StagedFile = { file: File; label: string; ext: string };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtUSD(cents: number) {
+  return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
 function timeAgo(dateStr: string) {
   const diff  = Date.now() - new Date(dateStr).getTime();
   const days  = Math.floor(diff / 86400000);
@@ -77,12 +83,18 @@ const LABEL  = "block text-[10px] font-bold uppercase tracking-widest text-white
 
 // ── Logic Component ───────────────────────────────────────────────────────────
 function ProjectsList() {
-  const searchParams = useSearchParams();
+  const searchParams  = useSearchParams();
+  const paymentStatus = searchParams.get("payment"); // "success" | "canceled"
+  const canceledReqId = searchParams.get("request"); // request id if canceled
+
   const [projects,    setProjects]    = useState<Project[]>([]);
   const [requests,    setRequests]    = useState<ProjectRequest[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [showForm,    setShowForm]    = useState(searchParams.get("new") === "1");
   const [tab,         setTab]         = useState<"live" | "requests">("live");
+  const [completingPayment, setCompletingPayment] = useState<string | null>(null);
+  const [modelLimit,  setModelLimit]  = useState<{ max: number; used: number } | null>(null);
+  const [setupFee,    setSetupFee]    = useState<number>(100000);
 
   // Form state
   const [form,        setForm]        = useState(EMPTY_FORM);
@@ -91,14 +103,21 @@ function ProjectsList() {
   const [submitting,  setSubmitting]  = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [success,     setSuccess]     = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropRef      = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    Promise.all([getBuilderProjects(), getProjectRequests()]).then(([p, r]) => {
-      setProjects(p); setRequests(r); setLoading(false);
+    Promise.all([getBuilderProjects(), getProjectRequests(), getBuilderSubscription()]).then(([p, r, sub]) => {
+      setProjects(p);
+      setRequests(r);
+      setLoading(false);
+      if (sub?.builder) {
+        const max  = sub.builder.max_projects ?? 9999;
+        const used = (sub.builder as { active_projects_count?: number }).active_projects_count ?? 0;
+        if (max < 9999) setModelLimit({ max, used });
+      }
+      if (sub?.plan?.model_setup_fee) setSetupFee(sub.plan.model_setup_fee);
     });
   }, []);
 
@@ -109,7 +128,6 @@ function ProjectsList() {
     setSubmitting(false);
     setUploadingFiles(false);
     setSubmitError("");
-    setSuccess(false);
     setShowForm(false);
   }
 
@@ -168,6 +186,8 @@ function ProjectsList() {
     setSubmitting(true);
     setSubmitError("");
 
+    // 1. Save request as awaiting_payment
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await createProjectRequest({
       project_name:      form.project_name.trim(),
       home_type:         form.home_type,
@@ -181,7 +201,7 @@ function ProjectsList() {
       categories_config: categories.filter(c => c.name.trim()).length > 0
         ? categories.filter(c => c.name.trim())
         : null,
-    });
+    } as any);
 
     if (!result) {
       setSubmitError("Something went wrong. Please try again.");
@@ -189,51 +209,109 @@ function ProjectsList() {
       return;
     }
 
-    // Upload staged files to the new project
-    const projectId = result._projectId;
-    if (projectId && stagedFiles.length > 0) {
+    // 2. Upload reference files keyed to the request (not project — project created post-payment)
+    if (stagedFiles.length > 0) {
       setUploadingFiles(true);
       await Promise.all(stagedFiles.map(async sf => {
         const fd = new FormData();
         fd.append("file", sf.file);
         fd.append("file_type", sf.label === "IMG" ? "image" : sf.label === "CAD" ? "cad" : "reference");
         try {
-          await fetch(`/api/projects/${projectId}/files`, { method: "POST", body: fd });
+          await fetch(`/api/project-requests/${result.id}/files`, { method: "POST", body: fd });
         } catch {/* non-fatal */}
       }));
       setUploadingFiles(false);
     }
 
-    setRequests(prev => [result, ...prev]);
-    setSuccess(true);
-    setTimeout(() => { resetForm(); setTab("requests"); }, 2500);
+    // 3. Redirect to Stripe for setup fee payment
+    const checkoutUrl = await initiateSetupFeeCheckout(result.id);
+    if (!checkoutUrl) {
+      setSubmitError("Could not initiate payment. Please try again or contact support.");
+      setSubmitting(false);
+      return;
+    }
+
+    window.location.href = checkoutUrl;
   }
 
-  const liveCount  = projects.filter(p => (p as any).status === "live").length;
-  const devCount   = projects.filter(p => (p as any).status === "in_development").length;
-  const pendCount  = requests.filter(r => r.status === "pending_review").length;
+  // ── Complete payment for an existing awaiting_payment request ──────────────
+  async function handleCompletePayment(requestId: string) {
+    setCompletingPayment(requestId);
+    const checkoutUrl = await initiateSetupFeeCheckout(requestId);
+    if (checkoutUrl) {
+      window.location.href = checkoutUrl;
+    } else {
+      setCompletingPayment(null);
+    }
+  }
+
+  const liveCount    = projects.filter(p => (p as any).status === "live").length;
+  const devCount     = projects.filter(p => (p as any).status === "in_development").length;
+  const pendCount    = requests.filter(r => r.status === "pending_review").length;
+  const unpaidCount  = requests.filter(r => r.status === "awaiting_payment").length;
+  const paidRequests = requests.filter(r => r.status !== "awaiting_payment");
+  const unpaidRequests = requests.filter(r => r.status === "awaiting_payment");
 
   return (
-    <div className="p-8 max-w-7xl mx-auto text-white">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto text-white">
+
+      {/* Payment banners */}
+      {paymentStatus === "success" && (
+        <div className="mb-6 flex items-center gap-3 px-5 py-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300">
+          <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
+          </svg>
+          <div>
+            <p className="text-sm font-semibold">Payment received!</p>
+            <p className="text-xs text-emerald-400/70 mt-0.5">Your model setup is now in the production queue. Our team will be in touch within 1–2 business days.</p>
+          </div>
+        </div>
+      )}
+      {paymentStatus === "canceled" && (
+        <div className="mb-6 flex items-center gap-3 px-5 py-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-300">
+          <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/>
+          </svg>
+          <div>
+            <p className="text-sm font-semibold">Payment canceled — no charge was made.</p>
+            <p className="text-xs text-amber-400/70 mt-0.5">Your setup details were saved. Complete payment anytime from the Requests tab.</p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">My Models</h1>
           <p className="text-sm text-white/30 mt-0.5">Manage configurators and track pricing.</p>
         </div>
-        <button onClick={() => setShowForm(true)}
-          className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-sm font-semibold transition-colors">
-          + New Model Setup
-        </button>
+        {modelLimit && modelLimit.used >= modelLimit.max ? (
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <p className="text-xs font-semibold text-amber-400">Model limit reached</p>
+              <p className="text-[10px] text-white/30">{modelLimit.used} / {modelLimit.max} models used</p>
+            </div>
+            <a href="mailto:support@proplanstudio.com?subject=Increase model limit"
+              className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-sm font-semibold transition-colors">
+              Contact us to add more
+            </a>
+          </div>
+        ) : (
+          <button onClick={() => setShowForm(true)}
+            className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-sm font-semibold transition-colors">
+            + New Model Setup
+            {modelLimit && <span className="ml-2 text-[10px] text-blue-200/60">({modelLimit.used}/{modelLimit.max})</span>}
+          </button>
+        )}
       </div>
 
       {!loading && (
-        <div className="grid grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           {[
-            { label: "Total",          value: projects.length, accent: "text-white" },
-            { label: "Live",           value: liveCount,       accent: "text-emerald-400" },
-            { label: "In Development", value: devCount,        accent: "text-blue-400" },
-            { label: "Pending",        value: pendCount,       accent: "text-amber-400" },
+            { label: "Total",           value: projects.length, accent: "text-white" },
+            { label: "Live",            value: liveCount,       accent: "text-emerald-400" },
+            { label: "In Development",  value: devCount,        accent: "text-blue-400" },
+            { label: "Awaiting Payment",value: unpaidCount,     accent: unpaidCount > 0 ? "text-amber-400" : "text-white/25" },
           ].map(s => (
             <div key={s.label} className="bg-[#0e0e0e] rounded-2xl border border-white/8 px-5 py-4">
               <p className="text-[10px] text-white/25 uppercase tracking-widest font-semibold">{s.label}</p>
@@ -250,7 +328,10 @@ function ProjectsList() {
             className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
               tab === t ? "bg-[#141414] text-white border border-white/10" : "text-white/30"
             }`}>
-            {t === "live" ? `Active (${projects.length})` : `Requests (${requests.length})`}
+            {t === "live"
+              ? `Active (${projects.length})`
+              : <>Requests ({paidRequests.length}){unpaidCount > 0 && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold">{unpaidCount}</span>}</>
+            }
           </button>
         ))}
       </div>
@@ -267,31 +348,65 @@ function ProjectsList() {
               </button>
             </div>
           ) : (
-            requests.map(req => {
-              const matched = projects.find(p => p.name === req.project_name);
-              const inner = (
-                <div className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-5 flex items-center justify-between gap-4 hover:border-white/15 transition-colors group cursor-pointer">
+            <>
+              {/* Awaiting payment — shown at top */}
+              {unpaidRequests.map(req => (
+                <div key={req.id} className="bg-amber-500/6 border border-amber-500/25 rounded-2xl p-5 flex items-center justify-between gap-4">
                   <div className="min-w-0">
-                    <h3 className="font-bold text-white/85 text-sm truncate">{req.project_name}</h3>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold border ${STATUS_STYLE[req.status] ?? STATUS_STYLE.pending_review}`}>
-                        {STATUS_LABEL[req.status] ?? req.status}
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase tracking-wide">
+                        Awaiting Payment
                       </span>
-                      {req.home_type && <span className="text-xs text-white/25">{req.home_type.replace(/_/g, " ")}</span>}
                     </div>
-                    <p className="text-xs text-white/20 mt-1">Submitted {timeAgo(req.created_at)}</p>
+                    <h3 className="font-bold text-white/85 text-sm truncate">{req.project_name}</h3>
+                    <p className="text-xs text-white/30 mt-0.5">
+                      {req.home_type?.replace(/_/g, " ")} · Submitted {timeAgo(req.created_at)}
+                    </p>
+                    <p className="text-xs text-amber-400/60 mt-1">{fmtUSD(setupFee)} setup fee required to enter production</p>
                   </div>
-                  <svg className="w-4 h-4 text-white/20 group-hover:text-white/50 flex-shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                  </svg>
+                  <button
+                    onClick={() => handleCompletePayment(req.id)}
+                    disabled={completingPayment === req.id}
+                    className="flex-shrink-0 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-black text-sm font-bold transition-colors whitespace-nowrap"
+                  >
+                    {completingPayment === req.id ? "Redirecting…" : "Complete Payment →"}
+                  </button>
                 </div>
-              );
-              return matched ? (
-                <Link key={req.id} href={`/builder/projects/${matched.id}`}>{inner}</Link>
+              ))}
+
+              {/* Paid / in-progress requests */}
+              {paidRequests.length === 0 && unpaidRequests.length > 0 ? null : paidRequests.length === 0 ? (
+                <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 py-12 text-center">
+                  <p className="text-white/30 text-sm">No active requests yet.</p>
+                </div>
               ) : (
-                <div key={req.id}>{inner}</div>
-              );
-            })
+                paidRequests.map(req => {
+                  const matched = projects.find(p => p.name === req.project_name);
+                  const inner = (
+                    <div className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-5 flex items-center justify-between gap-4 hover:border-white/15 transition-colors group cursor-pointer">
+                      <div className="min-w-0">
+                        <h3 className="font-bold text-white/85 text-sm truncate">{req.project_name}</h3>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold border ${STATUS_STYLE[req.status] ?? STATUS_STYLE.pending_review}`}>
+                            {STATUS_LABEL[req.status] ?? req.status}
+                          </span>
+                          {req.home_type && <span className="text-xs text-white/25">{req.home_type.replace(/_/g, " ")}</span>}
+                        </div>
+                        <p className="text-xs text-white/20 mt-1">Submitted {timeAgo(req.created_at)}</p>
+                      </div>
+                      <svg className="w-4 h-4 text-white/20 group-hover:text-white/50 flex-shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                      </svg>
+                    </div>
+                  );
+                  return matched ? (
+                    <Link key={req.id} href={`/builder/projects/${matched.id}`}>{inner}</Link>
+                  ) : (
+                    <div key={req.id}>{inner}</div>
+                  );
+                })
+              )}
+            </>
           )}
         </div>
       )}
@@ -348,20 +463,7 @@ function ProjectsList() {
               <button onClick={resetForm} className="text-white/25 hover:text-white/60 text-2xl leading-none transition-colors">×</button>
             </div>
 
-            {/* Success state */}
-            {success ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
-                <div className="w-14 h-14 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-                  <svg className="w-7 h-7 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <p className="text-white font-bold text-lg">Setup Submitted!</p>
-                <p className="text-white/40 text-sm text-center">
-                  Your model setup has been received. We'll review it and be in touch shortly.
-                </p>
-              </div>
-            ) : (
+            {(
               <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
 
                 {/* ─── Section 1: Model Details ──────────────────────────────── */}
@@ -584,10 +686,10 @@ function ProjectsList() {
                     type="submit"
                     disabled={submitting || uploadingFiles || !form.project_name.trim()}
                     className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold transition-colors">
-                    {uploadingFiles ? "Uploading files…" : submitting ? "Submitting…" : "Submit Model Setup"}
+                    {uploadingFiles ? "Uploading files…" : submitting ? "Saving details…" : "Continue to Payment →"}
                   </button>
                   <p className="text-xs text-white/25 text-center">
-                    Our team will review your setup and reach out within 1–2 business days.
+                    A one-time {fmtUSD(setupFee)} setup fee is charged per model. Your details are saved before payment.
                   </p>
                 </div>
 

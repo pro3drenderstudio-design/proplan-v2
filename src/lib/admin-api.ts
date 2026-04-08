@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { Project, CategoryWithOptions, PhaseColumn, ProjectRequest, Lead, Builder, TeamMember, TeamRole, SupportTicket, TicketStatus, Community, Lot, CommunityWithLots, RenderRequest, RenderRequestStatus, Plan, RenderMessageAttachment } from "@/types/database";
+import { Project, Category, Option, CategoryWithOptions, PhaseColumn, ProjectRequest, Lead, Builder, TeamMember, TeamRole, SupportTicket, TicketStatus, Community, Lot, CommunityWithLots, RenderRequest, RenderRequestStatus, Plan, RenderMessageAttachment } from "@/types/database";
 import { CameraCoords } from "@/utils/sketchfab-camera";
 
 // Supabase @postgrest-js v2 conditional type inference only works with generated types.
@@ -132,6 +132,21 @@ export async function updateProjectRequestStatus(
   return true;
 }
 
+export async function getAwaitingPaymentRequests(): Promise<ProjectRequest[]> {
+  const { data, error } = await (supabase.from("project_requests") as AnyQuery)
+    .select("*")
+    .eq("status", "awaiting_payment")
+    .order("created_at", { ascending: false });
+  if (error) { console.error("getAwaitingPaymentRequests:", error.message); return []; }
+  return data as ProjectRequest[];
+}
+
+export async function deleteProjectRequest(id: string): Promise<boolean> {
+  const { error } = await (supabase.from("project_requests") as AnyQuery).delete().eq("id", id);
+  if (error) { console.error("deleteProjectRequest:", error.message); return false; }
+  return true;
+}
+
 // ── Cross-platform leads ──────────────────────────────────────────────────────
 
 export async function getAllLeads(): Promise<Lead[]> {
@@ -158,10 +173,13 @@ export async function updateProjectStatus(
   id: string,
   status: NonNullable<Project["status"]>
 ): Promise<boolean> {
-  const { error } = await (supabase.from("projects") as AnyQuery)
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq("id", id);
-  if (error) { console.error("updateProjectStatus:", error.message); return false; }
+  // Route through the API so notifyProjectStatusChange fires server-side
+  const res = await fetch(`/api/projects/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) { console.error("updateProjectStatus:", await res.text()); return false; }
   return true;
 }
 
@@ -409,6 +427,68 @@ export async function updateLot(
   const { error } = await (supabase.from("lots") as AnyQuery)
     .update({ ...payload, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) { console.error("updateLot:", error.message); return false; }
+  return true;
+}
+
+// ── Categories & Options ──────────────────────────────────────────────────────
+
+export async function createCategory(
+  payload: Pick<Category, "project_id" | "name" | "phase"> & Partial<Pick<Category, "is_mandatory" | "sort_order">>
+): Promise<Category | null> {
+  const { data, error } = await (supabase.from("categories") as AnyQuery)
+    .insert({ is_mandatory: false, sort_order: 0, ...payload })
+    .select()
+    .single();
+  if (error) { console.error("createCategory:", error.message); return null; }
+  return data as Category;
+}
+
+export async function updateCategory(
+  id: string,
+  payload: Partial<Pick<Category, "name" | "phase" | "default_option" | "is_mandatory" | "sort_order">>
+): Promise<boolean> {
+  const { data, error } = await (supabase.from("categories") as AnyQuery)
+    .update(payload)
+    .eq("id", id)
+    .select("id");
+  if (error) { console.error("updateCategory:", error.message); return false; }
+  if (!data || data.length === 0) { console.error("updateCategory: no rows updated — check RLS"); return false; }
+  return true;
+}
+
+export async function deleteCategory(id: string): Promise<boolean> {
+  const { error } = await (supabase.from("categories") as AnyQuery).delete().eq("id", id);
+  if (error) { console.error("deleteCategory:", error.message); return false; }
+  return true;
+}
+
+export async function createOption(
+  payload: Pick<Option, "category_id" | "friendly_name"> & Partial<Pick<Option, "price_impact" | "sort_order" | "thumbnail_url">>
+): Promise<Option | null> {
+  const { data, error } = await (supabase.from("options") as AnyQuery)
+    .insert({ node_list: [], node_conditions: {}, price_impact: 0, sort_order: 0, ...payload })
+    .select()
+    .single();
+  if (error) { console.error("createOption:", error.message); return null; }
+  return data as Option;
+}
+
+export async function updateOption(
+  id: string,
+  payload: Partial<Pick<Option, "friendly_name" | "price_impact" | "sort_order" | "thumbnail_url">>
+): Promise<boolean> {
+  const { data, error } = await (supabase.from("options") as AnyQuery)
+    .update(payload)
+    .eq("id", id)
+    .select("id");
+  if (error) { console.error("updateOption:", error.message); return false; }
+  if (!data || data.length === 0) { console.error("updateOption: no rows updated — check RLS"); return false; }
+  return true;
+}
+
+export async function deleteOption(id: string): Promise<boolean> {
+  const { error } = await (supabase.from("options") as AnyQuery).delete().eq("id", id);
+  if (error) { console.error("deleteOption:", error.message); return false; }
   return true;
 }
 

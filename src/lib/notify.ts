@@ -198,6 +198,74 @@ export async function notifyRenderDeliveryAccepted(requestId: string) {
   });
 }
 
+// ── Setup Fee / Payment Reminders ─────────────────────────────────────────────
+
+export async function notifyPaymentReminder(
+  builderEmail: string,
+  modelName: string,
+  reminderNumber: number,
+) {
+  if (!builderEmail) return;
+  const daysLeft = 3 - reminderNumber;
+  const urgency  = reminderNumber === 3 ? "⚠️ Final Notice" : `Reminder ${reminderNumber} of 3`;
+  const deleteWarning = daysLeft > 0
+    ? `<p style="color:#f59e0b;">Your setup request will be automatically deleted in <strong>${daysLeft} day${daysLeft > 1 ? "s" : ""}</strong> if payment is not completed.</p>`
+    : `<p style="color:#ef4444;"><strong>This is your final reminder.</strong> Your setup request will be deleted tomorrow if payment is not completed.</p>`;
+
+  await sendEmail({
+    to:      builderEmail,
+    subject: `${urgency}: Complete Payment for "${modelName}" Model Setup`,
+    title:   "Action Required — Complete Your Model Setup",
+    body: `
+      <p>You have a pending 3D configurator setup that requires payment to enter production.</p>
+      <p><strong>Model:</strong> ${modelName}</p>
+      <p><strong>Setup Fee:</strong> $1,000 (one-time)</p>
+      ${deleteWarning}
+      <p style="margin-top:20px;">
+        <a href="${APP_URL}/builder/projects"
+           style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">
+          Complete Payment →
+        </a>
+      </p>
+      <p style="color:#666;font-size:12px;margin-top:16px;">
+        Once payment is received, your model setup enters the production queue and our team will be in touch within 1–2 business days.
+      </p>`,
+  });
+}
+
+// ── Lead Notifications ────────────────────────────────────────────────────────
+
+export async function notifyNewLead(
+  projectId: string,
+  lead: { firstName: string; lastName: string; email: string; phone: string | null; totalValue: number }
+) {
+  const info = await projectInfo(projectId);
+  if (!info) return;
+  const { data: builder } = await (db.from("builders") as AQ)
+    .select("contact_email, notification_prefs")
+    .eq("company_slug", info.companySlug)
+    .single();
+  if (!builder?.contact_email) return;
+  if (builder.notification_prefs?.new_lead === false) return;
+
+  const fmtUSD = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+
+  await sendEmail({
+    to:      builder.contact_email,
+    subject: `New Lead: ${lead.firstName} ${lead.lastName} — ${info.name}`,
+    title:   "New Lead Submitted 🎉",
+    body: `
+      <p>Someone just submitted a configuration quote for <strong>${info.name}</strong>.</p>
+      <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+        <tr><td style="padding:6px 0;color:#999;width:130px;">Name</td><td style="color:#eee;font-weight:600;">${lead.firstName} ${lead.lastName}</td></tr>
+        <tr><td style="padding:6px 0;color:#999;">Email</td><td style="color:#eee;">${lead.email}</td></tr>
+        ${lead.phone ? `<tr><td style="padding:6px 0;color:#999;">Phone</td><td style="color:#eee;">${lead.phone}</td></tr>` : ""}
+        <tr><td style="padding:6px 0;color:#999;">Quote Value</td><td style="color:#3b82f6;font-weight:700;font-size:18px;">${fmtUSD(lead.totalValue)}</td></tr>
+      </table>
+      <p><a href="${APP_URL}/builder/leads" style="color:#3b82f6;">View in Lead CRM →</a></p>`,
+  });
+}
+
 // ── Project (Production Queue) Notifications ───────────────────────────────────
 
 export async function notifyAdminsNewProjectRequest(projectId: string) {
@@ -216,8 +284,14 @@ export async function notifyAdminsNewProjectRequest(projectId: string) {
 export async function notifyProjectStatusChange(projectId: string, newStatus: string) {
   const info = await projectInfo(projectId);
   if (!info) return;
-  const email = await builderEmailFromSlug(info.companySlug);
-  if (!email) return;
+  // Check notification_prefs
+  const { data: builder } = await (db.from("builders") as AQ)
+    .select("contact_email, notification_prefs")
+    .eq("company_slug", info.companySlug)
+    .single();
+  if (!builder?.contact_email) return;
+  if (builder.notification_prefs?.project_update === false) return;
+  const email = builder.contact_email as string;
   const statusLabels: Record<string, string> = {
     pending_review: "Pending Review",
     in_development: "In Development",

@@ -46,7 +46,7 @@ export default function PhaseController({ currentPhase, setPhase }: PhaseControl
               onClick={() => setPhase(phase.id)}
               title={phase.description}
               className={[
-                "relative flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-semibold tracking-widest uppercase transition-all duration-200 select-none",
+                "relative flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-xl text-[10px] sm:text-[11px] font-semibold tracking-widest uppercase transition-all duration-200 select-none",
                 isActive
                   ? "text-white"
                   : "text-white/35 hover:text-white/65",
@@ -62,9 +62,9 @@ export default function PhaseController({ currentPhase, setPhase }: PhaseControl
               <span className={`transition-colors ${isActive ? "text-blue-400" : "text-white/25"}`}>
                 {PHASE_ICONS[phase.id]}
               </span>
-              <span>{phase.label}</span>
+              <span className="hidden sm:inline">{phase.label}</span>
               <span
-                className="font-mono text-[9px] ml-0.5"
+                className="hidden sm:inline font-mono text-[9px] ml-0.5"
                 style={{ color: isActive ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.15)" }}
               >
                 0{i + 1}

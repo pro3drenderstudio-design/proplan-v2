@@ -19,7 +19,7 @@ export default function ProjectInfoCard({ project }: ProjectInfoCardProps) {
   ].filter(Boolean) as { label: string; value: string | number }[];
 
   return (
-    <div className="absolute left-4 bottom-24 z-50 w-52">
+    <div className="hidden sm:block absolute left-4 bottom-24 z-50 w-52">
       <div
         className="rounded-2xl p-4"
         style={{

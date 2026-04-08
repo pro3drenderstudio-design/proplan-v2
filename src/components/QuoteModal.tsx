@@ -23,6 +23,7 @@ interface LotInfo {
   lotNumber: string;
   communitySlug: string;
   communityName: string;
+  priceModifier?: number;
 }
 
 interface QuoteModalProps {
@@ -182,22 +183,24 @@ export default function QuoteModal({
         }),
       }).catch(err => console.warn("Email send failed:", err));
 
-      // Save lead
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase.from("leads") as any).insert({
-        project_id:     project.id,
-        first_name:     form.firstName,
-        last_name:      form.lastName,
-        email:          form.email,
-        phone:          form.phone || null,
-        configuration:  Object.fromEntries(
-          Object.entries(selectedOptions).map(([catId, opt]) => [catId, opt.id])
-        ),
-        total_value:    totalPrice,
-        status:         "new",
-        lot_number:     lotInfo?.lotNumber ?? null,
-        community_slug: lotInfo?.communitySlug ?? null,
-        community_name: lotInfo?.communityName ?? null,
+      // Save lead + trigger builder notification
+      await fetch("/api/leads", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id:     project.id,
+          first_name:     form.firstName,
+          last_name:      form.lastName,
+          email:          form.email,
+          phone:          form.phone || null,
+          configuration:  Object.fromEntries(
+            Object.entries(selectedOptions).map(([catId, opt]) => [catId, opt.id])
+          ),
+          total_value:    totalPrice,
+          lot_number:     lotInfo?.lotNumber     ?? null,
+          community_slug: lotInfo?.communitySlug ?? null,
+          community_name: lotInfo?.communityName ?? null,
+        }),
       });
 
       setStep("done");
@@ -210,7 +213,7 @@ export default function QuoteModal({
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center"
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-0"
       style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)" }}>
       <div
         className="relative w-full shadow-2xl shadow-black/60 overflow-hidden"
@@ -272,7 +275,7 @@ export default function QuoteModal({
               <p className="text-white/60 text-sm mb-5">
                 This is what your configured home could look like. Ready to get your full quote?
               </p>
-              <div className="flex gap-3 justify-center">
+              <div className="flex flex-wrap gap-3 justify-center">
                 <button
                   onClick={onClose}
                   className="px-5 py-2.5 rounded-xl text-sm text-white/60 transition-colors" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.09)" }}
@@ -292,7 +295,7 @@ export default function QuoteModal({
 
         {/* ── Step: form ── */}
         {step === "form" && (
-          <div className="p-8">
+          <div className="p-5 sm:p-8">
             {/* Builder branding header */}
             {builder && (
               <div className="flex items-center mb-6 pb-5 border-b border-white/8">
@@ -332,7 +335,7 @@ export default function QuoteModal({
               We&apos;ll send your personalised PDF quote to your email.
             </p>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-white/40 mb-1.5 uppercase tracking-wide">First name</label>
                   <input

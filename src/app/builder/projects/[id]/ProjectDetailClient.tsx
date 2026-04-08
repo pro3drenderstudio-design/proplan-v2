@@ -127,6 +127,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
   const [chatAtts,      setChatAtts]      = useState<ProjectMessageAttachment[]>([]);
   const [chatUploading, setChatUploading] = useState(false);
   const [chatSending,   setChatSending]   = useState(false);
+  const [chatOpen,      setChatOpen]      = useState(false);
   const [builderId,     setBuilderId]     = useState("");
   const [senderName,    setSenderName]    = useState("Builder");
 
@@ -338,7 +339,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
   // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="p-8 max-w-7xl mx-auto space-y-4">
+      <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-4">
         {[1,2,3].map(i => (
           <div key={i} className="bg-white/4 rounded-2xl h-32 animate-pulse" />
         ))}
@@ -348,7 +349,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
 
   if (!project) {
     return (
-      <div className="p-8 max-w-7xl mx-auto text-center py-24">
+      <div className="p-4 md:p-8 max-w-7xl mx-auto text-center py-24">
         <p className="text-white/30 text-sm">Project not found.</p>
         <Link href="/builder/projects" className="mt-3 inline-block text-blue-400 text-sm hover:underline">← Back to Projects</Link>
       </div>
@@ -358,7 +359,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
   const status = project.status ?? "in_development";
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto">
 
       {/* Toast */}
       {toast && (
@@ -374,7 +375,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
           My Projects
         </Link>
 
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
             <h1
               className="text-2xl font-extrabold text-white tracking-tight truncate"
@@ -387,7 +388,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
             </span>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
             <button
               onClick={() => setRequestModal(true)}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-white/10 text-sm font-medium text-white/50 hover:text-white/80 hover:bg-white/5 transition-colors"
@@ -433,10 +434,10 @@ export default function ProjectDetailClient({ id }: { id: string }) {
 
           {/* Model Details */}
           <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 overflow-hidden">
-            <div className="p-5 flex gap-5">
+            <div className="p-5 flex flex-col sm:flex-row gap-5">
               {/* Thumbnail */}
               <div
-                className="relative flex-shrink-0 w-52 h-36 rounded-xl overflow-hidden cursor-pointer group bg-[#141414]"
+                className="relative flex-shrink-0 w-full sm:w-52 h-36 rounded-xl overflow-hidden cursor-pointer group bg-[#141414]"
                 onClick={() => setEditingMeta(true)}
               >
                 {project.thumbnail_url ? (
@@ -464,7 +465,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
                   {fmtPrice(project.base_price ?? 0)}
                 </p>
 
-                <div className="grid grid-cols-4 gap-3 mt-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
                   {[
                     { label: "Bedrooms",   value: project.beds   ?? "—" },
                     { label: "Bathrooms",  value: project.baths  ?? "—" },
@@ -758,10 +759,38 @@ export default function ProjectDetailClient({ id }: { id: string }) {
             </div>
           </div>
 
+          {/* Messages FAB — mobile only */}
+          <div className="lg:hidden fixed bottom-6 right-6 z-40">
+            <button
+              onClick={() => setChatOpen(true)}
+              className="relative w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shadow-xl shadow-blue-600/40 transition-colors"
+              aria-label="Open messages"
+            >
+              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 4v-4z" />
+              </svg>
+              {chatMsgs.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{chatMsgs.length}</span>
+              )}
+            </button>
+          </div>
+
+          {/* Chat backdrop — mobile only */}
+          {chatOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setChatOpen(false)} />}
+
           {/* Chat */}
-          <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 flex flex-col" style={{ minHeight: "480px" }}>
-            <div className="px-4 py-3 border-b border-white/8 flex-shrink-0">
+          <div className={[
+            "bg-[#0e0e0e] border border-white/8 flex flex-col",
+            // Mobile: fixed bottom drawer
+            "fixed inset-x-0 bottom-0 z-50 h-[75vh] rounded-t-2xl",
+            "transform transition-transform duration-300",
+            chatOpen ? "translate-y-0" : "translate-y-full",
+            // Desktop: inline in grid column
+            "lg:relative lg:translate-y-0 lg:rounded-2xl lg:h-auto lg:min-h-[480px]",
+          ].join(" ")}>
+            <div className="px-4 py-3 border-b border-white/8 flex-shrink-0 flex items-center justify-between">
               <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">Messages · ProPlan Studio Team</p>
+              <button onClick={() => setChatOpen(false)} className="lg:hidden w-7 h-7 flex items-center justify-center rounded-full bg-white/8 text-white/40 hover:text-white transition-colors text-lg">×</button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ maxHeight: "420px" }}>
               {chatMsgs.length === 0 && (
@@ -1043,7 +1072,7 @@ function EditMetadataModal({
   return (
     <div className="fixed inset-0 z-50 flex bg-black/60 backdrop-blur-sm">
       <div className="flex-1" onClick={onClose} />
-      <div className="w-[520px] bg-[#0a0a0a] border-l border-white/8 shadow-2xl shadow-black/60 flex flex-col overflow-hidden">
+      <div className="w-full sm:w-[520px] bg-[#0a0a0a] border-l border-white/8 shadow-2xl shadow-black/60 flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 py-5 border-b border-white/6 flex-shrink-0">
           <h2
             className="font-bold text-white text-lg"
@@ -1063,7 +1092,7 @@ function EditMetadataModal({
                 className={INPUT} />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-white/40 mb-1.5 uppercase tracking-wide">Home Type</label>
                 <select value={form.home_type} onChange={e => set("home_type", e.target.value)}
@@ -1099,7 +1128,7 @@ function EditMetadataModal({
                 className={INPUT} />
             </div>
 
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { key: "beds"   as const, label: "Beds",   type: "number", min: 1 },
                 { key: "baths"  as const, label: "Baths",  type: "number", min: 0.5, step: 0.5 },
@@ -1115,7 +1144,7 @@ function EditMetadataModal({
               ))}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-white/40 mb-1.5 uppercase tracking-wide">Company Slug</label>
                 <input value={form.company_slug} onChange={e => set("company_slug", e.target.value)}

@@ -133,7 +133,7 @@ export default function LeadDetailClient({ id }: { id: string }) {
       )}
 
       {/* ── Hero Header ── */}
-      <div className="relative bg-[#0a0a0a] border-b border-white/8 px-8 py-6 overflow-hidden">
+      <div className="relative bg-[#0a0a0a] border-b border-white/8 px-4 md:px-8 py-4 md:py-6 overflow-hidden">
         <div className="absolute inset-0 blueprint-grid opacity-10" />
         <div className="absolute inset-0 bg-gradient-to-r from-blue-600/5 via-transparent to-transparent" />
         <div className="relative">
@@ -214,15 +214,15 @@ export default function LeadDetailClient({ id }: { id: string }) {
       </div>
 
       {/* ── Body ── */}
-      <div className="px-8 py-6 max-w-7xl mx-auto grid grid-cols-3 gap-6">
+      <div className="px-4 md:px-8 py-4 md:py-6 max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
 
         {/* ── LEFT 2/3 ── */}
-        <div className="col-span-2 space-y-5">
+        <div className="md:col-span-2 space-y-5">
 
           {/* Model Card */}
           {project && (
-            <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 overflow-hidden flex">
-              <div className="relative w-52 h-40 flex-shrink-0">
+            <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 overflow-hidden flex flex-col sm:flex-row">
+              <div className="relative w-full sm:w-52 h-40 flex-shrink-0">
                 {project.thumbnail_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={project.thumbnail_url} alt={project.name} className="w-full h-full object-cover" />
@@ -296,7 +296,8 @@ export default function LeadDetailClient({ id }: { id: string }) {
               </div>
             ) : (
               <>
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[400px]">
                   <thead>
                     <tr className="border-b border-white/6 bg-white/3">
                       <th className="text-left px-5 py-2.5 text-[10px] font-semibold text-white/25 uppercase tracking-widest">Item Description</th>
@@ -305,8 +306,9 @@ export default function LeadDetailClient({ id }: { id: string }) {
                     </tr>
                   </thead>
                 </table>
-                <div className="max-h-72 overflow-y-auto">
-                  <table className="w-full text-sm">
+                </div>
+                <div className="max-h-72 overflow-y-auto overflow-x-auto">
+                  <table className="w-full text-sm min-w-[400px]">
                     <tbody className="divide-y divide-white/5">
                       {configLines.map((line, i) => (
                         <tr key={i} className="hover:bg-white/3 transition-colors">

@@ -44,6 +44,9 @@ export default function NodeBridgePage() {
   // ── Feedback ─────────────────────────────────────────────────────────────────
   const [feedback, setFeedback]               = useState<{ msg: string; ok: boolean } | null>(null);
 
+  // ── Mobile panel ─────────────────────────────────────────────────────────────
+  const [panelOpen, setPanelOpen] = useState(false);
+
   // ── Viewer API ref ───────────────────────────────────────────────────────────
   const apiRef   = useRef<AdminSketchfabApi | null>(null);
   const [apiReady, setApiReady] = useState(false);
@@ -263,15 +266,33 @@ export default function NodeBridgePage() {
 
       {/* Sub-header */}
       <div className="flex items-center px-5 py-2.5 border-b border-white/10 bg-[#1a1a1a] flex-shrink-0">
+        <button
+          onClick={() => setPanelOpen(v => !v)}
+          className="md:hidden mr-3 w-7 h-7 flex items-center justify-center rounded bg-white/8 text-white/50 hover:text-white transition-colors flex-shrink-0"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
         <span className="text-xs text-white/40">
           Node Bridge{selectedProject ? ` › ${selectedProject.name}` : " › Select a project"}
         </span>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
+
+        {/* Mobile backdrop */}
+        {panelOpen && (
+          <div className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={() => setPanelOpen(false)} />
+        )}
 
         {/* ── Left Panel ────────────────────────────────────────────────────── */}
-        <div className="w-72 flex-shrink-0 bg-[#1a1a1a] border-r border-white/10 overflow-y-auto flex flex-col">
+        <div className={[
+          "flex-shrink-0 bg-[#1a1a1a] border-r border-white/10 overflow-y-auto flex flex-col",
+          "fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300",
+          "md:relative md:translate-x-0 md:z-auto md:inset-auto",
+          panelOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        ].join(" ")}>
 
           {/* Section label helper */}
           <div className="flex flex-col gap-5 p-4">

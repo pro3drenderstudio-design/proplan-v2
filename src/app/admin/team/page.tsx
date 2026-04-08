@@ -124,7 +124,7 @@ function MemberModal({ member, onClose, onSaved }: MemberModalProps) {
             <div className="bg-red-500/10 border border-red-500/25 rounded-lg px-3 py-2 text-xs text-red-400">{error}</div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[9px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Full Name *</label>
               <input
@@ -152,7 +152,7 @@ function MemberModal({ member, onClose, onSaved }: MemberModalProps) {
 
           <div>
             <label className="block text-[9px] font-bold uppercase tracking-widest text-white/30 mb-2">Role</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {(["super_admin", "manager", "editor", "viewer", "customer_service", "artist"] as TeamRole[]).map(r => (
                 <button
                   key={r}
@@ -252,23 +252,25 @@ export default function TeamAccessPage() {
     <div className="flex flex-col h-full overflow-hidden">
 
       {/* Header */}
-      <div className="px-6 py-4 border-b border-white/8 flex-shrink-0 flex items-center justify-between">
-        <div>
-          <h1 className="text-base font-bold text-white">Team Member Management</h1>
-          <p className="text-xs text-white/35 mt-0.5">Manage team members, roles, and access permissions.</p>
+      <div className="px-4 md:px-6 py-4 border-b border-white/8 flex-shrink-0 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-base font-bold text-white">Team Management</h1>
+          <p className="text-xs text-white/35 mt-0.5 hidden sm:block">Manage team members, roles, and access permissions.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/12 text-xs text-white/50 hover:text-white hover:border-white/25 transition-colors">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/12 text-xs text-white/50 hover:text-white hover:border-white/25 transition-colors">
             <FilterIcon className="w-3.5 h-3.5" /> Filter
           </button>
-          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/12 text-xs text-white/50 hover:text-white hover:border-white/25 transition-colors">
+          <button className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/12 text-xs text-white/50 hover:text-white hover:border-white/25 transition-colors">
             <ExportIcon className="w-3.5 h-3.5" /> Export
           </button>
           <button
             onClick={() => setModal("add")}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-xs text-white font-medium hover:bg-blue-500 transition-colors"
           >
-            <PlusIcon className="w-3.5 h-3.5" /> Add New Team Member
+            <PlusIcon className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Add New Team Member</span>
+            <span className="sm:hidden">Add Member</span>
           </button>
         </div>
       </div>
@@ -297,6 +299,8 @@ export default function TeamAccessPage() {
           </div>
         ) : (
           <div className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+            <div className="min-w-[600px]">
             {/* Header row */}
             <div className="grid grid-cols-12 gap-4 px-5 py-3 text-[9px] font-bold uppercase tracking-widest text-white/25 border-b border-white/8">
               <div className="col-span-3">Name</div>
@@ -366,6 +370,8 @@ export default function TeamAccessPage() {
                 </div>
               ))}
             </div>
+            </div>{/* min-w-[600px] */}
+            </div>{/* overflow-x-auto */}
 
             {/* Pagination */}
             <div className="flex items-center justify-between px-5 py-3 border-t border-white/8">

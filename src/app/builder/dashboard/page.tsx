@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getBuilderProjects, getLeads, Lead } from "@/lib/builder-api";
-import { Project } from "@/types/database";
+import { getBuilderProjects, getLeads, getBuilderSubscription, Lead } from "@/lib/builder-api";
+import { Project, Plan } from "@/types/database";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt(n: number) {
@@ -61,16 +61,111 @@ function StatCard({
   );
 }
 
+// ── Credit bar ────────────────────────────────────────────────────────────────
+function CreditBar({ label, used, total, remaining, color }: { label: string; used: number; total: number | null; remaining?: number; color: string }) {
+  const unlimited = total === null || total === -1 || total >= 9999;
+  const pct = unlimited ? 0 : Math.min(100, Math.round((used / (total ?? 1)) * 100));
+  const displayRemaining = remaining ?? ((total ?? 0) - used);
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs text-white/50">{label}</span>
+        <span className="text-xs font-semibold text-white/70">
+          {unlimited ? `${used} used · ∞` : `${displayRemaining} / ${total} remaining`}
+        </span>
+      </div>
+      {!unlimited && (
+        <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Subscription card ─────────────────────────────────────────────────────────
+function SubscriptionCard({
+  builder, plan,
+}: {
+  builder: { stripe_subscription_status: string | null; current_period_end: string | null; rendering_credits: number; rendering_credits_total: number; plan_tier: string; ai_credits_remaining: number; ai_credits_total: number };
+  plan: Plan | null;
+}) {
+  const status   = builder.stripe_subscription_status;
+  const isActive = status === "active";
+
+  const daysLeft = builder.current_period_end
+    ? Math.max(0, Math.ceil((new Date(builder.current_period_end).getTime() - Date.now()) / 86400000))
+    : null;
+
+  const rendersUsed      = Math.max(0, (builder.rendering_credits_total ?? 0) - (builder.rendering_credits ?? 0));
+  const rendersTotal     = builder.rendering_credits_total;
+  const aiRemaining      = builder.ai_credits_remaining ?? 0;
+  const aiTotal          = builder.ai_credits_total ?? plan?.ai_credits_monthly ?? null;
+  const aiUsed           = Math.max(0, (aiTotal ?? 0) - aiRemaining);
+
+  const statusStyle = isActive
+    ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20"
+    : status === "past_due"
+      ? "text-red-400 bg-red-400/10 border-red-400/20"
+      : "text-amber-400 bg-amber-400/10 border-amber-400/20";
+
+  return (
+    <div className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-5 mb-6">
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-1">Subscription</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-white">ProPlan Studio</p>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border capitalize ${statusStyle}`}>
+              {status ?? "inactive"}
+            </span>
+          </div>
+          <p className="text-xs text-white/35 mt-0.5">$1,500 / month</p>
+        </div>
+        <div className="text-right">
+          {daysLeft !== null ? (
+            <>
+              <p className={`text-2xl font-extrabold ${daysLeft <= 5 ? "text-red-400" : daysLeft <= 10 ? "text-amber-400" : "text-white"}`}
+                style={{ fontFamily: "var(--font-syne), sans-serif" }}>
+                {daysLeft}d
+              </p>
+              <p className="text-[10px] text-white/30">until renewal</p>
+            </>
+          ) : (
+            <p className="text-xs text-white/25">—</p>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-3 pt-3 border-t border-white/8">
+        <CreditBar label="Traditional Renders" used={rendersUsed} total={rendersTotal} color="bg-violet-500" />
+        <CreditBar label="AI Render Credits"    used={aiUsed}      total={aiTotal}      remaining={aiRemaining} color="bg-amber-400" />
+      </div>
+
+      {!isActive && (
+        <div className="mt-4 pt-3 border-t border-white/8">
+          <Link href="/builder/subscribe"
+            className="w-full flex items-center justify-center py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
+            Reactivate subscription →
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [leads, setLeads]       = useState<Lead[]>([]);
   const [loading, setLoading]   = useState(true);
+  const [subscription, setSubscription] = useState<{ builder: Parameters<typeof SubscriptionCard>[0]["builder"]; plan: Plan | null } | null>(null);
 
   useEffect(() => {
-    Promise.all([getBuilderProjects(), getLeads()]).then(([p, l]) => {
+    Promise.all([getBuilderProjects(), getLeads(), getBuilderSubscription()]).then(([p, l, sub]) => {
       setProjects(p);
       setLeads(l);
+      if (sub) setSubscription(sub);
       setLoading(false);
     });
   }, []);
@@ -82,7 +177,7 @@ export default function DashboardPage() {
   const recentLeads    = leads.slice(0, 6);
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-4 md:p-8 max-w-6xl mx-auto">
 
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
@@ -105,8 +200,13 @@ export default function DashboardPage() {
         </Link>
       </div>
 
+      {/* Subscription */}
+      {subscription && (
+        <SubscriptionCard builder={subscription.builder} plan={subscription.plan} />
+      )}
+
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <StatCard
           label="Total Projects"
           value={String(projects.length)}
@@ -133,10 +233,10 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div className="grid grid-cols-5 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-5">
 
         {/* Projects overview */}
-        <div className="col-span-3 bg-[#0e0e0e] rounded-2xl border border-white/8">
+        <div className="md:col-span-3 bg-[#0e0e0e] rounded-2xl border border-white/8">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/6">
             <h2
               className="font-bold text-white text-sm"
@@ -200,7 +300,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Recent leads */}
-        <div className="col-span-2 bg-[#0e0e0e] rounded-2xl border border-white/8">
+        <div className="md:col-span-2 bg-[#0e0e0e] rounded-2xl border border-white/8">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/6">
             <h2
               className="font-bold text-white text-sm"
@@ -245,7 +345,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Quick actions */}
-      <div className="mt-5 grid grid-cols-3 gap-4">
+      <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           {
             label: "Request New Project",

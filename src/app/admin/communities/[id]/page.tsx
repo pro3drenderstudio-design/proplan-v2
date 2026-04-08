@@ -43,12 +43,47 @@ export default function CommunityEditorPage() {
   const [savingLot,      setSavingLot]      = useState(false);
   const [deletingLot,    setDeletingLot]    = useState(false);
 
+  // Mobile panel
+  const [panelOpen, setPanelOpen] = useState(false);
+
   // Site map upload
   const [mapUploading,   setMapUploading]   = useState(false);
   const [svgSize,        setSvgSize]        = useState({ w: 0, h: 0 });
-  const mapRef      = useRef<HTMLDivElement>(null);
-  const imgRef      = useRef<HTMLImageElement>(null);
+  const [mapZoom,        setMapZoom]        = useState(1);
+  const [panOffset,      setPanOffset]      = useState({ x: 0, y: 0 });
+  const [isDragging,     setIsDragging]     = useState(false);
+  const mapRef       = useRef<HTMLDivElement>(null);
+  const imgRef       = useRef<HTMLImageElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mapAreaRef   = useRef<HTMLDivElement>(null);
+  const panStart     = useRef({ cx: 0, cy: 0, px: 0, py: 0 });
+  const hasDragged   = useRef(false);
+
+  function handleMapWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1.1 : 0.9;
+    setMapZoom(prev => Math.max(0.3, Math.min(4, prev * delta)));
+  }
+
+  function handlePanStart(e: React.MouseEvent) {
+    if (isDrawing) return;
+    if ((e.target as HTMLElement).closest("[data-lot]")) return; // don't pan when clicking a lot
+    hasDragged.current = false;
+    setIsDragging(true);
+    panStart.current = { cx: e.clientX, cy: e.clientY, px: panOffset.x, py: panOffset.y };
+  }
+
+  function handlePanMove(e: React.MouseEvent) {
+    if (!isDragging || isDrawing) return;
+    const dx = e.clientX - panStart.current.cx;
+    const dy = e.clientY - panStart.current.cy;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasDragged.current = true;
+    setPanOffset({ x: panStart.current.px + dx, y: panStart.current.py + dy });
+  }
+
+  function handlePanEnd() {
+    setIsDragging(false);
+  }
 
   // Share & Publish
   const [copiedShare, setCopiedShare] = useState<"url" | "embed" | null>(null);
@@ -286,7 +321,7 @@ export default function CommunityEditorPage() {
   const { w, h } = svgSize;
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden relative">
       {/* Toast */}
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#111] border border-white/15 text-white text-sm px-4 py-2.5 rounded-xl shadow-2xl">
@@ -303,7 +338,26 @@ export default function CommunityEditorPage() {
             <span>›</span>
             <span className="text-white/70 font-medium">{community.name}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Mobile panel toggle */}
+            <button
+              onClick={() => setPanelOpen(v => !v)}
+              className="md:hidden flex items-center gap-1.5 px-2.5 py-1.5 bg-white/6 border border-white/10 text-xs text-white/50 rounded-lg hover:text-white transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h8" />
+              </svg>
+              Lots
+            </button>
+            {/* Zoom controls */}
+            <div className="flex items-center gap-1 bg-white/4 border border-white/8 rounded-lg px-1 py-0.5">
+              <button onClick={() => setMapZoom(v => Math.max(0.3, v - 0.1))} className="w-6 h-6 flex items-center justify-center text-white/40 hover:text-white transition-colors text-base leading-none">−</button>
+              <span className="text-[10px] text-white/35 w-9 text-center tabular-nums">{Math.round(mapZoom * 100)}%</span>
+              <button onClick={() => setMapZoom(v => Math.min(4, v + 0.1))} className="w-6 h-6 flex items-center justify-center text-white/40 hover:text-white transition-colors text-base leading-none">+</button>
+              {(mapZoom !== 1 || panOffset.x !== 0 || panOffset.y !== 0) && <button onClick={() => { setMapZoom(1); setPanOffset({ x: 0, y: 0 }); }} className="w-5 h-5 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors ml-0.5" title="Reset view">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>}
+            </div>
             {community.slug && community.company_slug && (
               <a href={`/community/${community.company_slug}/${community.slug}`}
                 target="_blank" rel="noreferrer"
@@ -340,13 +394,22 @@ export default function CommunityEditorPage() {
         </div>
 
         {/* Map area */}
-        <div className="flex-1 overflow-hidden flex items-center justify-center bg-[#0d0d0d] p-4">
+        <div
+          ref={mapAreaRef}
+          className="flex-1 overflow-hidden flex items-center justify-center bg-[#0d0d0d] p-4"
+          onWheel={handleMapWheel}
+          onMouseDown={handlePanStart}
+          onMouseMove={handlePanMove}
+          onMouseUp={handlePanEnd}
+          onMouseLeave={handlePanEnd}
+          style={{ cursor: isDrawing ? "crosshair" : isDragging ? "grabbing" : "grab" }}
+        >
           {community.site_map_url ? (
             <div
               ref={mapRef}
               className="relative max-w-full max-h-full"
-              style={{ cursor: isDrawing ? "crosshair" : "default" }}
-              onClick={handleMapClick}
+              style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapZoom})`, transformOrigin: "center center", transition: isDragging ? "none" : "transform 0.1s ease" }}
+              onClick={e => { if (!hasDragged.current) handleMapClick(e); }}
               onMouseMove={handleMapMouseMove}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -370,8 +433,8 @@ export default function CommunityEditorPage() {
                   const col = LOT_COLORS[lot.status];
                   const isSelected = selectedLot?.id === lot.id;
                   return (
-                    <g key={lot.id} style={{ pointerEvents: "all", cursor: "pointer" }}
-                      onClick={e => { e.stopPropagation(); selectLot(lot); }}>
+                    <g key={lot.id} data-lot="true" style={{ pointerEvents: "all", cursor: "pointer" }}
+                      onClick={e => { e.stopPropagation(); if (!hasDragged.current) selectLot(lot); }}>
                       <polygon
                         points={pointsToSvgPoly(lot.polygon, w, h)}
                         fill={col.fill}
@@ -472,8 +535,18 @@ export default function CommunityEditorPage() {
         )}
       </div>
 
+      {/* Mobile backdrop */}
+      {panelOpen && (
+        <div className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={() => setPanelOpen(false)} />
+      )}
+
       {/* ── Right sidebar ── */}
-      <div className="w-72 flex-shrink-0 border-l border-white/8 bg-[#111] flex flex-col overflow-hidden">
+      <div className={[
+        "flex-shrink-0 border-l border-white/8 bg-[#111] flex flex-col overflow-hidden",
+        "fixed inset-y-0 right-0 z-50 w-72 transform transition-transform duration-300",
+        "md:relative md:translate-x-0 md:z-auto md:inset-auto",
+        panelOpen ? "translate-x-0" : "translate-x-full md:translate-x-0",
+      ].join(" ")}>
         {lotForm ? (
           <>
             <div className="px-4 py-3.5 border-b border-white/8 flex items-center justify-between flex-shrink-0">

@@ -48,14 +48,15 @@ const ROLE_LABEL: Record<string, string> = {
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
-  const [pendingCount,  setPendingCount]  = useState<number>(0);
-  const [userName,      setUserName]      = useState("Admin User");
-  const [userInitials,  setUserInitials]  = useState("AU");
-  const [userRole,      setUserRole]      = useState<string>("viewer");
-  const [showUser,      setShowUser]      = useState(false);
-  const [showNotifs,    setShowNotifs]    = useState(false);
-  const [showHelp,      setShowHelp]      = useState(false);
-  const [notifs,        setNotifs]        = useState<Notif[]>([]);
+  const [pendingCount,     setPendingCount]     = useState<number>(0);
+  const [userName,         setUserName]         = useState("Admin User");
+  const [userInitials,     setUserInitials]     = useState("AU");
+  const [userRole,         setUserRole]         = useState<string>("viewer");
+  const [showUser,         setShowUser]         = useState(false);
+  const [showNotifs,       setShowNotifs]       = useState(false);
+  const [showHelp,         setShowHelp]         = useState(false);
+  const [notifs,           setNotifs]           = useState<Notif[]>([]);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const userRef   = useRef<HTMLDivElement>(null);
   const notifRef  = useRef<HTMLDivElement>(null);
   const helpRef   = useRef<HTMLDivElement>(null);
@@ -129,11 +130,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <div className="flex h-screen bg-[#0c0c0c] text-white overflow-hidden">
 
+      {/* Mobile sidebar backdrop */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-40 md:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
       {/* Left gradient accent */}
-      <div className="w-0.5 flex-shrink-0 bg-gradient-to-b from-violet-600 via-blue-600 to-violet-800" />
+      <div className="hidden md:block w-0.5 flex-shrink-0 bg-gradient-to-b from-violet-600 via-blue-600 to-violet-800" />
 
       {/* ── Sidebar ── */}
-      <aside className="w-56 flex-shrink-0 bg-[#111] border-r border-white/8 flex flex-col">
+      <aside className={[
+        "fixed inset-y-0 left-0 z-50 w-56 flex-shrink-0 bg-[#111] border-r border-white/8 flex flex-col",
+        "transform transition-transform duration-300",
+        "md:relative md:translate-x-0 md:z-auto",
+        mobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+      ].join(" ")}>
 
         {/* Logo */}
         <div className="px-4 py-4 border-b border-white/8">
@@ -153,6 +167,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => setMobileSidebarOpen(false)}
                   className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${
                     active
                       ? "bg-blue-600/20 text-blue-400"
@@ -183,6 +198,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <Link
                     key={item.href}
                     href={item.href}
+                    onClick={() => setMobileSidebarOpen(false)}
                     className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${
                       active
                         ? "bg-blue-600/20 text-blue-400"
@@ -209,6 +225,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <Link
                       key={item.href}
                       href={item.href}
+                      onClick={() => setMobileSidebarOpen(false)}
                       className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${
                         active
                           ? "bg-blue-600/20 text-blue-400"
@@ -231,9 +248,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Top Header */}
         <header className="flex-shrink-0 h-13 bg-[#111] border-b border-white/8 flex items-center px-5 gap-4">
+          {/* Mobile hamburger */}
+          <button
+            className="md:hidden flex items-center justify-center w-8 h-8 rounded-lg text-white/50 hover:text-white hover:bg-white/8 transition-colors flex-shrink-0"
+            onClick={() => setMobileSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
           {/* Search */}
-          <div className="flex-1 max-w-sm">
-            <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5">
+          <div className="hidden sm:flex flex-1 max-w-sm">
+            <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 w-full">
               <SearchIcon className="w-3.5 h-3.5 text-white/25 flex-shrink-0" />
               <input
                 type="text"

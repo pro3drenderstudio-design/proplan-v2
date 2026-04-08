@@ -85,6 +85,8 @@ export default function CommunitiesPage() {
           </div>
         ) : (
           <div className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
+          <div className="min-w-[520px]">
             <div className="grid grid-cols-12 gap-4 px-5 py-3 text-[9px] font-bold uppercase tracking-widest text-white/25 border-b border-white/8">
               <div className="col-span-4">Community</div>
               <div className="col-span-3">Builder</div>
@@ -124,6 +126,8 @@ export default function CommunitiesPage() {
                 );
               })}
             </div>
+          </div>{/* min-w */}
+          </div>{/* overflow-x-auto */}
           </div>
         )}
       </div>

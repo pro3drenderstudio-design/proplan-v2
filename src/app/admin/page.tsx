@@ -157,7 +157,7 @@ export default function MissionControlPage() {
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
         {/* Stat Cards */}
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {statCards.map(c => (
             <div key={c.label} className="bg-[#1a1a1a] border border-white/8 rounded-xl p-4">
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/30 mb-2">{c.label}</p>
@@ -170,10 +170,10 @@ export default function MissionControlPage() {
         </div>
 
         {/* Two-column grid */}
-        <div className="grid grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
 
           {/* Left: Pipeline */}
-          <div className="col-span-2 space-y-5">
+          <div className="md:col-span-2 space-y-5">
 
             {/* Pipeline Health */}
             <div className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">

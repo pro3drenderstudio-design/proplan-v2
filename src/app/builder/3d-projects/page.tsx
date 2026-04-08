@@ -600,7 +600,7 @@ function ThreeDProjectsContent() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto text-white">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto text-white">
 
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
@@ -647,7 +647,7 @@ function ThreeDProjectsContent() {
 
       {/* Stats */}
       {!loading && (
-        <div className="grid grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
           {[
             { label: "Total Requests", value: stats.total,      accent: "text-white"        },
             { label: "In Progress",    value: stats.inProgress, accent: "text-blue-400"     },

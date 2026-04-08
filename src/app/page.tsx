@@ -4,16 +4,17 @@ import Footer         from "@/components/landing/Footer";
 import VideoPlaceholder from "@/components/landing/VideoPlaceholder";
 import AIRenderSlider  from "@/components/landing/AIRenderSlider";
 import RenderCarousel  from "@/components/landing/RenderCarousel";
+import { fetchActivePlan, buildPlanFeatures, fmtUSD as fmtPlanUSD } from "@/lib/plans";
 
-// ── Image constants (from Stitch, publicly served) ───────────────────────────
+// ── Image constants ───────────────────────────────────────────────────────────
 const IMG = {
   kitchen:  "https://lh3.googleusercontent.com/aida-public/AB6AXuAYhWuJp9MEDaj2XdONiX8cZFiq3XU_k5eOVCKfLHQurkUjeeaMlf0Mg6nrX6mKW-JhqeEwcO5f72JrAVd5h_1EJgZC5Xb6bCLCoqNNq_ZSeg4gAmicoDBFt8NvaQtnmqogmdaRafLUzasJ5OgpEfQyoqQLhvwlySuTLlfkjfIR5W5veGTkqp4zrw0AfZtrtlNpkKrj2uXPjhVeCiE-cj3zwHhPYuQnfSOkndAZ-1zKlPJb2RF0puWqY3tQJDN3-gAJ4trSg2cEBbA",
   living:   "https://lh3.googleusercontent.com/aida-public/AB6AXuAcgkk9ueCldLD-tmtfAS7WxGC3tIYXLlm4ONf0xo-EgKI_m1zjO-Calw4KN3Mrol8OJ9rrrE7IVgmOtzj_I3wNf1c6FW-tlHXzBLYIJSHeGGe6hGqV7TG1_g62OaMxBVuS79JnCHCoyatKyOl9wlStWdMvPxtUpDqUHM3XZii6YVQ0YlRyadzF6EQMtlwZwqgsYKLfAEk7hYe9Bhg6XVCPZXddIktOtd3z-nIAG5drof4x7HDwL1uWZ2rb2DttTUubAlWY_7XGnMs",
   exterior: "https://lh3.googleusercontent.com/aida-public/AB6AXuAs5y9iqUKoUIUsaabLSGQRHBzMJdLWRWfmzS72MbrngIpzW_NS5armTd4wMJSIx4KJUw0tim46YgW_DuQoITaRFsR-IO5vHYb87YZSw__khAtrwbPIHnphUx3wH7cQaNultfiz2C8QZA6vu6hDc6dBL2gdfdBTxD9T4I8Doq8zP8_oqsJa3gefzMn-i056pYlIMYXZNsQqtquOyEcOS68t1FYXONys2yjXn41MCXSVdDMC2eyKYJTPBcRngQa6JQBX0aTKK2fnJmo",
-  bedroom:  "https://lh3.googleusercontent.com/aida-public/AB6AXuBLSmR4mmN38-KQHDIKqbE9zR-pcilUp4Py2PPFzSkYh9jU_XQDO7PGAa3pkRyGXsx81i2FGBfriMIl1ynP4YdNyK0ZQevakcZgahLd5WQhAxWGwmMsdCPgy3mGSYoPgw-U7pqVkQO2Bh3xOnzNMjuevY4ojcDeeNJmi7Cr4_OXZo8S4eL88eCJLmuI_5Bg_0QGzJtIcYM2CNxExHWAKTBaqtNrr_aepdn1mjj1r5aF_mlpvCDLNpnSwYfOe6AhP73DEDtyfP6-ThE",
+  bedroom:  "https://lh3.googleusercontent.com/aida-public/AB6AXuBLSmR4mmN38-KQHDIKqbE9zR-pcilUp4Py2PPFzSkYh9jU_XQDO7PGAa3pkRyGXsx81i2FGBfriMIl1ynP4YdNyK0ZQevakcZgahLd5WAxWHAxWGwmMsdCPgy3mGSYoPgw-U7pqVkQO2Bh3xOnzNMjuevY4ojcDeeNJmi7Cr4_OXZo8S4eL88eCJLmuI_5Bg_0QGzJtIcYM2CNxExHWAKTBaqtNrr_aepdn1mjj1r5aF_mlpvCDLNpnSwYfOe6AhP73DEDtyfP6-ThE",
 };
 
-// ── Atoms ────────────────────────────────────────────────────────────────────
+// ── Atoms ─────────────────────────────────────────────────────────────────────
 function Pill({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-blue-500/20 bg-blue-500/8 text-[11px] font-semibold text-blue-400 tracking-wide uppercase">
@@ -37,19 +38,14 @@ function Arrow() {
   );
 }
 
-// ── Page data ────────────────────────────────────────────────────────────────
-const STATS = [
-  { value: "3D",   label: "Interactive configurators" },
-  { value: "∞",    label: "Buyer leads captured"      },
-  { value: "$0",   label: "Setup fees — ever"         },
-  { value: "48hr", label: "Avg render turnaround"     },
-];
+// ── Page data ─────────────────────────────────────────────────────────────────
+// STATS is now computed inside LandingPage to use dynamic plan prices — see below
 
 const PRODUCTS = [
   {
     href:    "/products/configurator",
     name:    "3D Configurator",
-    desc:    "Buyers select elevations, finishes, and upgrades in real time. Every choice updates their price instantly — and becomes a structured lead.",
+    desc:    "Buyers select elevations, finishes, and upgrades in real time. Every choice updates their price instantly and becomes a structured lead your sales team can act on.",
     label:   "Interactive",
     dot:     "bg-blue-400",
     ring:    "ring-blue-500/20",
@@ -60,7 +56,7 @@ const PRODUCTS = [
   {
     href:    "/products/ai-renders",
     name:    "AI Render Studio",
-    desc:    "Upload a floor plan or brief and generate photorealistic exterior, interior, and aerial views in seconds. Included in every plan.",
+    desc:    "Upload a floor plan and generate photorealistic exterior, interior, and aerial views in seconds. 250 AI credits included every month — no extra charge.",
     label:   "AI-powered",
     dot:     "bg-amber-400",
     ring:    "ring-amber-500/20",
@@ -71,7 +67,7 @@ const PRODUCTS = [
   {
     href:    "/products/3d-rendering",
     name:    "3D Rendering Service",
-    desc:    "Hand-crafted photorealistic renders by our in-house studio team. Marketing-grade quality, 48hr turnaround. Included in your monthly plan.",
+    desc:    "Hand-crafted photorealistic renders by our in-house studio. Marketing-grade quality, 48hr turnaround. Included in your monthly plan — not sold separately.",
     label:   "Studio",
     dot:     "bg-violet-400",
     ring:    "ring-violet-500/20",
@@ -82,8 +78,8 @@ const PRODUCTS = [
   {
     href:    "/products/site-maps",
     name:    "Interactive Site Maps",
-    desc:    "Link available lots to your home models. Buyers pick their lot, configure their home, and you capture exactly what they want.",
-    label:   "Coming soon",
+    desc:    "Link available lots to your home models. Buyers pick their lot, configure their home, and submit — you receive every preference before the first sales call.",
+    label:   "Interactive",
     dot:     "bg-teal-400",
     ring:    "ring-teal-500/20",
     bg:      "from-teal-500/8 to-transparent",
@@ -92,31 +88,7 @@ const PRODUCTS = [
   },
 ];
 
-const STEPS = [
-  { n: "01", title: "Submit your floor plans",       desc: "Share your home model details and option list through your builder portal. Our team reviews scope and gets started." },
-  { n: "02", title: "We build your 3D model",        desc: "Our artists construct the full model — geometry, materials, lighting — and configure your option categories and price rules." },
-  { n: "03", title: "Review and go live",            desc: "Access a preview link on any device. Approve or request revisions. When ready, we publish to your buyers." },
-  { n: "04", title: "Capture buyer configurations",  desc: "Buyers configure their home on your website. Each submission is saved as a structured lead with full selection data." },
-  { n: "05", title: "Receive renders & AI images",   desc: "Your monthly render allocation and AI credits are delivered — ready for marketing, pre-sales, and social media." },
-];
-
-const TIERS = [
-  {
-    name: "Launch", price: 699, desc: "Perfect for your first configurator.",
-    highlight: false,
-    perks: ["2 active home model configurators", "15 traditional 3D renders / mo", "150 AI render credits / mo", "Lead CRM", "Basic analytics", "Email support"],
-  },
-  {
-    name: "Studio", price: 1499, desc: "Built for active builders with multiple communities.",
-    highlight: true, badge: "Most Popular",
-    perks: ["5 active home model configurators", "50 traditional 3D renders / mo", "400 AI render credits / mo", "Lead CRM + analytics + exports", "1 interactive site map", "Priority support"],
-  },
-  {
-    name: "Scale", price: 2499, desc: "Unlimited output for high-volume builders.",
-    highlight: false,
-    perks: ["Unlimited configurators", "Unlimited traditional renders*", "1,000 AI render credits / mo", "Unlimited site maps", "White-label configurator", "Dedicated success manager"],
-  },
-];
+// STEPS and VALUE_COMPARE are built inside LandingPage to use dynamic plan prices
 
 const ROADMAP = [
   {
@@ -142,28 +114,55 @@ const TESTIMONIALS = [
     name: "Marcus T.", role: "Sales Director", company: "Meridian Custom Homes", init: "MT", grad: "from-blue-600 to-indigo-700",
   },
   {
-    quote: "We were paying a rendering studio $1,200 per image. Now our renders and AI concepts are included. I can show five design variations in one meeting without waiting days.",
+    quote: "We were paying a rendering studio $1,200 per image. Now renders and AI concepts are included. I can show five design variations in one meeting without waiting days.",
     name: "Sandra K.", role: "Marketing Manager", company: "Ridgeline Communities", init: "SK", grad: "from-violet-600 to-purple-800",
   },
   {
-    quote: "The configurator captures buyer selections we never had before — elevation, finishes, upgrades. Our sales team walks into every meeting with full context.",
+    quote: "The configurator captures buyer selections we never had before — elevation, finishes, upgrades. Our sales team walks into every meeting knowing exactly what that buyer wants.",
     name: "James P.", role: "VP of Sales", company: "Keystone Builders", init: "JP", grad: "from-teal-600 to-cyan-800",
   },
 ];
 
-// ── Page ─────────────────────────────────────────────────────────────────────
-export default function LandingPage() {
+// ── Page ──────────────────────────────────────────────────────────────────────
+export default async function LandingPage() {
+  const activePlan = await fetchActivePlan();
+  const monthlyPrice   = activePlan?.price_monthly  ?? 150000;   // cents
+  const annualPrice    = activePlan?.price_annually  ?? 1650000;
+  const annualPerMonth = Math.round(annualPrice / 12);
+  const annualSavings  = monthlyPrice * 12 - annualPrice;
+  function fmtUSD(cents: number) {
+    return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  }
+
+  const STATS = [
+    { value: "$800+",              label: "Saved per render vs. external studios" },
+    { value: "∞",                  label: "Traditional renders per month"         },
+    { value: `${activePlan?.ai_credits_monthly ?? 250}`, label: "AI concept renders included" },
+    { value: fmtUSD(monthlyPrice), label: "All-in monthly — no surprises"         },
+  ];
+
+  const STEPS = [
+    { n: "01", title: "Subscribe and request your first model", desc: `Sign up for ${fmtUSD(monthlyPrice)}/mo and submit your first model setup through your builder portal. Pay the one-time ${fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)} setup fee and we get started immediately.` },
+    { n: "02", title: "We build your 3D model",                 desc: "Our artists construct the full model — geometry, materials, lighting, option categories, and pricing rules. You don't touch a single 3D tool." },
+    { n: "03", title: "Review and go live",                     desc: "Access a preview link on any device. Approve or request revisions. When ready, we publish to your buyers and you start capturing leads." },
+    { n: "04", title: "Buyers configure, you close",            desc: "Every buyer interaction is saved as a structured lead — elevation, finishes, upgrades, and price. Your sales team walks into every meeting with full context." },
+    { n: "05", title: "Renders and AI images, every month",     desc: `Your unlimited render allocation and ${activePlan?.ai_credits_monthly ?? 250} AI credits reset monthly — ready for marketing, pre-sales, social media, and sales meetings.` },
+  ];
+
+  const VALUE_COMPARE = [
+    { label: "External rendering studio",  cost: "$800–$2,000",    per: "per image",        highlight: false },
+    { label: "Freelance 3D configurator",  cost: "$5,000–$15,000", per: "one-time build",   highlight: false },
+    { label: "ProPlan Studio",             cost: fmtUSD(monthlyPrice), per: "/ month, all-in", highlight: true },
+  ];
+
   return (
     <div className="min-h-screen bg-[#080808] text-white overflow-x-hidden">
       <Nav />
 
       {/* ── HERO ─────────────────────────────────────────────────────────── */}
       <section className="relative pt-24 pb-8 px-5 overflow-hidden">
-        {/* Blueprint grid background */}
         <div className="absolute inset-0 blueprint-grid opacity-40" />
-        {/* Radial vignette over grid */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_0%,rgba(8,8,8,0)_0%,#080808_70%)]" />
-        {/* Blue glow top-center */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[500px] bg-blue-600/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative max-w-4xl mx-auto text-center pt-12 pb-6">
@@ -174,31 +173,31 @@ export default function LandingPage() {
             className="text-5xl md:text-[70px] font-extrabold leading-[1.03] tracking-[-0.03em] text-white mb-7"
             style={{ fontFamily: "var(--font-syne), sans-serif" }}
           >
-            Turn floor plans into
+            Close homes before
             <br />
             <span className="bg-gradient-to-r from-blue-400 via-violet-400 to-indigo-400 bg-clip-text text-transparent">
-              interactive experiences
+              the first brick is laid
             </span>
           </h1>
           <p className="text-xl text-white/42 leading-relaxed mb-10 max-w-2xl mx-auto">
-            Stop selling flat blueprints. Give buyers the power to customize and visualize their future home in stunning 3D — before the first brick is laid.
+            Give buyers a 3D configurator, unlimited renders, and AI concepts — all managed by the same team who builds your model. One flat monthly price. No per-render fees.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center mb-5">
             <Link href="/auth/signup"
               className="flex items-center justify-center gap-2 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white text-[15px] font-semibold rounded-xl transition-colors shadow-2xl shadow-blue-600/25">
-              Start building now <Arrow />
+              Start your first model <Arrow />
             </Link>
-            <Link href="/pricing"
+            <a href="#demo"
               className="flex items-center justify-center gap-2 px-8 py-4 bg-white/6 hover:bg-white/10 border border-white/10 text-white text-[15px] font-medium rounded-xl transition-all">
-              See plans — from $699/mo
-            </Link>
+              See Demo
+            </a>
           </div>
-          <p className="text-xs text-white/20">No credit card required · No setup fees · Cancel anytime</p>
+          <p className="text-xs text-white/20">{fmtUSD(monthlyPrice)}/mo subscription · {fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)} per model setup · Cancel anytime</p>
         </div>
       </section>
 
       {/* ── VIDEO OVERVIEW ───────────────────────────────────────────────── */}
-      <section className="py-10 px-5">
+      <section id="demo" className="py-10 px-5 scroll-mt-20">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-6">
             <p className="text-[11px] font-semibold text-white/30 uppercase tracking-widest mb-2">Platform overview</p>
@@ -232,8 +231,68 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── VALUE COMPARISON ─────────────────────────────────────────────── */}
+      <section className="py-24 px-5">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-14">
+            <Pill>The numbers</Pill>
+            <h2
+              className="text-4xl md:text-5xl font-extrabold tracking-tight mt-5 mb-4 leading-tight"
+              style={{ fontFamily: "var(--font-syne), sans-serif" }}
+            >
+              What builders used to pay —{" "}
+              <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
+                and what they pay now
+              </span>
+            </h2>
+            <p className="text-white/40 text-lg max-w-xl mx-auto">
+              External rendering studios charge $800–$2,000 per image. A freelance 3D configurator build runs $5,000–$15,000 upfront. ProPlan bundles it all.
+            </p>
+          </div>
+
+          {/* Comparison table */}
+          <div className="space-y-3 mb-12">
+            {VALUE_COMPARE.map((row) => (
+              <div key={row.label}
+                className={`flex items-center justify-between px-6 py-5 rounded-2xl border transition-all ${
+                  row.highlight
+                    ? "bg-blue-600/10 border-blue-500/40 shadow-lg shadow-blue-600/8"
+                    : "bg-[#0e0e0e] border-white/8"
+                }`}>
+                <div className="flex items-center gap-3">
+                  {row.highlight && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500 text-white uppercase tracking-wider">You</span>}
+                  <p className={`text-sm font-semibold ${row.highlight ? "text-white" : "text-white/50"}`}>{row.label}</p>
+                </div>
+                <div className="text-right">
+                  <p className={`text-2xl font-extrabold ${row.highlight ? "text-white" : "text-white/40 line-through"}`}
+                    style={{ fontFamily: "var(--font-syne), sans-serif" }}>
+                    {row.cost}
+                  </p>
+                  <p className={`text-[11px] ${row.highlight ? "text-white/50" : "text-white/25"}`}>{row.per}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Savings callout */}
+          <div className="grid md:grid-cols-3 gap-4">
+            {[
+              { stat: "∞",     label: "Renders included",     sub: "vs. $800–$2,000 each outside" },
+              { stat: "250",   label: "AI credits / month",    sub: "Generate concepts in seconds"  },
+              { stat: "$0",    label: "Extra per-render fees", sub: "Everything in one flat price"  },
+            ].map(c => (
+              <div key={c.label} className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-6 text-center">
+                <p className="text-3xl font-extrabold text-white mb-1" style={{ fontFamily: "var(--font-syne), sans-serif" }}>{c.stat}</p>
+                <p className="text-sm font-semibold text-white/70 mb-1">{c.label}</p>
+                <p className="text-xs text-white/30">{c.sub}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── AI RENDER STUDIO ─────────────────────────────────────────────── */}
-      <section id="ai-renders" className="py-24 px-5 scroll-mt-20">
+      <section id="ai-renders" className="py-24 px-5 border-t border-white/6 scroll-mt-20">
         <div className="max-w-7xl mx-auto">
           <div className="grid lg:grid-cols-[1fr_2fr] gap-12 items-start mb-10">
             <div>
@@ -248,7 +307,7 @@ export default function LandingPage() {
                 </span>
               </h2>
               <p className="text-white/45 leading-relaxed mb-6">
-                Upload your brief and our AI generates exterior, interior, and aerial views in seconds. Included in every plan — no extra charge.
+                Upload your brief and our AI generates exterior, interior, and aerial views in seconds. 250 AI credits included every month — use them for concepts, variations, and mood boards before committing to a full studio render.
               </p>
               <ul className="space-y-2">
                 {["Exterior dusk & golden hour", "Interior lifestyle scenes", "Aerial community views", "Generated in seconds"].map(f => (
@@ -274,22 +333,13 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* Carousel */}
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-4 px-8">
-              <p className="text-sm font-semibold text-white/50">Sample AI renders — generated from home model data</p>
-              <Link href="/auth/signup" className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors">
-                Generate yours <Arrow />
-              </Link>
-            </div>
-            <RenderCarousel />
-          </div>
+          <RenderCarousel />
 
           {/* AI vs Traditional */}
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid md:grid-cols-2 gap-4 mt-8">
             {[
-              { dot: "bg-amber-400", label: "AI Renders — Included", value: "400 / month", sub: "on Studio plan — generate concepts, variations, and mood boards instantly. Delivered in seconds." },
-              { dot: "bg-blue-400",  label: "Traditional Renders — Also Included", value: "50 / month", sub: "on Studio plan — hand-crafted by our studio team. Photorealistic, marketing-grade. 48hr turnaround." },
+              { dot: "bg-amber-400", label: "AI Renders — Included", value: "250 / month", sub: "Generate concepts, variations, and mood boards instantly. Stop waiting days for a freelancer to confirm a brief." },
+              { dot: "bg-blue-400",  label: "Traditional Renders — Also Included", value: "Unlimited / month", sub: "Hand-crafted by our studio team. Photorealistic, marketing-grade, 48hr turnaround. No queue, no per-render billing." },
             ].map(c => (
               <div key={c.label} className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-6">
                 <div className="flex items-center gap-2 mb-3">
@@ -315,24 +365,19 @@ export default function LandingPage() {
             >
               Everything your sales team needs
             </h2>
-            <p className="text-white/45">One subscription. Four tools. Total control over your sales journey.</p>
+            <p className="text-white/45">One subscription. Four tools. Total control over your sales journey — from first look to signed contract.</p>
           </div>
           <div className="grid md:grid-cols-2 gap-5">
             {PRODUCTS.map((p) => (
               <div key={p.href}
                 className={`relative group rounded-2xl border border-white/8 bg-gradient-to-br ${p.bg} bg-[#0e0e0e] hover:border-white/14 transition-all overflow-hidden`}>
-                {/* Subtle grid in card */}
                 <div className="absolute inset-0 blueprint-grid opacity-30" />
                 <div className="relative p-8">
                   <div className="flex items-start justify-between mb-6">
                     <div className={`w-11 h-11 rounded-xl border flex items-center justify-center ${p.iconBg}`}>
                       {p.icon}
                     </div>
-                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${
-                      p.label === "Coming soon"
-                        ? "border-white/10 text-white/30 bg-white/4"
-                        : "border-white/8 text-white/40 bg-white/4"
-                    }`}>
+                    <span className="text-[10px] font-bold px-2.5 py-1 rounded-full border border-white/8 text-white/40 bg-white/4 flex items-center gap-1.5">
                       <span className={`w-1.5 h-1.5 rounded-full ${p.dot}`} />
                       {p.label}
                     </span>
@@ -356,7 +401,6 @@ export default function LandingPage() {
       {/* ── RENDERS SHOWCASE ─────────────────────────────────────────────── */}
       <section className="py-24 px-5 border-t border-white/6">
         <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-16 items-center">
-          {/* Images */}
           <div className="grid grid-cols-2 gap-3">
             {[
               { src: IMG.kitchen,  alt: "Modern kitchen render"    },
@@ -370,22 +414,32 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
-
-          {/* Copy */}
           <div>
             <Pill>Studio rendering</Pill>
             <h2
               className="text-4xl md:text-5xl font-extrabold tracking-tight mt-5 mb-5 leading-tight"
               style={{ fontFamily: "var(--font-syne), sans-serif" }}
             >
-              Professional renders included,{" "}
+              Renders that close deals —{" "}
               <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-                not sold separately
+                included, not invoiced
               </span>
             </h2>
-            <p className="text-white/45 text-lg leading-relaxed mb-8">
-              Every plan includes a monthly allocation of hand-crafted renders by our studio team — marketing-grade quality, 48-hour turnaround.
+            <p className="text-white/45 text-lg leading-relaxed mb-6">
+              The average external studio charges $800–$2,000 per image. With ProPlan, you get unlimited hand-crafted renders every month. Run more marketing campaigns, more design variations, more social posts — without watching a budget.
             </p>
+            <div className="bg-[#0e0e0e] border border-white/8 rounded-xl p-4 mb-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-white/40 mb-1">External studio — 10 renders/month</p>
+                  <p className="text-xl font-bold text-white/40 line-through">$8,000–$20,000/mo</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-white/40 mb-1">ProPlan Studio — unlimited renders</p>
+                  <p className="text-xl font-bold text-white">{fmtUSD(monthlyPrice)}/mo</p>
+                </div>
+              </div>
+            </div>
             <ul className="space-y-3 mb-8">
               {[
                 "Exterior — dusk, day, aerial",
@@ -415,7 +469,7 @@ export default function LandingPage() {
             >
               Live in weeks, not months
             </h2>
-            <p className="text-white/45 text-lg max-w-md mx-auto">We handle all the 3D production. You stay focused on selling homes.</p>
+            <p className="text-white/45 text-lg max-w-md mx-auto">We handle all the 3D production. You focus on selling homes.</p>
           </div>
           <div className="relative">
             <div className="hidden md:block absolute left-[21px] top-10 bottom-10 w-px bg-gradient-to-b from-blue-600/40 via-violet-600/30 to-transparent" />
@@ -453,58 +507,120 @@ export default function LandingPage() {
               className="text-4xl md:text-5xl font-extrabold tracking-tight mt-5 mb-4"
               style={{ fontFamily: "var(--font-syne), sans-serif" }}
             >
-              Renders, configurators, and leads —{" "}
-              <br />
+              One plan.{" "}
               <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-                one flat monthly plan
+                Everything included.
               </span>
             </h2>
-            <p className="text-white/40 text-lg">No setup fees. No per-render charges. No per-lead fees.</p>
+            <p className="text-white/40 text-lg">No per-render charges. No per-lead fees. No hidden extras.</p>
           </div>
-          <div className="grid md:grid-cols-3 gap-4 mb-6">
-            {TIERS.map((tier) => (
-              <div key={tier.name}
-                className={`relative rounded-2xl p-7 flex flex-col border transition-all ${
-                  tier.highlight
-                    ? "bg-gradient-to-b from-blue-600/10 to-transparent border-blue-500/40 shadow-xl shadow-blue-600/8"
-                    : "bg-[#0e0e0e] border-white/8"
-                }`}>
-                {(tier as typeof tier & { badge?: string }).badge && (
-                  <div className="absolute -top-3 left-6 px-3 py-1 rounded-full bg-blue-500 text-[10px] font-bold text-white tracking-wider uppercase">
-                    {(tier as typeof tier & { badge?: string }).badge}
-                  </div>
-                )}
-                <div className="mb-5">
-                  <p className="text-sm font-semibold text-white/55 mb-1" style={{ fontFamily: "var(--font-syne), sans-serif" }}>{tier.name}</p>
-                  <div className="flex items-end gap-1 mb-2">
-                    <span className="text-4xl font-extrabold text-white tracking-tight" style={{ fontFamily: "var(--font-syne), sans-serif" }}>${tier.price.toLocaleString()}</span>
-                    <span className="text-white/30 text-sm pb-1.5">/mo</span>
-                  </div>
-                  <p className="text-xs text-white/35">{tier.desc}</p>
+
+          <div className="grid md:grid-cols-5 gap-6 items-start">
+            {/* Main plan */}
+            <div className="md:col-span-3 bg-blue-600/10 border-2 border-blue-500/50 rounded-2xl p-8 shadow-xl shadow-blue-500/10">
+              <div className="mb-2">
+                <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-blue-500 text-white tracking-wider uppercase">ProPlan Studio</span>
+              </div>
+              <p className="text-sm text-white/45 mt-3 mb-6 leading-relaxed">Everything your team needs — 3D configurators, unlimited renders, AI concepts, site maps, and a lead CRM.</p>
+              <div className="mb-6">
+                <div className="flex items-end gap-1">
+                  <span className="text-5xl font-bold text-white" style={{ fontFamily: "var(--font-syne), sans-serif" }}>{fmtUSD(monthlyPrice)}</span>
+                  <span className="text-white/40 text-sm mb-2">/mo</span>
                 </div>
-                <ul className="space-y-2.5 flex-1 mb-7">
-                  {tier.perks.map(p => (
-                    <li key={p} className="flex items-start gap-2.5 text-xs text-white/50"><Check />{p}</li>
+                <p className="text-[11px] text-white/30 mt-1">Billed monthly · or {fmtUSD(annualPrice)}/yr <span className="text-emerald-400/70">— save {fmtUSD(annualSavings)}</span></p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 mb-7 bg-white/5 rounded-xl p-4">
+                <div className="text-center">
+                  <p className="text-xl font-bold text-white">∞</p>
+                  <p className="text-[9px] text-white/30 mt-0.5">Models</p>
+                </div>
+                <div className="text-center border-x border-white/8">
+                  <p className="text-xl font-bold text-white">∞</p>
+                  <p className="text-[9px] text-white/30 mt-0.5">Renders</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xl font-bold text-white">{activePlan?.ai_credits_monthly ?? 250}</p>
+                  <p className="text-[9px] text-white/30 mt-0.5">AI Credits</p>
+                </div>
+              </div>
+
+              <ul className="space-y-3 mb-8">
+                {(activePlan ? buildPlanFeatures(activePlan) : [
+                  "Unlimited home model configurators",
+                  "Unlimited traditional 3D renders / mo",
+                  "250 AI concept renders / mo",
+                  "Unlimited interactive site maps",
+                  "Lead CRM + analytics + exports",
+                  "Brand customization (logo + colors)",
+                  "Priority support",
+                ]).map(f => (
+                  <li key={f} className="flex items-start gap-2.5"><Check /><span className="text-sm text-white/65">{f}</span></li>
+                ))}
+              </ul>
+
+              <Link href="/auth/signup"
+                className="w-full py-3.5 rounded-xl text-sm font-semibold text-center bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/25 transition-colors block">
+                Get started
+              </Link>
+            </div>
+
+            {/* Setup fee */}
+            <div className="md:col-span-2 space-y-4">
+              <div className="bg-[#141414] border border-white/10 rounded-2xl p-6">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-4">Per-Model Setup Fee</p>
+                <div className="flex items-end gap-1 mb-2">
+                  <span className="text-3xl font-bold text-white" style={{ fontFamily: "var(--font-syne), sans-serif" }}>{fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)}</span>
+                  <span className="text-white/40 text-sm mb-1">/ model</span>
+                </div>
+                <p className="text-xs text-white/40 leading-relaxed mb-5">
+                  One-time fee per 3D configurator model. We handle everything — 3D modeling, Sketchfab setup, node mapping, and going live.
+                </p>
+                <ul className="space-y-2">
+                  {[
+                    "3D model build & optimization",
+                    "Sketchfab scene setup",
+                    "Node mapping & phase config",
+                    "Category & option wiring",
+                    "Live deployment",
+                  ].map(item => (
+                    <li key={item} className="flex items-start gap-2">
+                      <Check />
+                      <span className="text-xs text-white/50">{item}</span>
+                    </li>
                   ))}
                 </ul>
-                <Link href="/auth/signup"
-                  className={`w-full py-3 rounded-xl text-sm font-semibold text-center transition-colors ${
-                    tier.highlight
-                      ? "bg-blue-600 hover:bg-blue-500 text-white"
-                      : "bg-white/8 hover:bg-white/12 text-white"
-                  }`}>
-                  Get started with {tier.name}
-                </Link>
               </div>
-            ))}
+
+              <div className="bg-[#141414] border border-white/10 rounded-2xl p-5">
+                <p className="text-xs font-semibold text-white/60 mb-3">How it works</p>
+                <ol className="space-y-2.5">
+                  {[
+                    `Subscribe for ${fmtUSD(monthlyPrice)}/mo`,
+                    "Request a new model setup",
+                    `Pay ${fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)} setup fee`,
+                    "We build it — you sell it",
+                  ].map((step, i) => (
+                    <li key={step} className="flex items-start gap-2.5 text-xs text-white/40">
+                      <span className="w-4 h-4 rounded-full bg-white/8 text-white/40 text-[9px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                        {i + 1}
+                      </span>
+                      {step}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              <Link href="/pricing"
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-medium border border-white/12 text-white/50 hover:text-white hover:border-white/25 transition-all">
+                Full pricing details <Arrow />
+              </Link>
+            </div>
           </div>
-          <p className="text-center text-[11px] text-white/20">
-            *Unlimited renders on Scale subject to fair-use: one project in queue at a time, 5-day turnaround. · Annual billing saves 2 months.
-          </p>
         </div>
       </section>
 
-      {/* ── ROADMAP / SUGGESTED FEATURES ─────────────────────────────────── */}
+      {/* ── ROADMAP ──────────────────────────────────────────────────────── */}
       <section className="py-20 px-5 border-t border-white/6">
         <div className="max-w-5xl mx-auto">
           <div className="flex items-center gap-3 mb-10">
@@ -537,7 +653,7 @@ export default function LandingPage() {
               className="text-3xl md:text-4xl font-extrabold tracking-tight mt-5"
               style={{ fontFamily: "var(--font-syne), sans-serif" }}
             >
-              Builders close more — with less friction
+              Real builders. Real results.
             </h2>
           </div>
           <div className="grid md:grid-cols-3 gap-4">
@@ -574,33 +690,35 @@ export default function LandingPage() {
             <div className="absolute inset-0 blueprint-grid opacity-20 pointer-events-none" />
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-32 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
             <div className="relative">
-              <div className="flex justify-center mb-6"><Pill>Start today — no setup fee</Pill></div>
+              <div className="flex justify-center mb-6">
+                <Pill>Start today</Pill>
+              </div>
               <h2
                 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-5 leading-tight"
                 style={{ fontFamily: "var(--font-syne), sans-serif" }}
               >
-                Ready to sell homes
+                Stop paying $800 per render.
                 <br />
                 <span className="bg-gradient-to-r from-blue-400 via-violet-400 to-indigo-400 bg-clip-text text-transparent">
-                  before they&apos;re built?
+                  Get unlimited for {fmtUSD(monthlyPrice)}/mo.
                 </span>
               </h2>
               <p className="text-white/40 text-lg mb-10 max-w-md mx-auto leading-relaxed">
-                Join builders using ProPlan Studio to capture more leads, deliver better buyer experiences, and close faster.
+                Subscribe, request your first model, and go live in weeks. Everything — renders, AI, configurator, leads — managed by one team.
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center mb-8">
                 <Link href="/auth/signup"
                   className="flex items-center justify-center gap-2 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white text-[15px] font-semibold rounded-xl transition-colors shadow-2xl shadow-blue-600/25">
-                  Get started free <Arrow />
+                  Start your first model <Arrow />
                 </Link>
                 <Link href="/pricing"
                   className="flex items-center justify-center px-8 py-4 bg-white/6 hover:bg-white/10 border border-white/10 text-white text-[15px] font-medium rounded-xl transition-all">
-                  Compare plans
+                  See full pricing
                 </Link>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-white/25">
-                <span className="flex items-center gap-1.5"><Check />No credit card required</span>
-                <span className="flex items-center gap-1.5"><Check />First model onboarding included</span>
+                <span className="flex items-center gap-1.5"><Check />{fmtUSD(monthlyPrice)}/mo subscription</span>
+                <span className="flex items-center gap-1.5"><Check />{fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)} per model setup</span>
                 <span className="flex items-center gap-1.5"><Check />Cancel anytime</span>
               </div>
             </div>

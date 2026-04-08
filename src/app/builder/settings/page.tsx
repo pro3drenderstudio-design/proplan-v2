@@ -18,11 +18,14 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   return (
     <button
       type="button"
+      role="switch"
+      aria-checked={checked}
       onClick={() => onChange(!checked)}
-      style={{ height: "22px", width: "40px" }}
-      className={`relative rounded-full transition-colors flex-shrink-0 ${checked ? "bg-blue-600" : "bg-white/10"}`}
+      className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors duration-200 focus:outline-none ${checked ? "bg-blue-600" : "bg-white/15"}`}
     >
-      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-5" : "translate-x-0.5"}`} />
+      <span
+        className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-md transform transition-transform duration-200 mt-0.5 ${checked ? "translate-x-5" : "translate-x-0.5"}`}
+      />
     </button>
   );
 }
@@ -81,7 +84,7 @@ function SettingsContent() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: builder } = await (supabase as any)
         .from("builders")
-        .select("company_name,website_url,phone,billing_address,city,state,logo_url,accent_color,location")
+        .select("company_name,website_url,phone,billing_address,city,state,logo_url,accent_color,location,notification_prefs")
         .eq("id", profile.builder_id)
         .single();
 
@@ -104,6 +107,11 @@ function SettingsContent() {
           accent_color:    builder.accent_color    ?? "#3b82f6",
         });
         if (builder.logo_url) setLogoPreview(builder.logo_url);
+
+        // Load saved notification preferences
+        if (builder.notification_prefs) {
+          setNotifs(prev => ({ ...prev, ...builder.notification_prefs }));
+        }
       }
       setLoading(false);
 
@@ -161,7 +169,7 @@ function SettingsContent() {
   }
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
+    <div className="p-4 md:p-8 max-w-3xl mx-auto">
       <div className="mb-8">
         <h1
           className="text-2xl font-extrabold text-white tracking-tight"
@@ -252,22 +260,25 @@ function SettingsContent() {
               <h2 className="text-sm font-bold text-white/80 mb-4">Usage This Month</h2>
               <div className="grid grid-cols-2 gap-4">
                 {[
-                  { label: "Render Credits", used: (subscription.builder.rendering_credits_total - subscription.builder.rendering_credits), total: subscription.builder.rendering_credits_total },
+                  { label: "Render Credits", used: Math.max(0, (subscription.builder.rendering_credits_total ?? 0) - (subscription.builder.rendering_credits ?? 0)), total: subscription.builder.rendering_credits_total },
                   { label: "Team Seats",     used: subscription.builder.seats_used,     total: subscription.builder.seats_included },
                 ].map(item => {
-                  const pct = item.total > 0 ? Math.min((item.used / item.total) * 100, 100) : 0;
+                  const unlimited = item.total === null || item.total === -1 || item.total >= 9999;
+                  const pct = (!unlimited && item.total > 0) ? Math.min((item.used / item.total) * 100, 100) : 0;
                   const isLow = pct >= 80;
                   return (
                     <div key={item.label}>
                       <div className="flex justify-between mb-1.5">
                         <span className="text-xs text-white/40">{item.label}</span>
                         <span className={`text-xs font-semibold ${isLow ? "text-orange-400" : "text-white/50"}`}>
-                          {item.used} / {item.total}
+                          {unlimited ? `${item.used} used · ∞` : `${item.used} / ${item.total}`}
                         </span>
                       </div>
-                      <div className="h-1.5 bg-white/6 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full ${isLow ? "bg-orange-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
-                      </div>
+                      {!unlimited && (
+                        <div className="h-1.5 bg-white/6 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${isLow ? "bg-orange-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -417,11 +428,23 @@ function SettingsContent() {
           ))}
           <div className="px-6 py-4 flex justify-end">
             <button
-              onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 2500); }}
-              className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition-colors shadow-lg ${
+              onClick={async () => {
+                if (!builderId) return;
+                setSaving(true);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase as any)
+                  .from("builders")
+                  .update({ notification_prefs: notifs, updated_at: new Date().toISOString() })
+                  .eq("id", builderId);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2500);
+              }}
+              disabled={saving || !builderId}
+              className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition-colors shadow-lg disabled:opacity-50 ${
                 saved ? "bg-emerald-600 text-white shadow-emerald-600/20" : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/20"
               }`}>
-              {saved ? "✓ Saved" : "Save Preferences"}
+              {saved ? "✓ Saved" : saving ? "Saving…" : "Save Preferences"}
             </button>
           </div>
         </div>

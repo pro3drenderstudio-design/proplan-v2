@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import CreditTopupBanner from "@/components/builder/CreditTopupBanner";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -219,8 +220,8 @@ function ArchiveView({
     <div className="flex-1 overflow-y-auto">
 
       {/* Header */}
-      <div className="px-8 pt-8 pb-5 flex items-start justify-between">
-        <div>
+      <div className="px-4 md:px-8 pt-6 md:pt-8 pb-5 flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h1
             className="text-2xl font-extrabold text-white tracking-tight"
             style={{ fontFamily: "var(--font-syne), sans-serif" }}
@@ -233,7 +234,7 @@ function ArchiveView({
         </div>
         <button
           onClick={onNew}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20"
+          className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20"
         >
           <span className="text-base leading-none">+</span> New Render
         </button>
@@ -242,7 +243,7 @@ function ArchiveView({
       {!loading && records.length > 0 && (
         <>
           {/* Stat cards */}
-          <div className="px-8 pb-6 grid grid-cols-4 gap-4">
+          <div className="px-4 md:px-8 pb-6 grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
               { label: "Total Renders",  value: records.length,       accent: "text-white"        },
               { label: "Exteriors",      value: counts.elevation,     accent: "text-blue-400"     },
@@ -262,7 +263,7 @@ function ArchiveView({
           </div>
 
           {/* Filter tabs */}
-          <div className="px-8 pb-4 flex items-center gap-2">
+          <div className="px-4 md:px-8 pb-4 flex items-center gap-2 flex-wrap">
             {[
               { id: "all",        label: `All (${records.length})`         },
               { id: "elevation",  label: `Exterior (${counts.elevation})`  },
@@ -292,7 +293,7 @@ function ArchiveView({
       )}
 
       {/* Grid */}
-      <div className="px-8 pb-10">
+      <div className="px-4 md:px-8 pb-10">
         {loading ? (
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {[...Array(8)].map((_, i) => (
@@ -390,11 +391,23 @@ function ArchiveView({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+interface CreditInfo {
+  builderId:    string;
+  remaining:    number;
+  total:        number;
+  packQty:      number;
+  packPrice:    number;
+}
+
 export default function RenderStudioPage() {
-  const [view, setView] = useState<View>("archive");
+  const [view,        setView]        = useState<View>("archive");
+  const [controlsOpen, setControlsOpen] = useState(false);
 
   const [records,        setRecords]        = useState<RenderRecord[]>([]);
   const [archiveLoading, setArchiveLoading] = useState(true);
+
+  // AI credit tracking
+  const [creditInfo,     setCreditInfo]     = useState<CreditInfo | null>(null);
 
   const [renderType, setRenderType] = useState<RenderType>("elevation");
   const [style,      setStyle]      = useState<StyleId>("traditional");
@@ -412,6 +425,17 @@ export default function RenderStudioPage() {
     setElevColors(prev => ({ ...prev, [key]: val }));
   }
 
+  // Floor plan interior color fields
+  const [fpColors, setFpColors] = useState({
+    floorType: "", floorColor: "", wallColor: "", interiorDoorColor: "",
+    windowFrameColor: "", cabinetColor: "", cabinetStyle: "", countertopMaterial: "",
+    countertopColor: "", accentWallColor: "",
+  });
+  const [showTextLabels, setShowTextLabels] = useState(false);
+  function setFp(key: keyof typeof fpColors, val: string) {
+    setFpColors(prev => ({ ...prev, [key]: val }));
+  }
+
   const [referenceDataUrl, setReferenceDataUrl] = useState<string | null>(null);
   const [renderDataUrl,    setRenderDataUrl]    = useState<string | null>(null);
   const [renderSavedUrl,   setRenderSavedUrl]   = useState<string | null>(null);
@@ -420,26 +444,51 @@ export default function RenderStudioPage() {
   const [elapsed,          setElapsed]          = useState(0);
   const [error,            setError]            = useState("");
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const dropRef      = useRef<HTMLDivElement>(null);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Markup mode
+  const [isMarkingUp,      setIsMarkingUp]      = useState(false);
+  const [markupColor,      setMarkupColor]      = useState("#ef4444");
+  const [markupWidth,      setMarkupWidth]      = useState(4);
+  const [markupTool,       setMarkupTool]       = useState<"pen" | "eraser">("pen");
+  const markupCanvasRef    = useRef<HTMLCanvasElement>(null);
+  const markupDrawing      = useRef(false);
+  const markupStrokes      = useRef<ImageData[]>([]);
+
+  const fileInputRef   = useRef<HTMLInputElement>(null);
+  const dropRef        = useRef<HTMLDivElement>(null);
+  const timerRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const renderImgRef   = useRef<HTMLImageElement | null>(null);
+
+  async function getBuilderIdFromSession(): Promise<string | null> {
+    // Impersonation takes priority
+    if (typeof window !== "undefined") {
+      const imp = window.localStorage.getItem("proplan_impersonate_builder_id");
+      if (imp) return imp;
+    }
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: profile } = await (supabase.from("profiles") as any)
+      .select("builder_id").eq("id", user.id).single();
+    return profile?.builder_id ?? null;
+  }
+
+  // Size markup canvas to match rendered image dimensions
+  useEffect(() => {
+    if (!isMarkingUp || !renderDataUrl) return;
+    const img = new Image();
+    img.onload = () => {
+      const canvas = markupCanvasRef.current;
+      if (!canvas) return;
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      markupStrokes.current = [];
+    };
+    img.src = renderDataUrl;
+  }, [isMarkingUp, renderDataUrl]);
 
   async function loadArchive() {
     setArchiveLoading(true);
-    // Get builder_id first
-    const { data: { user } } = await supabase.auth.getUser();
-    let builderId: string | null = null;
-    if (user) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: profile } = await (supabase.from("profiles") as any)
-        .select("builder_id").eq("id", user.id).single();
-      builderId = profile?.builder_id ?? null;
-    }
-    // Check impersonation
-    if (typeof window !== "undefined") {
-      const imp = window.localStorage.getItem("proplan_impersonate_builder_id");
-      if (imp) builderId = imp;
-    }
+    const builderId = await getBuilderIdFromSession();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let query = (supabase.from("renders") as any).select("*").order("created_at", { ascending: false });
     if (builderId) query = query.eq("builder_id", builderId);
@@ -448,7 +497,42 @@ export default function RenderStudioPage() {
     setArchiveLoading(false);
   }
 
-  useEffect(() => { loadArchive(); }, []);
+  async function loadCreditInfo() {
+    const builderId = await getBuilderIdFromSession();
+    if (!builderId) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: builder } = await (supabase.from("builders") as any)
+      .select("ai_credits_remaining, ai_credits_total, plan_id")
+      .eq("id", builderId).single();
+    if (!builder) return;
+
+    let packQty   = 50;
+    let packPrice = 7500;
+    if (builder.plan_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: plan } = await (supabase.from("plans") as any)
+        .select("extra_ai_pack_qty, extra_ai_pack_price")
+        .eq("id", builder.plan_id).single();
+      if (plan) {
+        packQty   = plan.extra_ai_pack_qty   ?? packQty;
+        packPrice = plan.extra_ai_pack_price  ?? packPrice;
+      }
+    }
+
+    setCreditInfo({
+      builderId,
+      remaining: builder.ai_credits_remaining ?? 0,
+      total:     builder.ai_credits_total     ?? 250,
+      packQty,
+      packPrice,
+    });
+  }
+
+  useEffect(() => {
+    loadArchive();
+    loadCreditInfo();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (generating) {
@@ -488,24 +572,32 @@ export default function RenderStudioPage() {
     if (file) loadFile(file);
   }, []);
 
-  async function generate(isRevision = false) {
+  function getMarkupMergedBase64(): string | null {
+    const canvas = markupCanvasRef.current;
+    if (!canvas || !renderDataUrl) return null;
+    const merged = document.createElement("canvas");
+    merged.width  = canvas.width;
+    merged.height = canvas.height;
+    const ctx = merged.getContext("2d")!;
+    const img = new Image();
+    img.src = renderDataUrl;
+    ctx.drawImage(img, 0, 0, merged.width, merged.height);
+    ctx.drawImage(canvas, 0, 0);
+    return merged.toDataURL("image/jpeg", 0.92).split(",")[1];
+  }
+
+  async function generate(isRevision = false, withMarkup = false) {
+    // Guard: check AI credits before generating
+    if (creditInfo && creditInfo.remaining <= 0) {
+      setError("You've run out of AI render credits. Buy a top-up pack to continue.");
+      return;
+    }
+
     setGenerating(true);
     setError("");
 
     try {
-      // Get builderId to associate render with the builder
-      let builderId: string | null = null;
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: profile } = await (supabase.from("profiles") as any)
-          .select("builder_id").eq("id", user.id).single();
-        builderId = profile?.builder_id ?? null;
-      }
-      if (typeof window !== "undefined") {
-        const imp = window.localStorage.getItem("proplan_impersonate_builder_id");
-        if (imp) builderId = imp;
-      }
+      const builderId = await getBuilderIdFromSession();
 
       const requestBody: Record<string, unknown> = {
         renderType, style, lighting, season, landscape,
@@ -516,9 +608,21 @@ export default function RenderStudioPage() {
         ...(renderType === "elevation" ? Object.fromEntries(
           Object.entries(elevColors).filter(([, v]) => v.trim())
         ) : {}),
+        // include floor plan colors + label toggle if set
+        ...(renderType === "floor_plan" ? {
+          ...Object.fromEntries(Object.entries(fpColors).filter(([, v]) => v.trim())),
+          showTextLabels,
+        } : {}),
       };
 
-      if (isRevision && renderSavedUrl) {
+      if (isRevision && withMarkup) {
+        const merged = getMarkupMergedBase64();
+        if (merged) {
+          requestBody.imageBase64 = merged;
+        } else if (renderSavedUrl) {
+          requestBody.imageUrl = renderSavedUrl;
+        }
+      } else if (isRevision && renderSavedUrl) {
         requestBody.imageUrl = renderSavedUrl;
       } else {
         const sourceDataUrl = referenceDataUrl;
@@ -548,6 +652,7 @@ export default function RenderStudioPage() {
       setRenderDataUrl(dataUrl);
       setRenderSavedUrl(imageUrl ?? null);
       if (isRevision) setRevision("");
+      if (withMarkup) { setIsMarkingUp(false); markupStrokes.current = []; }
 
       setHistory(prev => [{
         id: Date.now().toString(),
@@ -556,6 +661,16 @@ export default function RenderStudioPage() {
           ? `Edit: ${revision.slice(0, 24)}…`
           : `${STYLES.find(s => s.id === style)?.label} · ${LIGHTINGS.find(l => l.id === lighting)?.label}`,
       }, ...prev].slice(0, 12));
+
+      // Decrement AI credits
+      if (builderId && creditInfo) {
+        const newRemaining = Math.max(0, creditInfo.remaining - 1);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase.from("builders") as any)
+          .update({ ai_credits_remaining: newRemaining })
+          .eq("id", builderId);
+        setCreditInfo(prev => prev ? { ...prev, remaining: newRemaining } : prev);
+      }
 
       loadArchive();
     } catch (err) {
@@ -576,30 +691,71 @@ export default function RenderStudioPage() {
 
   if (view === "archive") {
     return (
-      <ArchiveView
-        records={records}
-        loading={archiveLoading}
-        onNew={() => {
-          setReferenceDataUrl(null);
-          setRenderDataUrl(null);
-          setRenderSavedUrl(null);
-          setHistory([]);
-          setRevision("");
-          setError("");
-          setView("studio");
-        }}
-        onOpen={openRecord}
-      />
+      <div className="flex flex-col h-full overflow-hidden">
+        {creditInfo && (
+          <CreditTopupBanner
+            remaining={creditInfo.remaining}
+            total={creditInfo.total}
+            packQty={creditInfo.packQty}
+            packPrice={creditInfo.packPrice}
+            builderId={creditInfo.builderId}
+            type="ai"
+          />
+        )}
+        <ArchiveView
+          records={records}
+          loading={archiveLoading}
+          onNew={() => {
+            setReferenceDataUrl(null);
+            setRenderDataUrl(null);
+            setRenderSavedUrl(null);
+            setHistory([]);
+            setRevision("");
+            setError("");
+            setView("studio");
+          }}
+          onOpen={openRecord}
+        />
+      </div>
     );
   }
 
   const showExteriorOptions = renderType !== "floor_plan" && renderType !== "interior";
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full relative">
+
+      {/* Mobile backdrop */}
+      {controlsOpen && (
+        <div className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={() => setControlsOpen(false)} />
+      )}
+
+      {/* Mobile top bar */}
+      <div className="md:hidden fixed top-0 inset-x-0 z-30 bg-[#0a0a0a] border-b border-white/6 flex items-center gap-3 px-4 h-12 flex-shrink-0">
+        <button onClick={() => setView("archive")} className="text-white/30 hover:text-white/70 transition-colors">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd"/>
+          </svg>
+        </button>
+        <span className="text-sm font-bold text-white/80 flex-1" style={{ fontFamily: "var(--font-syne), sans-serif" }}>New Render</span>
+        <button
+          onClick={() => setControlsOpen(v => !v)}
+          className="flex items-center gap-1.5 px-2.5 py-1 bg-white/6 border border-white/10 rounded-lg text-xs text-white/50 hover:text-white transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+          </svg>
+          Controls
+        </button>
+      </div>
 
       {/* ── Left: Controls ── */}
-      <aside className="w-72 flex-shrink-0 border-r border-white/6 bg-[#0a0a0a] overflow-y-auto flex flex-col">
+      <aside className={[
+        "flex-shrink-0 border-r border-white/6 bg-[#0a0a0a] overflow-y-auto flex flex-col",
+        "fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300",
+        "md:relative md:translate-x-0 md:z-auto md:inset-auto",
+        controlsOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+      ].join(" ")}>
         <div className="px-5 py-4 border-b border-white/6 flex items-center gap-3">
           <button
             onClick={() => setView("archive")}
@@ -747,15 +903,91 @@ export default function RenderStudioPage() {
             </>
           )}
 
+          {/* Floor plan interior colors */}
+          {renderType === "floor_plan" && (
+            <div className="space-y-3">
+              {/* Text labels toggle */}
+              <div className="flex items-center justify-between bg-[#141414] border border-white/8 rounded-lg px-3 py-2.5">
+                <div>
+                  <p className="text-xs font-semibold text-white/70">Show Room Labels</p>
+                  <p className="text-[10px] text-white/30 mt-0.5">Include room names, dimensions &amp; annotations</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTextLabels(v => !v)}
+                  className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors duration-200 ${showTextLabels ? "bg-blue-600" : "bg-white/12"}`}
+                >
+                  <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${showTextLabels ? "translate-x-5" : "translate-x-0"}`} />
+                </button>
+              </div>
+
+              <div>
+                <SectionLabel>Interior Finishes <span className="normal-case font-normal text-white/20">(optional)</span></SectionLabel>
+                <div className="space-y-2">
+                  {[
+                    { key: "floorType",         label: "Floor Type",          ph: "e.g. Hardwood, Tile, Vinyl Plank" },
+                    { key: "floorColor",        label: "Floor Color",         ph: "e.g. Light Oak, Dark Walnut" },
+                    { key: "wallColor",         label: "Wall Color",          ph: "e.g. Soft White, Greige, Navy" },
+                    { key: "accentWallColor",   label: "Accent Wall Color",   ph: "e.g. Charcoal, Forest Green" },
+                    { key: "interiorDoorColor", label: "Interior Door Color", ph: "e.g. White, Black, Wood" },
+                    { key: "windowFrameColor",  label: "Window Frame Color",  ph: "e.g. White, Black, Bronze" },
+                    { key: "cabinetStyle",      label: "Cabinet Style",       ph: "e.g. Shaker, Flat Panel, Raised" },
+                    { key: "cabinetColor",      label: "Cabinet Color",       ph: "e.g. White, Navy, Natural Wood" },
+                    { key: "countertopMaterial",label: "Countertop Material", ph: "e.g. Quartz, Marble, Granite" },
+                    { key: "countertopColor",   label: "Countertop Color",    ph: "e.g. White, Calacatta, Black" },
+                  ].map(({ key, label, ph }) => (
+                    <div key={key}>
+                      <label className="block text-[9px] font-semibold uppercase tracking-widest text-white/25 mb-1">{label}</label>
+                      <input
+                        type="text"
+                        value={fpColors[key as keyof typeof fpColors]}
+                        onChange={e => setFp(key as keyof typeof fpColors, e.target.value)}
+                        placeholder={ph}
+                        className="w-full bg-[#141414] border border-white/8 rounded-lg px-3 py-1.5 text-xs text-white/70 placeholder-white/20 focus:outline-none focus:border-blue-500/40 transition-colors"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Credit counter */}
+          {creditInfo && (
+            <div className={`flex items-center justify-between text-xs mb-2 px-1 ${
+              creditInfo.remaining <= 0 ? "text-red-400" : creditInfo.remaining / creditInfo.total <= 0.2 ? "text-amber-400" : "text-white/30"
+            }`}>
+              <span>AI Credits</span>
+              <span className="font-semibold">{creditInfo.remaining} / {creditInfo.total} remaining</span>
+            </div>
+          )}
+
           <button
             onClick={() => generate(false)}
-            disabled={!referenceDataUrl || generating}
-            className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
+            disabled={!referenceDataUrl || generating || (creditInfo ? creditInfo.remaining <= 0 : false)}
+            className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
           >
             {generating ? (
               <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generating…</>
-            ) : "Generate Render"}
+            ) : creditInfo && creditInfo.remaining <= 0 ? "No Credits Left" : "Generate Render"}
           </button>
+
+          {creditInfo && creditInfo.remaining <= 0 && creditInfo.packPrice > 0 && (
+            <button
+              onClick={async () => {
+                const res = await fetch("/api/stripe/credits", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ builderId: creditInfo.builderId, packType: "ai" }),
+                });
+                const { url } = await res.json();
+                if (url) window.location.href = url;
+              }}
+              className="w-full mt-2 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold transition-colors"
+            >
+              Buy {creditInfo.packQty} Credits — ${(creditInfo.packPrice / 100).toFixed(0)}
+            </button>
+          )}
 
           {error && (
             <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">{error}</p>
@@ -764,23 +996,36 @@ export default function RenderStudioPage() {
           {/* Revision panel */}
           {renderDataUrl && (
             <div className="border-t border-white/8 pt-5">
-              <SectionLabel>Revision / Edit</SectionLabel>
-              <p className="text-[11px] text-white/30 mb-2">Describe a change to apply to the current render</p>
+              <div className="flex items-center justify-between mb-1">
+                <SectionLabel>Revision / Edit</SectionLabel>
+                <button
+                  onClick={() => setIsMarkingUp(v => !v)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border transition-colors ${isMarkingUp ? "bg-violet-600/20 border-violet-500/40 text-violet-300" : "bg-white/5 border-white/10 text-white/40 hover:text-white/60"}`}
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                  {isMarkingUp ? "Exit Markup" : "Mark Up"}
+                </button>
+              </div>
+              <p className="text-[11px] text-white/30 mb-2">
+                {isMarkingUp ? "Draw on the render to show where changes should go, then describe and apply" : "Describe a change to apply to the current render"}
+              </p>
               <textarea
                 value={revision}
                 onChange={e => setRevision(e.target.value)}
-                placeholder='"add a car in the driveway" or "change brick to white stucco"'
+                placeholder={isMarkingUp ? '"change the marked area to white stucco"' : '"add a car in the driveway" or "change brick to white stucco"'}
                 rows={3}
                 className="w-full text-xs text-white/60 bg-[#141414] border border-white/8 rounded-xl px-3 py-2 resize-none focus:outline-none focus:border-blue-500/40 placeholder-white/20 transition-colors"
               />
               <button
-                onClick={() => generate(true)}
+                onClick={() => generate(true, isMarkingUp)}
                 disabled={!revision.trim() || generating}
                 className="w-full mt-2 py-2.5 rounded-xl bg-white/8 hover:bg-white/12 border border-white/10 disabled:opacity-40 text-white/70 text-xs font-semibold transition-colors flex items-center justify-center gap-2"
               >
                 {generating ? (
                   <><div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Applying…</>
-                ) : "Apply Edit"}
+                ) : isMarkingUp ? "Apply Markup Edit" : "Apply Edit"}
               </button>
             </div>
           )}
@@ -788,7 +1033,7 @@ export default function RenderStudioPage() {
       </aside>
 
       {/* ── Right: Canvas ── */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#080808]">
+      <div className="flex-1 flex flex-col min-w-0 bg-[#080808] pt-12 md:pt-0">
         <div className="flex-1 flex items-center justify-center p-6 min-h-0">
           {!referenceDataUrl && !renderDataUrl ? (
             <div className="text-center">
@@ -798,14 +1043,100 @@ export default function RenderStudioPage() {
               <p className="text-sm font-semibold text-white/30">Upload a reference image to get started</p>
               <p className="text-xs text-white/20 mt-1">Elevation drawings, floor plans, sketches, or photos</p>
             </div>
-          ) : renderDataUrl && referenceDataUrl ? (
+          ) : renderDataUrl && referenceDataUrl && !isMarkingUp ? (
             <div className="w-full h-full max-h-[600px]">
               <CompareSlider before={referenceDataUrl} after={renderDataUrl} />
             </div>
-          ) : renderDataUrl && !referenceDataUrl ? (
-            <div className="w-full h-full max-h-[600px] flex items-center justify-center">
+          ) : renderDataUrl && (isMarkingUp || !referenceDataUrl) ? (
+            <div className="w-full h-full max-h-[600px] flex items-center justify-center relative select-none">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={renderDataUrl} alt="Render" className="max-w-full max-h-full rounded-xl shadow-2xl object-contain" />
+              <img
+                src={renderDataUrl}
+                alt="Render"
+                className="max-w-full max-h-full rounded-xl shadow-2xl object-contain"
+                style={{ display: "block" }}
+              />
+              {isMarkingUp && (
+                <>
+                  {/* Canvas overlay — sized to the img via onLoad */}
+                  <canvas
+                    ref={markupCanvasRef}
+                    className="absolute inset-0 rounded-xl"
+                    style={{ cursor: markupTool === "eraser" ? "cell" : "crosshair", touchAction: "none" }}
+                    onMouseDown={e => {
+                      const c = markupCanvasRef.current!;
+                      const r = c.getBoundingClientRect();
+                      const ctx = c.getContext("2d")!;
+                      markupDrawing.current = true;
+                      markupStrokes.current.push(ctx.getImageData(0, 0, c.width, c.height));
+                      ctx.beginPath();
+                      ctx.moveTo((e.clientX - r.left) * (c.width / r.width), (e.clientY - r.top) * (c.height / r.height));
+                    }}
+                    onMouseMove={e => {
+                      if (!markupDrawing.current) return;
+                      const c = markupCanvasRef.current!;
+                      const r = c.getBoundingClientRect();
+                      const ctx = c.getContext("2d")!;
+                      ctx.globalCompositeOperation = markupTool === "eraser" ? "destination-out" : "source-over";
+                      ctx.strokeStyle = markupColor;
+                      ctx.lineWidth = markupWidth * (c.width / r.width);
+                      ctx.lineCap = "round";
+                      ctx.lineJoin = "round";
+                      ctx.lineTo((e.clientX - r.left) * (c.width / r.width), (e.clientY - r.top) * (c.height / r.height));
+                      ctx.stroke();
+                    }}
+                    onMouseUp={() => { markupDrawing.current = false; }}
+                    onMouseLeave={() => { markupDrawing.current = false; }}
+                  />
+                  {/* Markup toolbar */}
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 rounded-2xl"
+                    style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                    {/* Tool toggle */}
+                    <button onClick={() => setMarkupTool("pen")}
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${markupTool === "pen" ? "bg-white/20 text-white" : "text-white/40 hover:text-white"}`} title="Pen">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                    </button>
+                    <button onClick={() => setMarkupTool("eraser")}
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${markupTool === "eraser" ? "bg-white/20 text-white" : "text-white/40 hover:text-white"}`} title="Eraser">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </button>
+                    <div className="w-px h-5 bg-white/15 mx-1" />
+                    {/* Color swatches */}
+                    {["#ef4444","#f97316","#facc15","#4ade80","#60a5fa","#a78bfa","#ffffff","#000000"].map(c => (
+                      <button key={c} onClick={() => { setMarkupTool("pen"); setMarkupColor(c); }}
+                        className={`w-5 h-5 rounded-full border-2 transition-all ${markupColor === c && markupTool === "pen" ? "border-white scale-125" : "border-transparent"}`}
+                        style={{ background: c }} />
+                    ))}
+                    <div className="w-px h-5 bg-white/15 mx-1" />
+                    {/* Stroke width */}
+                    {[2, 4, 8, 14].map(w => (
+                      <button key={w} onClick={() => setMarkupWidth(w)}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${markupWidth === w ? "bg-white/20" : "hover:bg-white/10"}`}>
+                        <span className="block rounded-full bg-white" style={{ width: Math.min(w + 6, 18), height: Math.min(w + 6, 18) - 10 + 4 }} />
+                      </button>
+                    ))}
+                    <div className="w-px h-5 bg-white/15 mx-1" />
+                    {/* Undo */}
+                    <button
+                      onClick={() => {
+                        const c = markupCanvasRef.current!;
+                        const ctx = c.getContext("2d")!;
+                        const prev = markupStrokes.current.pop();
+                        if (prev) ctx.putImageData(prev, 0, 0);
+                        else ctx.clearRect(0, 0, c.width, c.height);
+                      }}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-colors" title="Undo">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+                    </button>
+                    {/* Clear */}
+                    <button
+                      onClick={() => { const c = markupCanvasRef.current!; c.getContext("2d")!.clearRect(0, 0, c.width, c.height); markupStrokes.current = []; }}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-white/40 hover:text-red-400 hover:bg-white/10 transition-colors" title="Clear all">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           ) : (
             <div className="w-full max-w-2xl">
