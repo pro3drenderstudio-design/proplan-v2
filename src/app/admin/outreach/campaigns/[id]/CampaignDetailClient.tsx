@@ -202,10 +202,10 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
     if (tab !== "leads") return;
     setLeadsLoading(true);
     Promise.all([
-      getCampaignEnrollments(campaignId, leadsPage, LEADS_PAGE_SIZE, leadsStatus),
-      lists.length === 0 ? getLists() : Promise.resolve(lists),
+      getCampaignEnrollments(campaignId, leadsPage, LEADS_PAGE_SIZE, leadsStatus).catch(() => ({ enrollments: [], total: 0 })),
+      lists.length === 0 ? getLists().catch(() => []) : Promise.resolve(lists),
     ]).then(([data, listData]) => {
-      setLeadsData(data);
+      setLeadsData(data as { enrollments: CampaignEnrollmentRow[]; total: number });
       if (lists.length === 0) setLists(listData as OutreachList[]);
       setLeadsLoading(false);
     });
@@ -893,7 +893,7 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
           {/* Table */}
           {leadsLoading ? (
             <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-white/4 rounded-xl animate-pulse" />)}</div>
-          ) : !leadsData || leadsData.enrollments.length === 0 ? (
+          ) : !leadsData || !leadsData.enrollments || leadsData.enrollments.length === 0 ? (
             <div className="text-center py-16 text-white/25">
               <p className="text-3xl mb-3">👥</p>
               <p>No leads enrolled{leadsStatus !== "all" ? ` with status "${leadsStatus}"` : ""}.</p>

@@ -19,7 +19,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     .from("outreach_enrollments")
     .select(`
       id, status, current_step, next_send_at, ab_variant, created_at, updated_at,
-      lead:outreach_leads(id, email, first_name, last_name, company, title)
+      lead:outreach_leads!lead_id(id, email, first_name, last_name, company, title)
     `, { count: "exact" })
     .eq("campaign_id", campaignId)
     .order("created_at", { ascending: false })
