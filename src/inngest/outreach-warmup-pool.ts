@@ -114,7 +114,11 @@ export const outreachWarmupPool = inngest.createFunction(
               sent_at:         new Date().toISOString(),
             });
           } catch (err) {
-            console.error(`Warmup send failed ${sender.email_address} → ${recipient.email_address}: ${String(err)}`);
+            const errMsg = String(err);
+            console.error(`Warmup send failed ${sender.email_address} → ${recipient.email_address}: ${errMsg}`);
+            if (/invalid_grant|token.*expired|token.*revoked|access.*denied|unauthorized|authentication.*fail|auth.*fail|535|534|530|credentials|wrong.*password|password.*incorrect|account.*suspended|account.*disabled|login.*fail|AUTHENTICATIONFAILED|AUTH.*FAILED/i.test(errMsg)) {
+              await db.from("outreach_inboxes").update({ status: "error", last_error: errMsg.slice(0, 500) }).eq("id", sender.id);
+            }
           }
         }
       }

@@ -15,6 +15,7 @@ import { sendSmtpMessage } from "@/lib/outreach/smtp";
 import type { OutreachInbox, OutreachSequenceStep, OutreachCampaign } from "@/types/outreach";
 
 const BOUNCE_PATTERN = /5\d\d|user unknown|mailbox not found|no such user|does not exist|invalid.*address|recipient.*rejected/i;
+const AUTH_ERROR_PATTERN = /invalid_grant|token.*expired|token.*revoked|access.*denied|unauthorized|authentication.*fail|auth.*fail|535|534|530|credentials|wrong.*password|password.*incorrect|account.*suspended|account.*disabled|login.*fail|AUTHENTICATIONFAILED|AUTH.*FAILED/i;
 
 function supabase() {
   return createClient(
@@ -228,7 +229,11 @@ export async function runSendBatch(
         } else {
           console.error(`Send failed for ${lead.email} via ${slot.inbox.email_address}: ${errMsg}`);
           await db.from("outreach_sends").update({ status: "failed" }).eq("id", sendRecord.id);
-          await db.from("outreach_inboxes").update({ last_error: errMsg.slice(0, 500) }).eq("id", slot.inbox.id);
+          const inboxPatch: Record<string, unknown> = { last_error: errMsg.slice(0, 500) };
+          if (AUTH_ERROR_PATTERN.test(errMsg)) {
+            inboxPatch.status = "error";
+          }
+          await db.from("outreach_inboxes").update(inboxPatch).eq("id", slot.inbox.id);
         }
         result.errors++;
         continue;
