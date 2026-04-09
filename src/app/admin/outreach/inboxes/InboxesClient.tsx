@@ -113,48 +113,65 @@ export default function InboxesClient() {
 
   // ── Bulk selection ────────────────────────────────────────────────────────
   const [selected, setSelected]         = useState<Set<string>>(new Set());
+  const [allSelected, setAllSelected]   = useState(false); // true = every inbox selected
   const [bulkWorking, setBulkWorking]   = useState(false);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [bulkFields, setBulkFields]     = useState({
+    first_name: "", last_name: "",
     daily_send_limit: "", send_window_start: "", send_window_end: "",
     timezone: "", status: "" as "" | "active" | "paused",
   });
 
   const pageInboxes = inboxes.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const allPageSelected = pageInboxes.length > 0 && pageInboxes.every((i) => selected.has(i.id));
+  const effectiveCount  = allSelected ? inboxes.length : selected.size;
 
   function toggleSelect(id: string) {
+    setAllSelected(false);
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleSelectAll() {
+    setAllSelected(false);
     if (allPageSelected) {
       setSelected((s) => { const n = new Set(s); pageInboxes.forEach((i) => n.delete(i.id)); return n; });
     } else {
       setSelected((s) => { const n = new Set(s); pageInboxes.forEach((i) => n.add(i.id)); return n; });
     }
   }
+  function selectAllInboxes() {
+    setAllSelected(true);
+    setSelected(new Set(inboxes.map((i) => i.id)));
+  }
+  function clearSelection() {
+    setAllSelected(false);
+    setSelected(new Set());
+  }
+
+  const targetIds = allSelected ? inboxes.map((i) => i.id) : [...selected];
 
   async function handleBulkDelete() {
-    if (!confirm(`Delete ${selected.size} inbox${selected.size !== 1 ? "es" : ""}? This will stop all campaigns using them.`)) return;
+    if (!confirm(`Delete ${effectiveCount} inbox${effectiveCount !== 1 ? "es" : ""}? This will stop all campaigns using them.`)) return;
     setBulkWorking(true);
-    await Promise.all([...selected].map((id) => deleteInbox(id)));
-    setSelected(new Set());
+    await Promise.all(targetIds.map((id) => deleteInbox(id)));
+    clearSelection();
     setBulkWorking(false);
     load();
-    showToast(`Deleted ${selected.size} inboxes`);
+    showToast(`Deleted ${effectiveCount} inboxes`);
   }
 
   async function handleBulkStatusChange(status: "active" | "paused") {
     setBulkWorking(true);
-    await Promise.all([...selected].map((id) => updateInbox(id, { status })));
-    setSelected(new Set());
+    await Promise.all(targetIds.map((id) => updateInbox(id, { status })));
+    clearSelection();
     setBulkWorking(false);
     load();
-    showToast(`${selected.size} inboxes ${status === "active" ? "resumed" : "paused"}`);
+    showToast(`${effectiveCount} inboxes ${status === "active" ? "resumed" : "paused"}`);
   }
 
   async function handleBulkEdit() {
     const patch: Record<string, unknown> = {};
+    if (bulkFields.first_name)        patch.first_name        = bulkFields.first_name;
+    if (bulkFields.last_name)         patch.last_name         = bulkFields.last_name;
     if (bulkFields.daily_send_limit)  patch.daily_send_limit  = parseInt(bulkFields.daily_send_limit);
     if (bulkFields.send_window_start) patch.send_window_start = bulkFields.send_window_start;
     if (bulkFields.send_window_end)   patch.send_window_end   = bulkFields.send_window_end;
@@ -162,13 +179,13 @@ export default function InboxesClient() {
     if (bulkFields.status)            patch.status            = bulkFields.status;
     if (!Object.keys(patch).length) { setShowBulkEdit(false); return; }
     setBulkWorking(true);
-    await Promise.all([...selected].map((id) => updateInbox(id, patch)));
-    setSelected(new Set());
+    await Promise.all(targetIds.map((id) => updateInbox(id, patch)));
+    clearSelection();
     setShowBulkEdit(false);
-    setBulkFields({ daily_send_limit: "", send_window_start: "", send_window_end: "", timezone: "", status: "" });
+    setBulkFields({ first_name: "", last_name: "", daily_send_limit: "", send_window_start: "", send_window_end: "", timezone: "", status: "" });
     setBulkWorking(false);
     load();
-    showToast(`Updated ${selected.size} inboxes`);
+    showToast(`Updated ${effectiveCount} inboxes`);
   }
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -308,13 +325,22 @@ export default function InboxesClient() {
         <>
         {/* Bulk action bar */}
         {selected.size > 0 && (
-          <div className="mb-3 flex items-center gap-2 px-4 py-2.5 bg-blue-600/15 border border-blue-500/30 rounded-xl">
-            <span className="text-blue-300 text-xs font-semibold flex-1">{selected.size} selected</span>
-            <button onClick={() => handleBulkStatusChange("active")} disabled={bulkWorking} className="px-3 py-1.5 bg-green-500/15 hover:bg-green-500/25 text-green-400 text-xs font-semibold rounded-lg border border-green-500/30 transition-colors disabled:opacity-40">Resume all</button>
-            <button onClick={() => handleBulkStatusChange("paused")} disabled={bulkWorking} className="px-3 py-1.5 bg-white/8 hover:bg-white/12 text-white/60 text-xs font-semibold rounded-lg border border-white/10 transition-colors disabled:opacity-40">Pause all</button>
-            <button onClick={() => setShowBulkEdit(true)}            disabled={bulkWorking} className="px-3 py-1.5 bg-violet-500/15 hover:bg-violet-500/25 text-violet-400 text-xs font-semibold rounded-lg border border-violet-500/30 transition-colors disabled:opacity-40">Edit settings</button>
-            <button onClick={handleBulkDelete}                        disabled={bulkWorking} className="px-3 py-1.5 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-xs font-semibold rounded-lg border border-red-500/30 transition-colors disabled:opacity-40">Delete</button>
-            <button onClick={() => setSelected(new Set())} className="text-white/30 hover:text-white/60 text-xs ml-1 transition-colors">✕</button>
+          <div className="mb-3 space-y-2">
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-600/15 border border-blue-500/30 rounded-xl">
+              <span className="text-blue-300 text-xs font-semibold flex-1">
+                {effectiveCount} inbox{effectiveCount !== 1 ? "es" : ""} selected
+                {!allSelected && inboxes.length > PAGE_SIZE && (
+                  <button onClick={selectAllInboxes} className="ml-2 text-blue-400 hover:text-blue-200 underline transition-colors">
+                    Select all {inboxes.length}
+                  </button>
+                )}
+              </span>
+              <button onClick={() => handleBulkStatusChange("active")} disabled={bulkWorking} className="px-3 py-1.5 bg-green-500/15 hover:bg-green-500/25 text-green-400 text-xs font-semibold rounded-lg border border-green-500/30 transition-colors disabled:opacity-40">Resume</button>
+              <button onClick={() => handleBulkStatusChange("paused")} disabled={bulkWorking} className="px-3 py-1.5 bg-white/8 hover:bg-white/12 text-white/60 text-xs font-semibold rounded-lg border border-white/10 transition-colors disabled:opacity-40">Pause</button>
+              <button onClick={() => setShowBulkEdit(true)}            disabled={bulkWorking} className="px-3 py-1.5 bg-violet-500/15 hover:bg-violet-500/25 text-violet-400 text-xs font-semibold rounded-lg border border-violet-500/30 transition-colors disabled:opacity-40">Edit settings</button>
+              <button onClick={handleBulkDelete}                        disabled={bulkWorking} className="px-3 py-1.5 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-xs font-semibold rounded-lg border border-red-500/30 transition-colors disabled:opacity-40">Delete</button>
+              <button onClick={clearSelection} className="text-white/30 hover:text-white/60 text-xs ml-1 transition-colors">✕</button>
+            </div>
           </div>
         )}
 
@@ -353,6 +379,9 @@ export default function InboxesClient() {
                       </span>
                     )}
                   </div>
+                  {(inbox.first_name || inbox.last_name) && (
+                    <div className="text-white/55 text-xs">{[inbox.first_name, inbox.last_name].filter(Boolean).join(" ")}</div>
+                  )}
                   <div className="text-white/40 text-xs mt-0.5">{inbox.email_address} · Limit: {inbox.daily_send_limit}/day · Window: {inbox.send_window_start}–{inbox.send_window_end} {inbox.timezone}</div>
                   {inbox.last_error && <div className="text-red-400 text-xs mt-1 truncate">⚠ {inbox.last_error}</div>}
                 </div>
@@ -554,6 +583,24 @@ export default function InboxesClient() {
               <p className="text-white/40 text-xs">Only filled fields will be updated. Leave blank to keep existing values.</p>
 
               <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-white/50 uppercase tracking-wider mb-1.5">First name</label>
+                  <input
+                    type="text" placeholder="e.g. John"
+                    value={bulkFields.first_name}
+                    onChange={(e) => setBulkFields((f) => ({ ...f, first_name: e.target.value }))}
+                    className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-white/50 uppercase tracking-wider mb-1.5">Last name</label>
+                  <input
+                    type="text" placeholder="e.g. Smith"
+                    value={bulkFields.last_name}
+                    onChange={(e) => setBulkFields((f) => ({ ...f, last_name: e.target.value }))}
+                    className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50"
+                  />
+                </div>
                 <div>
                   <label className="block text-xs font-semibold text-white/50 uppercase tracking-wider mb-1.5">Daily send limit</label>
                   <input

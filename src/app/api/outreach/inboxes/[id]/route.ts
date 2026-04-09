@@ -16,7 +16,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json();
 
   const allowed = [
-    "label", "daily_send_limit", "send_window_start", "send_window_end",
+    "label", "first_name", "last_name",
+    "daily_send_limit", "send_window_start", "send_window_end",
     "timezone", "signature", "warmup_enabled", "warmup_target_daily",
     "warmup_ramp_per_week", "status",
   ];

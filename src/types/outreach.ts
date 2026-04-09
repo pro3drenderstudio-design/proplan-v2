@@ -19,6 +19,9 @@ export interface OutreachInbox {
   oauth_access_token?: string | null;
   oauth_refresh_token?: string | null;
   oauth_expires_at?: string | null;
+  // Sender identity
+  first_name?: string | null;
+  last_name?: string | null;
   // SMTP
   smtp_host?: string | null;
   smtp_port?: number | null;

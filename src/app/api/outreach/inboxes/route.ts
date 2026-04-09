@@ -11,7 +11,7 @@ function supabase() {
 }
 
 // Columns safe to return to the client (no encrypted tokens)
-const SAFE_COLUMNS = "id,label,provider,email_address,smtp_host,imap_host,daily_send_limit,send_window_start,send_window_end,timezone,signature,warmup_enabled,warmup_current_daily,warmup_target_daily,warmup_ramp_per_week,status,last_error,gmail_watch_expiry,ms_subscription_expiry,created_at,updated_at,oauth_refresh_token";
+const SAFE_COLUMNS = "id,label,provider,email_address,first_name,last_name,smtp_host,imap_host,daily_send_limit,send_window_start,send_window_end,timezone,signature,warmup_enabled,warmup_current_daily,warmup_target_daily,warmup_ramp_per_week,status,last_error,gmail_watch_expiry,ms_subscription_expiry,created_at,updated_at,oauth_refresh_token";
 
 export async function GET() {
   const db = supabase();
