@@ -26,8 +26,9 @@ const NAV_CONFIG_ALL = [
 ];
 
 const TOOLS_ALL = [
-  { href: "/admin/node-bridge", label: "Node Bridge", icon: CpuIcon,   roles: ["super_admin","manager","editor","artist"] },
-  { href: "/admin/renders",     label: "Renders",     icon: ImageIcon, roles: ["super_admin","manager","editor"] },
+  { href: "/admin/node-bridge",  label: "Node Bridge",    icon: CpuIcon,    roles: ["super_admin","manager","editor","artist"] },
+  { href: "/admin/renders",      label: "Renders",        icon: ImageIcon,  roles: ["super_admin","manager","editor"] },
+  { href: "/admin/outreach",     label: "Cold Outreach",  icon: MailIcon,   roles: ["super_admin","manager"] },
 ];
 
 interface Notif {
@@ -506,6 +507,13 @@ function PlansIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z"/>
+    </svg>
+  );
+}
+function MailIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
     </svg>
   );
 }
