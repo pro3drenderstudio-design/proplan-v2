@@ -6,9 +6,12 @@ import { runReplyPoll } from "@/lib/outreach/reply-runner";
 export const maxDuration = 300; // Vercel Pro: up to 300s for this route
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Only enforce secret if CRON_SECRET is configured
+  if (process.env.CRON_SECRET) {
+    const secret = req.headers.get("authorization")?.replace("Bearer ", "");
+    if (secret !== process.env.CRON_SECRET) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   // ── Run sends + replies directly (works without Inngest) ────────────────
