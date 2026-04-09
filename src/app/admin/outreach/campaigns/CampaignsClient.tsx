@@ -103,7 +103,7 @@ export default function CampaignsClient() {
         </div>
       ) : (
         <div className="border border-white/8 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_auto] gap-4 px-5 py-3 bg-white/3 border-b border-white/6">
+          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_220px] gap-4 px-5 py-3 bg-white/3 border-b border-white/6">
             {["Campaign", "Status", "Enrolled", "Sent", "Open Rate", "Replies", ""].map((h) => (
               <div key={h} className="text-white/35 text-xs font-semibold uppercase tracking-wider">{h}</div>
             ))}
@@ -117,7 +117,7 @@ export default function CampaignsClient() {
             const progress  = enrolled > 0 ? Math.round(((replied) / enrolled) * 100) : 0;
 
             return (
-              <div key={c.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_auto] gap-4 items-center px-5 py-4 border-b border-white/4 last:border-0 ${i % 2 === 0 ? "" : "bg-white/1"}`}>
+              <div key={c.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_220px] gap-4 items-center px-5 py-4 border-b border-white/4 last:border-0 ${i % 2 === 0 ? "" : "bg-white/1"}`}>
                 <div>
                   <Link href={`/admin/outreach/campaigns/${c.id}`} className="text-white font-medium text-sm hover:text-blue-300 transition-colors">{c.name}</Link>
                   <div className="text-white/30 text-xs mt-0.5">{c.send_days?.join(", ")} · {c.send_start_time}–{c.send_end_time}</div>

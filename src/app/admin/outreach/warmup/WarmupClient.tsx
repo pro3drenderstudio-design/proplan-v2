@@ -3,24 +3,39 @@ import { useEffect, useState } from "react";
 import { getInboxes, updateInbox } from "@/lib/outreach/api";
 import type { OutreachInboxSafe, WarmupPoolStats } from "@/types/outreach";
 
+interface WarmupActivity {
+  id: string;
+  subject: string | null;
+  sent_at: string;
+  replied_at: string | null;
+  rescued_from_spam: boolean;
+  from_inbox: { id: string; label: string; email_address: string } | null;
+  to_inbox:   { id: string; label: string; email_address: string } | null;
+}
+
 export default function WarmupClient() {
   const [inboxes, setInboxes]     = useState<OutreachInboxSafe[]>([]);
   const [stats, setStats]         = useState<WarmupPoolStats | null>(null);
+  const [activity, setActivity]   = useState<WarmupActivity[]>([]);
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState<string | null>(null);
   const [testing, setTesting]     = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [edits, setEdits]         = useState<Record<string, Partial<OutreachInboxSafe>>>({});
   const [page, setPage]           = useState(0);
+  const [activityPage, setActivityPage] = useState(0);
   const PAGE_SIZE = 10;
+  const ACTIVITY_PAGE_SIZE = 20;
 
   useEffect(() => {
     Promise.all([
       getInboxes(),
       fetch("/api/outreach/warmup/stats").then((r) => r.json()).catch(() => null),
-    ]).then(([inboxList, poolStats]) => {
+      fetch("/api/outreach/warmup/activity?limit=100").then((r) => r.json()).catch(() => []),
+    ]).then(([inboxList, poolStats, activityList]) => {
       setInboxes(inboxList);
       setStats(poolStats);
+      setActivity(Array.isArray(activityList) ? activityList : []);
       setLoading(false);
     });
   }, []);
@@ -231,6 +246,99 @@ export default function WarmupClient() {
           </div>
         )}
         </>
+      )}
+
+      {/* Schedule info */}
+      <div className="mt-8 bg-white/3 border border-white/6 rounded-xl px-5 py-4">
+        <p className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-2">Schedule</p>
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-white/40">
+          <span>⏱ Pool runs <span className="text-white/60">every 4 hours</span></span>
+          <span>📈 Daily ramp increments <span className="text-white/60">every Monday</span></span>
+          <span>🔍 Reply &amp; spam-rescue check <span className="text-white/60">every 4 hours</span></span>
+        </div>
+      </div>
+
+      {/* Activity feed */}
+      {activity.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-white/60 text-sm font-semibold mb-3">Recent Warmup Activity</h2>
+          <div className="border border-white/8 rounded-xl overflow-hidden">
+            {/* Header */}
+            <div className="grid grid-cols-[2fr_2fr_1fr_80px_80px] gap-3 px-4 py-2.5 bg-white/3 border-b border-white/6">
+              {["From", "To", "Subject", "Replied", "Status"].map((h) => (
+                <div key={h} className="text-white/30 text-[10px] font-semibold uppercase tracking-wider">{h}</div>
+              ))}
+            </div>
+            {activity
+              .slice(activityPage * ACTIVITY_PAGE_SIZE, (activityPage + 1) * ACTIVITY_PAGE_SIZE)
+              .map((a, i) => {
+                const timeAgo = (() => {
+                  const diff = Date.now() - new Date(a.sent_at).getTime();
+                  const m = Math.floor(diff / 60000);
+                  if (m < 1) return "just now";
+                  if (m < 60) return `${m}m ago`;
+                  const h = Math.floor(m / 60);
+                  if (h < 24) return `${h}h ago`;
+                  return new Date(a.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                })();
+                return (
+                  <div
+                    key={a.id}
+                    className={`grid grid-cols-[2fr_2fr_1fr_80px_80px] gap-3 items-center px-4 py-3 border-b border-white/4 last:border-0 ${i % 2 === 1 ? "bg-white/1" : ""}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-white/70 text-xs truncate">{a.from_inbox?.email_address ?? "—"}</p>
+                      <p className="text-white/30 text-[10px] truncate">{a.from_inbox?.label}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-white/70 text-xs truncate">{a.to_inbox?.email_address ?? "—"}</p>
+                      <p className="text-white/30 text-[10px] truncate">{a.to_inbox?.label}</p>
+                    </div>
+                    <p className="text-white/40 text-xs truncate">{a.subject ?? "—"}</p>
+                    <p className={`text-xs font-medium ${a.replied_at ? "text-green-400" : "text-white/20"}`}>
+                      {a.replied_at ? "✓" : "pending"}
+                    </p>
+                    <div>
+                      {a.rescued_from_spam
+                        ? <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400">rescued</span>
+                        : <span className="text-white/25 text-[10px]">{timeAgo}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+
+          {/* Activity pagination */}
+          {activity.length > ACTIVITY_PAGE_SIZE && (
+            <div className="flex items-center justify-between mt-3">
+              <span className="text-white/30 text-xs">
+                {activityPage * ACTIVITY_PAGE_SIZE + 1}–{Math.min((activityPage + 1) * ACTIVITY_PAGE_SIZE, activity.length)} of {activity.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setActivityPage((p) => Math.max(0, p - 1))}
+                  disabled={activityPage === 0}
+                  className="px-3 py-1.5 bg-white/6 hover:bg-white/10 disabled:opacity-30 text-white/60 text-xs font-medium rounded-lg transition-colors"
+                >
+                  ← Prev
+                </button>
+                <button
+                  onClick={() => setActivityPage((p) => Math.min(Math.ceil(activity.length / ACTIVITY_PAGE_SIZE) - 1, p + 1))}
+                  disabled={(activityPage + 1) * ACTIVITY_PAGE_SIZE >= activity.length}
+                  className="px-3 py-1.5 bg-white/6 hover:bg-white/10 disabled:opacity-30 text-white/60 text-xs font-medium rounded-lg transition-colors"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!loading && activity.length === 0 && (
+        <div className="mt-8 bg-white/3 border border-white/6 rounded-xl px-5 py-6 text-center">
+          <p className="text-white/30 text-sm">No warmup activity yet. Enable warmup on at least 2 inboxes and the pool will start sending.</p>
+        </div>
       )}
     </div>
   );

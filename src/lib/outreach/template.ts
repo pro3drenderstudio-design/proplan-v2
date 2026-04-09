@@ -96,8 +96,10 @@ export function renderEmail(opts: {
   trackOpens: boolean;
   trackClicks: boolean;
   physicalAddress?: string;
+  footerEnabled?: boolean;
+  footerText?: string;
 }): RenderedEmail {
-  const { subjectTemplate, bodyTemplate, lead, sendId, signature, trackOpens, trackClicks, physicalAddress } = opts;
+  const { subjectTemplate, bodyTemplate, lead, sendId, signature, trackOpens, trackClicks, physicalAddress, footerEnabled = true, footerText } = opts;
 
   const subject = interpolate(subjectTemplate, lead);
   let body = interpolate(bodyTemplate, lead);
@@ -115,15 +117,21 @@ export function renderEmail(opts: {
       .join("\n");
   }
 
-  // Unsubscribe footer (CAN-SPAM required)
+  // Unsubscribe footer (CAN-SPAM required — always include unsubscribe link)
   const unsubUrl = buildUnsubscribeUrl(lead.email);
   const address = physicalAddress ?? "123 Main Street, New York, NY 10001";
-  body += `
+  const footerBodyText = footerText ?? "You received this email because you or your company expressed interest in our services.";
+  if (footerEnabled !== false) {
+    body += `
 <br/><br/>
 <p style="font-size:11px;color:#999;margin:24px 0 0 0;border-top:1px solid #eee;padding-top:12px">
-  You received this email because you or your company expressed interest in our services.<br/>
+  ${footerBodyText}<br/>
   <a href="${unsubUrl}" style="color:#999">Unsubscribe</a> &nbsp;|&nbsp; ${address}
 </p>`;
+  } else {
+    // Even when footer is disabled, keep a minimal unsubscribe link for CAN-SPAM compliance
+    body += `<br/><p style="font-size:10px;color:#bbb;margin:16px 0 0 0"><a href="${unsubUrl}" style="color:#bbb">Unsubscribe</a></p>`;
+  }
 
   // Click tracking
   let trackedLinks: { link_index: number; original_url: string }[] = [];

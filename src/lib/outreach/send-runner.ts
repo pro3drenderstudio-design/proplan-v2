@@ -81,6 +81,14 @@ export async function runSendBatch(
 
   const db = supabase();
 
+  // Load footer settings once per batch
+  const { data: settingsRows } = await db.from("outreach_settings").select("key, value");
+  const settings: Record<string, string> = {};
+  for (const row of settingsRows ?? []) settings[row.key] = row.value ?? "";
+  const footerEnabled = settings.footer_enabled !== "false";
+  const footerText    = settings.footer_custom_text || undefined;
+  const footerAddress = settings.footer_address || undefined;
+
   // Group due items by campaign so we build one inbox pool per campaign
   const byCampaign = new Map<string, { items: typeof due; slots: InboxSlot[]; rrIdx: number }>();
   for (const item of due) {
@@ -173,12 +181,15 @@ export async function runSendBatch(
 
       const rendered = renderEmail({
         subjectTemplate,
-        bodyTemplate: seqStep.body_template ?? "",
+        bodyTemplate:    seqStep.body_template ?? "",
         lead,
-        sendId:       sendRecord.id,
-        signature:    slot.inbox.signature,
-        trackOpens:   campaign.track_opens,
-        trackClicks:  campaign.track_clicks,
+        sendId:          sendRecord.id,
+        signature:       slot.inbox.signature,
+        trackOpens:      campaign.track_opens,
+        trackClicks:     campaign.track_clicks,
+        footerEnabled,
+        footerText,
+        physicalAddress: footerAddress,
       });
 
       if (rendered.trackedLinks.length) {

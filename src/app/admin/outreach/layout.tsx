@@ -5,11 +5,12 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/admin/outreach",            label: "Overview",   exact: true  },
   { href: "/admin/outreach/inboxes",    label: "Inboxes"                  },
-  { href: "/admin/outreach/warmup",     label: "Warmup"                   },
   { href: "/admin/outreach/leads",      label: "Leads"                    },
   { href: "/admin/outreach/campaigns",  label: "Campaigns"                },
   { href: "/admin/outreach/crm",        label: "CRM"                      },
   { href: "/admin/outreach/templates",  label: "Templates"                },
+  { href: "/admin/outreach/warmup",     label: "Warmup"                   },
+  { href: "/admin/outreach/settings",   label: "Settings"                 },
 ];
 
 export default function OutreachLayout({ children }: { children: React.ReactNode }) {

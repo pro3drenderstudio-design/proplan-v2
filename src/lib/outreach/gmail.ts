@@ -204,7 +204,7 @@ export async function fetchRecentMessages(
       userId:          "me",
       id:              item.id,
       format:          "full",
-      metadataHeaders: ["From", "Subject", "In-Reply-To", "References", "X-PPS-Warmup"],
+      metadataHeaders: ["From", "Subject", "In-Reply-To", "References", "X-PP-Ref"],
     });
 
     const headers  = msg.data.payload?.headers ?? [];
@@ -212,7 +212,7 @@ export async function fetchRecentMessages(
     const fromRaw  = getH("From") ?? "";
     const fromEmail = fromRaw.match(/<([^>]+)>/)?.[1] ?? fromRaw;
     const inReplyTo = getH("In-Reply-To");
-    const warmupId  = getH("X-PPS-Warmup");
+    const warmupId  = getH("X-PP-Ref");
 
     // Extract plain-text body
     let bodyText: string | null = null;
@@ -288,7 +288,7 @@ export async function fetchNewMessages(
         userId: "me",
         id:     msgId,
         format: "metadata",
-        metadataHeaders: ["From", "In-Reply-To", "References", "X-PPS-Warmup"],
+        metadataHeaders: ["From", "In-Reply-To", "References", "X-PP-Ref"],
       });
 
       const headers = msg.data.payload?.headers ?? [];
@@ -296,7 +296,7 @@ export async function fetchNewMessages(
         headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
 
       const inReplyTo = getHeader("In-Reply-To");
-      const warmupId  = getHeader("X-PPS-Warmup");
+      const warmupId  = getHeader("X-PP-Ref");
       const fromRaw   = getHeader("From") ?? "";
       const fromEmail = fromRaw.match(/<([^>]+)>/)?.[1] ?? fromRaw;
 

@@ -65,8 +65,8 @@ export const outreachWarmupPool = inngest.createFunction(
           const seed = `${sender.id}-${recipient.id}-${Date.now()}`;
           const template = selectSendTemplate(seed);
           const warmupId = crypto.randomUUID();
-          const warmupHeader = { "X-PPS-Warmup": warmupId };
-          const htmlBody = `<!--pps-warmup:${warmupId}--><p>${template.body.replace(/\n/g, "</p><p>")}</p>`;
+          const warmupHeader = { "X-PP-Ref": warmupId };
+          const htmlBody = `<!--pps-ref:${warmupId}--><p>${template.body.replace(/\n/g, "</p><p>")}</p>`;
           const textBody = template.body;
 
           let messageId = "";
@@ -150,9 +150,9 @@ export const outreachWarmupPool = inngest.createFunction(
         const seed = `reply-${warmupSend.id}`;
         const replyTemplate = selectReplyTemplate(seed);
         const replyWarmupId = crypto.randomUUID();
-        const warmupHeader  = { "X-PPS-Warmup": replyWarmupId };
+        const warmupHeader  = { "X-PP-Ref": replyWarmupId };
         const replySubject  = warmupSend.subject ? `Re: ${warmupSend.subject}` : "Re: (no subject)";
-        const htmlBody = `<!--pps-warmup:${replyWarmupId}--><p>${replyTemplate.body}</p>`;
+        const htmlBody = `<!--pps-ref:${replyWarmupId}--><p>${replyTemplate.body}</p>`;
 
         try {
           if (recipientInbox.provider === "gmail" && recipientInbox.oauth_refresh_token) {
@@ -266,11 +266,11 @@ async function rescueGmailWarmup(inbox: OutreachInbox, warmupSendId: string): Pr
       userId:          "me",
       id:              item.id,
       format:          "metadata",
-      metadataHeaders: ["X-PPS-Warmup"],
+      metadataHeaders: ["X-PP-Ref"],
     });
 
     const headers  = msg.data.payload?.headers ?? [];
-    const warmupId = headers.find((h) => h.name === "X-PPS-Warmup")?.value;
+    const warmupId = headers.find((h) => h.name === "X-PP-Ref")?.value;
     if (warmupId !== warmupSendId) continue;
 
     await gmail.users.messages.modify({
@@ -321,10 +321,10 @@ async function rescueSmtpWarmup(inbox: OutreachInbox, warmupSendId: string): Pro
       try {
         for await (const msg of client.fetch(
           { since: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-          { envelope: true, headers: ["x-pps-warmup"] },
+          { envelope: true, headers: ["x-pp-ref"] },
         )) {
           const headerStr = msg.headers?.toString() ?? "";
-          const match = headerStr.match(/x-pps-warmup:\s*(.+)/i);
+          const match = headerStr.match(/x-pp-ref:\s*(.+)/i);
           if (match?.[1]?.trim() !== warmupSendId) continue;
 
           if (msg.uid) {

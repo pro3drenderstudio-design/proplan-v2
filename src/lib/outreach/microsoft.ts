@@ -236,7 +236,7 @@ export async function fetchNewReplies(
   for (const msg of result?.value ?? []) {
     const headers: Array<{ name: string; value: string }> = msg.internetMessageHeaders ?? [];
     const inReplyTo = headers.find((h) => h.name === "In-Reply-To")?.value ?? null;
-    const warmupId  = headers.find((h) => h.name === "X-PPS-Warmup")?.value ?? null;
+    const warmupId  = headers.find((h) => h.name === "X-PP-Ref")?.value ?? null;
 
     if (!inReplyTo && !warmupId) continue;
 
@@ -261,7 +261,7 @@ export async function rescueMicrosoftWarmupFromSpam(
   warmupSendId: string,
 ): Promise<boolean> {
   const client = await getGraphClient(inbox);
-  const marker = `<!--pps-warmup:${warmupSendId}-->`;
+  const marker = `<!--pps-ref:${warmupSendId}-->`;
 
   // Search junk folder for messages with the warmup HTML comment
   const result = await client

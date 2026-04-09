@@ -120,7 +120,16 @@ export default function InboxesClient() {
     first_name: "", last_name: "",
     daily_send_limit: "", send_window_start: "", send_window_end: "",
     timezone: "", status: "" as "" | "active" | "paused",
+    warmup_enabled: "" as "" | "true" | "false",
+    warmup_target_daily: "", warmup_ramp_per_week: "",
   });
+
+  // ── Inbox drawer ──────────────────────────────────────────────────────────
+  const [drawerInbox, setDrawerInbox]   = useState<OutreachInboxSafe | null>(null);
+  const [drawerEdits, setDrawerEdits]   = useState<Partial<OutreachInboxSafe>>({});
+  const [drawerSaving, setDrawerSaving] = useState(false);
+  const [delivResult, setDelivResult]   = useState<string | null>(null);
+  const [delivTesting, setDelivTesting] = useState(false);
 
   const pageInboxes = inboxes.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const allPageSelected = pageInboxes.length > 0 && pageInboxes.every((i) => selected.has(i.id));
@@ -170,19 +179,22 @@ export default function InboxesClient() {
 
   async function handleBulkEdit() {
     const patch: Record<string, unknown> = {};
-    if (bulkFields.first_name)        patch.first_name        = bulkFields.first_name;
-    if (bulkFields.last_name)         patch.last_name         = bulkFields.last_name;
-    if (bulkFields.daily_send_limit)  patch.daily_send_limit  = parseInt(bulkFields.daily_send_limit);
-    if (bulkFields.send_window_start) patch.send_window_start = bulkFields.send_window_start;
-    if (bulkFields.send_window_end)   patch.send_window_end   = bulkFields.send_window_end;
-    if (bulkFields.timezone)          patch.timezone          = bulkFields.timezone;
-    if (bulkFields.status)            patch.status            = bulkFields.status;
+    if (bulkFields.first_name)          patch.first_name          = bulkFields.first_name;
+    if (bulkFields.last_name)           patch.last_name           = bulkFields.last_name;
+    if (bulkFields.daily_send_limit)    patch.daily_send_limit    = parseInt(bulkFields.daily_send_limit);
+    if (bulkFields.send_window_start)   patch.send_window_start   = bulkFields.send_window_start;
+    if (bulkFields.send_window_end)     patch.send_window_end     = bulkFields.send_window_end;
+    if (bulkFields.timezone)            patch.timezone            = bulkFields.timezone;
+    if (bulkFields.status)              patch.status              = bulkFields.status;
+    if (bulkFields.warmup_enabled !== "") patch.warmup_enabled    = bulkFields.warmup_enabled === "true";
+    if (bulkFields.warmup_target_daily)  patch.warmup_target_daily  = parseInt(bulkFields.warmup_target_daily);
+    if (bulkFields.warmup_ramp_per_week) patch.warmup_ramp_per_week = parseInt(bulkFields.warmup_ramp_per_week);
     if (!Object.keys(patch).length) { setShowBulkEdit(false); return; }
     setBulkWorking(true);
     await Promise.all(targetIds.map((id) => updateInbox(id, patch)));
     clearSelection();
     setShowBulkEdit(false);
-    setBulkFields({ first_name: "", last_name: "", daily_send_limit: "", send_window_start: "", send_window_end: "", timezone: "", status: "" });
+    setBulkFields({ first_name: "", last_name: "", daily_send_limit: "", send_window_start: "", send_window_end: "", timezone: "", status: "", warmup_enabled: "", warmup_target_daily: "", warmup_ramp_per_week: "" });
     setBulkWorking(false);
     load();
     showToast(`Updated ${effectiveCount} inboxes`);
@@ -261,6 +273,47 @@ export default function InboxesClient() {
     const newStatus = inbox.status === "active" ? "paused" : "active";
     await updateInbox(inbox.id, { status: newStatus });
     load();
+  }
+
+  function openDrawer(inbox: OutreachInboxSafe) {
+    setDrawerInbox(inbox);
+    setDrawerEdits({});
+    setDelivResult(null);
+  }
+
+  function df<K extends keyof OutreachInboxSafe>(key: K): OutreachInboxSafe[K] {
+    if (!drawerInbox) return undefined as unknown as OutreachInboxSafe[K];
+    return (key in drawerEdits ? drawerEdits[key] : drawerInbox[key]) as OutreachInboxSafe[K];
+  }
+
+  function setDf(key: keyof OutreachInboxSafe, value: unknown) {
+    setDrawerEdits((e) => ({ ...e, [key]: value }));
+  }
+
+  async function handleDrawerSave() {
+    if (!drawerInbox || !Object.keys(drawerEdits).length) return;
+    setDrawerSaving(true);
+    const updated = await updateInbox(drawerInbox.id, drawerEdits);
+    setInboxes((prev) => prev.map((i) => i.id === drawerInbox.id ? { ...i, ...drawerEdits } : i));
+    setDrawerInbox((prev) => prev ? { ...prev, ...drawerEdits } : prev);
+    setDrawerEdits({});
+    setDrawerSaving(false);
+    showToast("Saved");
+    void updated;
+  }
+
+  async function handleDelivTest() {
+    if (!drawerInbox) return;
+    setDelivTesting(true);
+    setDelivResult(null);
+    try {
+      const r = await fetch(`/api/outreach/inboxes/${drawerInbox.id}/test-deliverability`, { method: "POST" });
+      const d = await r.json();
+      setDelivResult(d.message ?? (d.error ? `Error: ${d.error}` : "Test sent"));
+    } catch {
+      setDelivResult("Request failed");
+    }
+    setDelivTesting(false);
   }
 
   return (
@@ -351,78 +404,68 @@ export default function InboxesClient() {
           <span className="text-white/30 text-xs">{allPageSelected ? "Deselect all on page" : "Select all on page"}</span>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           {pageInboxes.map((inbox) => {
             const color = PROVIDER_COLORS[inbox.provider] ?? "#888";
             const isSelected = selected.has(inbox.id);
+            const warmupPct = inbox.warmup_target_daily > 0
+              ? Math.min(100, Math.round(((inbox.warmup_current_daily ?? 0) / inbox.warmup_target_daily) * 100))
+              : 0;
             return (
-              <div key={inbox.id} onClick={() => toggleSelect(inbox.id)} className={`bg-white/4 border rounded-xl p-4 flex items-center gap-4 cursor-pointer transition-colors ${isSelected ? "border-blue-500/50 bg-blue-500/8" : "border-white/8 hover:border-white/15"}`}>
+              <div key={inbox.id} className={`bg-white/4 border rounded-xl px-4 py-3 flex items-center gap-3 transition-colors ${isSelected ? "border-blue-500/50 bg-blue-500/8" : "border-white/8 hover:border-white/12"}`}>
                 {/* Checkbox */}
                 <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(inbox.id)}
-                  onClick={(e) => e.stopPropagation()}
                   className="w-4 h-4 rounded accent-blue-500 cursor-pointer flex-shrink-0" />
                 {/* Provider badge */}
-                <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${color}20`, border: `1px solid ${color}40` }}>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${color}20`, border: `1px solid ${color}40` }}>
                   <span className="text-xs font-bold" style={{ color }}>{inbox.provider.toUpperCase().slice(0, 2)}</span>
                 </div>
 
                 {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-white font-medium text-sm">{inbox.label}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${inbox.status === "active" ? "bg-green-500/15 text-green-400" : inbox.status === "error" ? "bg-red-500/15 text-red-400" : "bg-white/10 text-white/40"}`}>
+                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openDrawer(inbox)}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-white font-medium text-sm truncate max-w-xs">{inbox.email_address}</span>
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold flex-shrink-0 ${inbox.status === "active" ? "bg-green-500/15 text-green-400" : inbox.status === "error" ? "bg-red-500/15 text-red-400" : "bg-white/10 text-white/40"}`}>
                       {inbox.status}
                     </span>
+                    {inbox.has_oauth && <span className="text-[10px] text-green-400/60 flex-shrink-0">● OAuth</span>}
                     {inbox.warmup_enabled && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400">
-                        Warmup {inbox.warmup_current_daily}/{inbox.warmup_target_daily}/day
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-amber-400/60 rounded-full transition-all" style={{ width: `${warmupPct}%` }} />
+                        </div>
+                        <span className="text-amber-400/70 text-[10px]">{inbox.warmup_current_daily ?? 0}/{inbox.warmup_target_daily}/d</span>
+                      </div>
                     )}
                   </div>
                   {(inbox.first_name || inbox.last_name) && (
-                    <div className="text-white/55 text-xs">{[inbox.first_name, inbox.last_name].filter(Boolean).join(" ")}</div>
+                    <p className="text-white/40 text-xs mt-0.5">{[inbox.first_name, inbox.last_name].filter(Boolean).join(" ")} · {inbox.daily_send_limit}/day</p>
                   )}
-                  <div className="text-white/40 text-xs mt-0.5">{inbox.email_address} · Limit: {inbox.daily_send_limit}/day · Window: {inbox.send_window_start}–{inbox.send_window_end} {inbox.timezone}</div>
-                  {inbox.last_error && <div className="text-red-400 text-xs mt-1 truncate">⚠ {inbox.last_error}</div>}
+                  {inbox.last_error && <p className="text-red-400/80 text-[10px] mt-0.5 truncate">⚠ {inbox.last_error}</p>}
                 </div>
 
-                {/* Actions */}
-                <div className="flex items-center gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                  {/* OAuth connect button — shown when inbox lacks OAuth tokens */}
-                  {!inbox.has_oauth && inbox.provider === "outlook" && (
-                    <a
-                      href={`/api/outreach/inboxes/oauth/microsoft?label=${encodeURIComponent(inbox.label)}&email=${encodeURIComponent(inbox.email_address)}`}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30 transition-colors"
-                      title="Connect Microsoft OAuth to enable reply detection"
-                    >
-                      🔗 Connect OAuth
-                    </a>
-                  )}
-                  {!inbox.has_oauth && inbox.provider === "gmail" && (
-                    <a
-                      href={`/api/outreach/inboxes/oauth/google?label=${encodeURIComponent(inbox.label)}&inbox_id=${inbox.id}`}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 transition-colors"
-                      title="Connect Google OAuth to enable reply detection"
-                    >
-                      🔗 Connect OAuth
-                    </a>
-                  )}
-                  {inbox.has_oauth && (
-                    <span className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-green-500/10 text-green-400 border border-green-500/20">
-                      ✓ OAuth
-                    </span>
-                  )}
-                  <button
-                    onClick={() => toggleStatus(inbox)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/6 hover:bg-white/10 text-white/60 hover:text-white transition-colors"
-                  >
-                    {inbox.status === "active" ? "Pause" : "Resume"}
+                {/* Icon actions */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {/* Settings */}
+                  <button onClick={() => openDrawer(inbox)} title="Settings" className="w-8 h-8 flex items-center justify-center rounded-lg text-white/40 hover:text-white hover:bg-white/8 transition-colors">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                    </svg>
                   </button>
-                  <button
-                    onClick={() => handleDelete(inbox.id, inbox.label)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors"
-                  >
-                    Remove
+                  {/* Pause / Resume */}
+                  <button onClick={() => toggleStatus(inbox)} title={inbox.status === "active" ? "Pause" : "Resume"} className="w-8 h-8 flex items-center justify-center rounded-lg text-white/40 hover:text-white hover:bg-white/8 transition-colors">
+                    {inbox.status === "active" ? (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg>
+                    )}
+                  </button>
+                  {/* Delete */}
+                  <button onClick={() => handleDelete(inbox.id, inbox.label)} title="Delete inbox" className="w-8 h-8 flex items-center justify-center rounded-lg text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                    </svg>
                   </button>
                 </div>
               </div>
@@ -571,6 +614,203 @@ export default function InboxesClient() {
         </div>
       )}
 
+      {/* ── Inbox drawer ──────────────────────────────────────────────────────── */}
+      {drawerInbox && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setDrawerInbox(null)} />
+          <div className="fixed right-0 top-0 h-full w-full max-w-md z-50 bg-[#141414] border-l border-white/10 flex flex-col shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ background: `${PROVIDER_COLORS[drawerInbox.provider] ?? "#888"}20`, border: `1px solid ${PROVIDER_COLORS[drawerInbox.provider] ?? "#888"}40` }}>
+                  <span className="text-xs font-bold" style={{ color: PROVIDER_COLORS[drawerInbox.provider] ?? "#888" }}>{drawerInbox.provider.toUpperCase().slice(0, 2)}</span>
+                </div>
+                <div>
+                  <p className="text-white font-semibold text-sm truncate max-w-xs">{drawerInbox.email_address}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${drawerInbox.status === "active" ? "bg-green-500/15 text-green-400" : drawerInbox.status === "error" ? "bg-red-500/15 text-red-400" : "bg-white/10 text-white/40"}`}>{drawerInbox.status}</span>
+                    {drawerInbox.has_oauth && <span className="text-[10px] text-green-400/60">● OAuth connected</span>}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setDrawerInbox(null)} className="text-white/40 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-6">
+
+              {/* OAuth connect (if missing) */}
+              {!drawerInbox.has_oauth && (drawerInbox.provider === "gmail" || drawerInbox.provider === "outlook") && (
+                <div className="bg-amber-500/8 border border-amber-500/25 rounded-xl p-4 flex items-center justify-between gap-3">
+                  <p className="text-amber-300 text-xs">OAuth not connected — reply detection disabled</p>
+                  <a
+                    href={drawerInbox.provider === "gmail"
+                      ? `/api/outreach/inboxes/oauth/google?label=${encodeURIComponent(drawerInbox.label)}&inbox_id=${drawerInbox.id}`
+                      : `/api/outreach/inboxes/oauth/microsoft?label=${encodeURIComponent(drawerInbox.label)}&email=${encodeURIComponent(drawerInbox.email_address)}`}
+                    className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    Connect OAuth →
+                  </a>
+                </div>
+              )}
+
+              {/* Identity */}
+              <section>
+                <h3 className="text-[10px] font-semibold text-white/35 uppercase tracking-widest mb-3">Identity</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Label</label>
+                    <input value={(df("label") as string) ?? ""} onChange={(e) => setDf("label", e.target.value)}
+                      className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-white/40 mb-1">First name</label>
+                      <input value={(df("first_name") as string) ?? ""} onChange={(e) => setDf("first_name", e.target.value)}
+                        placeholder="e.g. John"
+                        className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-white/40 mb-1">Last name</label>
+                      <input value={(df("last_name") as string) ?? ""} onChange={(e) => setDf("last_name", e.target.value)}
+                        placeholder="e.g. Smith"
+                        className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Signature (appended to emails)</label>
+                    <textarea rows={3} value={(df("signature") as string) ?? ""} onChange={(e) => setDf("signature", e.target.value)}
+                      placeholder="e.g. Best,&#10;John Smith&#10;ProPlan Studio"
+                      className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50 resize-none" />
+                  </div>
+                </div>
+              </section>
+
+              {/* Sending */}
+              <section>
+                <h3 className="text-[10px] font-semibold text-white/35 uppercase tracking-widest mb-3">Sending</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Daily send limit</label>
+                    <input type="number" min="1" max="500" value={(df("daily_send_limit") as number) ?? ""} onChange={(e) => setDf("daily_send_limit", parseInt(e.target.value))}
+                      className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-white/40 mb-1">Window start</label>
+                      <input type="time" value={(df("send_window_start") as string) ?? ""} onChange={(e) => setDf("send_window_start", e.target.value)}
+                        className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 focus:outline-none focus:border-blue-500/50" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-white/40 mb-1">Window end</label>
+                      <input type="time" value={(df("send_window_end") as string) ?? ""} onChange={(e) => setDf("send_window_end", e.target.value)}
+                        className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 focus:outline-none focus:border-blue-500/50" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Timezone</label>
+                    <input value={(df("timezone") as string) ?? ""} onChange={(e) => setDf("timezone", e.target.value)}
+                      placeholder="America/New_York"
+                      className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50" />
+                  </div>
+                </div>
+              </section>
+
+              {/* Warmup */}
+              <section>
+                <h3 className="text-[10px] font-semibold text-white/35 uppercase tracking-widest mb-3">Warmup</h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-white/80 text-sm">Enable warmup</p>
+                      <p className="text-white/35 text-xs">Sends pool emails to build inbox reputation</p>
+                    </div>
+                    <div
+                      onClick={() => setDf("warmup_enabled", !df("warmup_enabled"))}
+                      className={`w-10 h-6 rounded-full flex items-center px-0.5 cursor-pointer transition-colors flex-shrink-0 ${df("warmup_enabled") ? "bg-blue-600" : "bg-white/15"}`}
+                    >
+                      <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${df("warmup_enabled") ? "translate-x-4" : "translate-x-0"}`} />
+                    </div>
+                  </div>
+                  {df("warmup_enabled") && (
+                    <>
+                      <div className="bg-white/3 border border-white/6 rounded-xl p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-white/40 text-xs">Current daily volume</span>
+                          <span className="text-white/70 text-sm font-semibold">{drawerInbox.warmup_current_daily ?? 0} emails/day</span>
+                        </div>
+                        <div className="h-2 bg-white/8 rounded-full overflow-hidden">
+                          <div className="h-full bg-amber-400/70 rounded-full transition-all" style={{ width: `${Math.min(100, Math.round(((drawerInbox.warmup_current_daily ?? 0) / (drawerInbox.warmup_target_daily || 1)) * 100))}%` }} />
+                        </div>
+                        <div className="flex justify-between mt-1">
+                          <span className="text-white/20 text-[10px]">0</span>
+                          <span className="text-white/20 text-[10px]">Target: {drawerInbox.warmup_target_daily}/day</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-white/40 mb-1">Target daily</label>
+                          <input type="number" min="1" max="200" value={(df("warmup_target_daily") as number) ?? ""} onChange={(e) => setDf("warmup_target_daily", parseInt(e.target.value))}
+                            className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-white/40 mb-1">Ramp / week</label>
+                          <input type="number" min="1" max="50" value={(df("warmup_ramp_per_week") as number) ?? ""} onChange={(e) => setDf("warmup_ramp_per_week", parseInt(e.target.value))}
+                            className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </section>
+
+              {/* Health */}
+              <section>
+                <h3 className="text-[10px] font-semibold text-white/35 uppercase tracking-widest mb-3">Health</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Status</label>
+                    <select value={(df("status") as string) ?? "active"} onChange={(e) => setDf("status", e.target.value)}
+                      className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 focus:outline-none focus:border-blue-500/50">
+                      <option value="active">Active</option>
+                      <option value="paused">Paused</option>
+                    </select>
+                  </div>
+                  {drawerInbox.last_error && (
+                    <div className="bg-red-500/8 border border-red-500/20 rounded-xl p-3">
+                      <p className="text-red-400/80 text-xs font-semibold mb-1">Last error</p>
+                      <p className="text-red-300/60 text-xs">{drawerInbox.last_error}</p>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3">
+                    <button onClick={handleDelivTest} disabled={delivTesting}
+                      className="px-4 py-2 bg-white/6 hover:bg-white/10 disabled:opacity-40 text-white/60 text-xs font-semibold rounded-lg border border-white/10 transition-colors">
+                      {delivTesting ? "Sending…" : "Test Deliverability"}
+                    </button>
+                    {delivResult && <span className={`text-xs ${delivResult.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>{delivResult}</span>}
+                  </div>
+                </div>
+              </section>
+
+            </div>
+
+            {/* Footer */}
+            <div className="flex-shrink-0 border-t border-white/8 px-5 py-4 flex gap-3">
+              <button onClick={() => setDrawerInbox(null)} className="flex-1 py-2.5 bg-white/6 hover:bg-white/10 text-white/50 text-sm font-semibold rounded-xl transition-colors">
+                Close
+              </button>
+              <button onClick={handleDrawerSave} disabled={drawerSaving || !Object.keys(drawerEdits).length}
+                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors">
+                {drawerSaving ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Bulk edit modal */}
       {showBulkEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -652,6 +892,36 @@ export default function InboxesClient() {
                   onChange={(e) => setBulkFields((f) => ({ ...f, timezone: e.target.value }))}
                   className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50"
                 />
+              </div>
+
+              {/* Warmup section */}
+              <div className="pt-2 border-t border-white/8">
+                <p className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">Warmup</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-white/50 uppercase tracking-wider mb-1.5">Warmup enabled</label>
+                    <select value={bulkFields.warmup_enabled} onChange={(e) => setBulkFields((f) => ({ ...f, warmup_enabled: e.target.value as "" | "true" | "false" }))}
+                      className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 focus:outline-none">
+                      <option value="">— no change —</option>
+                      <option value="true">Enable</option>
+                      <option value="false">Disable</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-white/50 uppercase tracking-wider mb-1.5">Target daily</label>
+                    <input type="number" min="1" max="200" placeholder="e.g. 40"
+                      value={bulkFields.warmup_target_daily}
+                      onChange={(e) => setBulkFields((f) => ({ ...f, warmup_target_daily: e.target.value }))}
+                      className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-white/50 uppercase tracking-wider mb-1.5">Ramp per week</label>
+                    <input type="number" min="1" max="50" placeholder="e.g. 5"
+                      value={bulkFields.warmup_ramp_per_week}
+                      onChange={(e) => setBulkFields((f) => ({ ...f, warmup_ramp_per_week: e.target.value }))}
+                      className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none" />
+                  </div>
+                </div>
               </div>
 
               <div className="flex gap-3 pt-1">

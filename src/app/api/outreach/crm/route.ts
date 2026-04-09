@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
       const [{ data: sends }, { data: notes }, { data: replies }] = await Promise.all([
         db
           .from("outreach_sends")
-          .select("id, subject, body, replied_at, sent_at, opened_at, open_count")
+          .select("id, inbox_id, subject, body, replied_at, sent_at, opened_at, open_count, message_id, thread_id, to_email")
           .eq("enrollment_id", e.id)
           .not("replied_at", "is", null)
           .order("replied_at", { ascending: false })

@@ -4,7 +4,7 @@ import {
   getCrmThreads, addNote, updateCrmStatus, suggestReply,
   getCrmUnmatched, ignoreCrmUnmatched, matchReply,
   getCrmFilters, createCrmFilter, deleteCrmFilter,
-  triggerSendBatch,
+  triggerSendBatch, sendCrmReply,
 } from "@/lib/outreach/api";
 import type { CrmThread, CrmStatus, OutreachReply, OutreachCrmFilter } from "@/types/outreach";
 
@@ -90,6 +90,10 @@ export default function CrmClient() {
   const [suggesting, setSuggesting]     = useState(false);
   const [replyCollapsed, setReplyCollapsed] = useState(false);
   const [sentCollapsed, setSentCollapsed]   = useState(false);
+  const [composeBody, setComposeBody]       = useState("");
+  const [sending, setSending]               = useState(false);
+  const [sendError, setSendError]           = useState<string | null>(null);
+  const [sendSuccess, setSendSuccess]       = useState(false);
   const [triggering, setTriggering]     = useState(false);
   const [triggerMsg, setTriggerMsg]     = useState<string | null>(null);
   const [pollDetails, setPollDetails]   = useState<Array<{ email: string; fetched: number; matched: number; unmatched: number; error?: string }>>([]);
@@ -183,6 +187,22 @@ export default function CrmClient() {
     const { suggestion: text, error } = await suggestReply(selected.enrollment_id);
     setSuggestion(error ? `Error: ${error}` : (text ?? "No suggestion generated"));
     setSuggesting(false);
+  }
+
+  async function handleSendReply() {
+    if (!selected || !composeBody.trim()) return;
+    setSending(true);
+    setSendError(null);
+    setSendSuccess(false);
+    const result = await sendCrmReply(selected.enrollment_id, composeBody.trim());
+    if (result.error) {
+      setSendError(result.error);
+    } else {
+      setSendSuccess(true);
+      setComposeBody("");
+      setTimeout(() => setSendSuccess(false), 3000);
+    }
+    setSending(false);
   }
 
   async function handleTrigger() {
@@ -356,7 +376,7 @@ export default function CrmClient() {
                 return (
                   <button
                     key={t.enrollment_id}
-                    onClick={() => { setSelected(t); setSuggestion(null); setReplyCollapsed(false); setSentCollapsed(!!t.latest_reply); }}
+                    onClick={() => { setSelected(t); setSuggestion(null); setReplyCollapsed(false); setSentCollapsed(!!t.latest_reply); setComposeBody(""); setSendError(null); setSendSuccess(false); }}
                     className={`w-full text-left px-4 py-3.5 hover:bg-white/4 transition-colors ${selected?.enrollment_id === t.enrollment_id ? "bg-blue-600/10 border-r-2 border-blue-500" : ""}`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -428,72 +448,116 @@ export default function CrmClient() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* Email thread */}
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
 
-                {/* Their Reply */}
-                {selected.latest_reply && (
-                  <div>
-                    <button className="flex items-center gap-2 text-xs font-semibold text-white/50 uppercase tracking-wider mb-3 w-full" onClick={() => setReplyCollapsed((v) => !v)}>
-                      <span className="text-emerald-400/70">↩ Their Reply</span>
-                      {selected.latest_reply.from_email !== selected.lead.email && (
-                        <span className="text-amber-400/60 normal-case font-normal">from {selected.latest_reply.from_email}</span>
-                      )}
-                      <span className="ml-auto text-white/20">{replyCollapsed ? "▸" : "▾"}</span>
-                    </button>
-                    {!replyCollapsed && (
-                      <div className="bg-emerald-500/8 border border-emerald-500/20 rounded-xl p-5">
-                        {selected.latest_reply.subject && (
-                          <p className="text-white/60 text-xs mb-2 font-medium">Re: {selected.latest_reply.subject}</p>
-                        )}
-                        <pre className="text-white/80 text-sm whitespace-pre-wrap font-sans leading-relaxed">
-                          {selected.latest_reply.body_text ?? "(No body captured — reply detected via header matching)"}
-                        </pre>
-                        <div className="flex items-center gap-4 mt-3 pt-3 border-t border-emerald-500/15 text-xs text-white/30">
-                          <span>{new Date(selected.latest_reply.received_at).toLocaleString()}</span>
-                          {selected.latest_reply.ai_category && selected.latest_reply.ai_category !== "neutral" && (
-                            <span className="text-emerald-400/50">AI: {selected.latest_reply.ai_category.replace(/_/g, " ")} ({Math.round((selected.latest_reply.ai_confidence ?? 0) * 100)}%)</span>
+                {/* Sent email bubble — right aligned */}
+                {selected.latest_send && (
+                  <div className="flex flex-col items-end">
+                    <div className="max-w-[85%] w-full">
+                      <div className="flex items-center justify-end gap-2 mb-1.5">
+                        <span className="text-white/30 text-[10px]">
+                          {selected.latest_send.sent_at ? new Date(selected.latest_send.sent_at).toLocaleString() : ""}
+                        </span>
+                        {selected.latest_send.opened_at && <span className="text-emerald-400/60 text-[10px]">Opened</span>}
+                        <span className="text-blue-300/50 text-[10px] font-medium">You</span>
+                      </div>
+                      <button
+                        className="w-full text-left"
+                        onClick={() => setSentCollapsed((v) => !v)}
+                      >
+                        <div className="bg-blue-600/15 border border-blue-500/25 rounded-2xl rounded-tr-sm overflow-hidden">
+                          <div className="px-4 py-2.5 border-b border-blue-500/15 flex items-center justify-between gap-2">
+                            <p className="text-blue-200/80 text-xs font-medium truncate">{selected.latest_send.subject}</p>
+                            <span className="text-blue-300/30 text-[10px] flex-shrink-0">{sentCollapsed ? "▸" : "▾"}</span>
+                          </div>
+                          {!sentCollapsed && (
+                            <div className="p-4">
+                              {selected.latest_send.body?.trim().startsWith("<") ? (
+                                <iframe
+                                  srcDoc={`<html><head><style>body{margin:0;font-family:sans-serif;font-size:13px;color:#ccc;background:transparent;line-height:1.6}a{color:#7dd3fc}*{max-width:100%}</style></head><body>${selected.latest_send.body}</body></html>`}
+                                  sandbox="allow-same-origin"
+                                  className="w-full border-0 min-h-[80px]"
+                                  style={{ height: "auto" }}
+                                  onLoad={(e) => {
+                                    const iframe = e.currentTarget;
+                                    if (iframe.contentDocument?.body) {
+                                      iframe.style.height = iframe.contentDocument.body.scrollHeight + "px";
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                <pre className="text-blue-100/60 text-xs whitespace-pre-wrap font-sans leading-relaxed">{selected.latest_send.body}</pre>
+                              )}
+                            </div>
                           )}
                         </div>
-                      </div>
-                    )}
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {/* Email We Sent */}
-                {selected.latest_send && (
-                  <div>
-                    <button className="flex items-center gap-2 text-xs font-semibold text-white/40 uppercase tracking-wider mb-3 w-full" onClick={() => setSentCollapsed((v) => !v)}>
-                      <span>↗ Email We Sent</span>
-                      <span className="ml-auto text-white/20">{sentCollapsed ? "▸" : "▾"}</span>
-                    </button>
-                    {!sentCollapsed && (
-                      <div className="bg-white/4 border border-white/8 rounded-xl p-5">
-                        <p className="text-white font-medium text-sm mb-3">{selected.latest_send.subject}</p>
-                        <pre className="text-white/60 text-xs whitespace-pre-wrap font-sans leading-relaxed">{selected.latest_send.body}</pre>
-                        <div className="flex items-center gap-4 mt-4 pt-3 border-t border-white/8 text-xs text-white/30">
-                          {selected.latest_send.sent_at && <span>Sent {new Date(selected.latest_send.sent_at).toLocaleString()}</span>}
-                          {selected.latest_send.opened_at && <span className="text-green-400/60">Opened</span>}
-                          {selected.latest_send.replied_at && <span className="text-blue-400/60">Replied</span>}
-                        </div>
+                {/* Their reply bubble — left aligned */}
+                {selected.latest_reply && (
+                  <div className="flex flex-col items-start">
+                    <div className="max-w-[85%] w-full">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-emerald-300/60 text-[10px] font-medium">
+                          {selected.latest_reply.from_name || selected.latest_reply.from_email}
+                        </span>
+                        {selected.latest_reply.from_email !== selected.lead.email && (
+                          <span className="text-amber-400/50 text-[10px]">({selected.latest_reply.from_email})</span>
+                        )}
+                        <span className="text-white/30 text-[10px]">
+                          {new Date(selected.latest_reply.received_at).toLocaleString()}
+                        </span>
+                        {selected.latest_reply.ai_category && selected.latest_reply.ai_category !== "neutral" && (selected.latest_reply.ai_confidence ?? 0) >= 0.7 && (
+                          <span className="text-emerald-400/50 text-[10px]">
+                            AI: {selected.latest_reply.ai_category.replace(/_/g, " ")} {Math.round((selected.latest_reply.ai_confidence ?? 0) * 100)}%
+                          </span>
+                        )}
                       </div>
-                    )}
+                      <button className="w-full text-left" onClick={() => setReplyCollapsed((v) => !v)}>
+                        <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl rounded-tl-sm overflow-hidden">
+                          <div className="px-4 py-2.5 border-b border-emerald-500/15 flex items-center justify-between gap-2">
+                            <p className="text-emerald-200/70 text-xs font-medium truncate">
+                              {selected.latest_reply.subject ?? `Re: ${selected.latest_send?.subject ?? ""}`}
+                            </p>
+                            <span className="text-emerald-300/30 text-[10px] flex-shrink-0">{replyCollapsed ? "▸" : "▾"}</span>
+                          </div>
+                          {!replyCollapsed && (
+                            <div className="p-4">
+                              <pre className="text-emerald-100/75 text-sm whitespace-pre-wrap font-sans leading-relaxed">
+                                {selected.latest_reply.body_text ?? "(No body captured — reply detected via header matching)"}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    </div>
                   </div>
                 )}
 
                 {/* AI Reply Suggestion */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider">AI Reply Suggestion</h3>
-                    <button onClick={handleSuggestReply} disabled={suggesting} className="px-3 py-1.5 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/30 text-violet-300 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5">
-                      {suggesting ? <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating…</> : <>✦ Suggest Reply</>}
+                <div className="pt-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider">AI Suggestion</h3>
+                    <button onClick={handleSuggestReply} disabled={suggesting} className="px-3 py-1 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/30 text-violet-300 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5">
+                      {suggesting ? <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating…</> : <>✦ Suggest</>}
                     </button>
                   </div>
                   {suggestion && (
-                    <div className={`bg-violet-500/8 border rounded-xl p-4 space-y-3 ${suggestion.startsWith("Error") ? "border-red-500/20 bg-red-500/8" : "border-violet-500/20"}`}>
+                    <div className={`border rounded-xl p-4 space-y-3 ${suggestion.startsWith("Error") ? "border-red-500/20 bg-red-500/8" : "border-violet-500/20 bg-violet-500/8"}`}>
                       <p className={`text-sm whitespace-pre-wrap ${suggestion.startsWith("Error") ? "text-red-400" : "text-white/70"}`}>{suggestion}</p>
                       {!suggestion.startsWith("Error") && (
                         <div className="flex gap-2">
-                          <button onClick={() => { setNoteBody(suggestion); setSuggestion(null); noteRef.current?.focus(); }} className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold rounded-lg transition-colors">Use as Note</button>
+                          <button
+                            onClick={() => { setComposeBody(suggestion); setSuggestion(null); }}
+                            className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold rounded-lg transition-colors"
+                          >
+                            Use as Reply
+                          </button>
+                          <button onClick={() => { setNoteBody(suggestion); setSuggestion(null); noteRef.current?.focus(); }} className="px-3 py-1.5 bg-white/6 hover:bg-white/10 text-white/50 text-xs rounded-lg transition-colors">Use as Note</button>
                           <button onClick={() => setSuggestion(null)} className="px-3 py-1.5 bg-white/6 hover:bg-white/10 text-white/50 text-xs rounded-lg transition-colors">Dismiss</button>
                         </div>
                       )}
@@ -502,10 +566,10 @@ export default function CrmClient() {
                 </div>
 
                 {/* Notes */}
-                <div>
-                  <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">Notes</h3>
+                <div className="pt-1">
+                  <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider mb-3">Notes</h3>
                   {(selected.notes?.length ?? 0) > 0 && (
-                    <div className="space-y-3 mb-3">
+                    <div className="space-y-2 mb-3">
                       {selected.notes.map((n) => (
                         <div key={n.id} className="bg-amber-500/8 border border-amber-500/15 rounded-xl p-4">
                           <p className="text-white/80 text-sm whitespace-pre-wrap">{n.body}</p>
@@ -515,12 +579,42 @@ export default function CrmClient() {
                     </div>
                   )}
                   <div className="bg-white/3 border border-white/8 rounded-xl p-3 space-y-2">
-                    <textarea ref={noteRef} value={noteBody} onChange={(e) => setNoteBody(e.target.value)} placeholder="Add a note…" rows={3} className="w-full bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none resize-none" />
+                    <textarea ref={noteRef} value={noteBody} onChange={(e) => setNoteBody(e.target.value)} placeholder="Add a note…" rows={2} className="w-full bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none resize-none" />
                     <div className="flex justify-end">
                       <button onClick={handleAddNote} disabled={savingNote || !noteBody.trim()} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors">
                         {savingNote ? "Saving…" : "Save Note"}
                       </button>
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Compose reply — pinned to bottom */}
+              <div className="flex-shrink-0 border-t border-white/8 bg-white/2 p-4">
+                <div className="bg-white/4 border border-white/10 rounded-xl overflow-hidden focus-within:border-blue-500/40 transition-colors">
+                  <textarea
+                    value={composeBody}
+                    onChange={(e) => { setComposeBody(e.target.value); setSendError(null); setSendSuccess(false); }}
+                    placeholder={`Reply to ${selected.lead.first_name || selected.lead.email}…`}
+                    rows={4}
+                    className="w-full bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none resize-none px-4 pt-3 pb-1"
+                  />
+                  <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+                    <div className="text-xs">
+                      {sendError && <span className="text-red-400">⚠ {sendError}</span>}
+                      {sendSuccess && <span className="text-emerald-400">✓ Sent successfully</span>}
+                    </div>
+                    <button
+                      onClick={handleSendReply}
+                      disabled={sending || !composeBody.trim()}
+                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5"
+                    >
+                      {sending ? (
+                        <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Sending…</>
+                      ) : (
+                        <>↗ Send Reply</>
+                      )}
+                    </button>
                   </div>
                 </div>
               </div>

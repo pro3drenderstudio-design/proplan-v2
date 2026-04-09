@@ -162,6 +162,11 @@ export async function matchReply(replyId: string, enrollmentId: string) {
   return fetch(`${base}/crm/replies/${replyId}/match`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enrollment_id: enrollmentId }) });
 }
 
+export async function sendCrmReply(enrollmentId: string, body: string): Promise<{ ok?: boolean; error?: string }> {
+  const r = await fetch(`${base}/crm/${enrollmentId}/reply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body }) });
+  return r.json();
+}
+
 export async function triggerSendBatch(): Promise<{
   sends:   { sent: number; skipped: number; errors: number; processed: number };
   replies: { inboxes: number; matched: number; unmatched: number; filtered: number; details: Array<{ email: string; fetched: number; matched: number; unmatched: number; error?: string }> };

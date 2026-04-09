@@ -14,8 +14,8 @@ async function getStats() {
     { count: totalOpened },
     { count: totalReplied },
     { count: totalLeads },
-    { data: inboxes },
     { data: recentCampaignRows },
+    { data: recentReplies },
   ] = await Promise.all([
     supabase.from("outreach_inboxes").select("id", { count: "exact", head: true }).eq("status", "active"),
     supabase.from("outreach_campaigns").select("id", { count: "exact", head: true }).eq("status", "active"),
@@ -23,8 +23,12 @@ async function getStats() {
     supabase.from("outreach_sends").select("id", { count: "exact", head: true }).not("opened_at", "is", null),
     supabase.from("outreach_enrollments").select("id", { count: "exact", head: true }).eq("status", "replied"),
     supabase.from("outreach_leads").select("id", { count: "exact", head: true }).eq("status", "active"),
-    supabase.from("outreach_inboxes").select("id, label, email_address, status, warmup_enabled, warmup_current_daily, warmup_target_daily").order("created_at"),
     supabase.from("outreach_campaigns").select("id, name, status, send_days, send_start_time, send_end_time").in("status", ["active", "paused"]).order("updated_at", { ascending: false }).limit(5),
+    supabase.from("outreach_replies")
+      .select("id, from_email, from_name, subject, body_text, received_at, ai_category, ai_confidence, enrollment_id, is_filtered")
+      .eq("is_filtered", false)
+      .order("received_at", { ascending: false })
+      .limit(8),
   ]);
 
   const openRate  = totalSent ? Math.round(((totalOpened  ?? 0) / (totalSent ?? 1)) * 100) : 0;
@@ -61,14 +65,9 @@ async function getStats() {
     }),
   );
 
-  return { inboxCount, activeCampaigns, totalSent, totalOpened, totalReplied, totalLeads, openRate, replyRate, inboxes: inboxes ?? [], recentCampaigns };
+  return { inboxCount, activeCampaigns, totalSent, totalOpened, totalReplied, totalLeads, openRate, replyRate, recentCampaigns, recentReplies: recentReplies ?? [] };
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  active: "text-green-400 bg-green-500/15",
-  paused: "text-amber-400 bg-amber-500/15",
-  error:  "text-red-400 bg-red-500/15",
-};
 
 export default async function OutreachOverviewPage() {
   const stats = await getStats();
@@ -99,41 +98,52 @@ export default async function OutreachOverviewPage() {
         ))}
       </div>
 
-      {/* Inbox Health Strip */}
-      {stats.inboxes.length > 0 && (
+      {/* Recent CRM Replies */}
+      {stats.recentReplies.length > 0 && (
         <div className="mt-8">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-white/70 font-semibold text-sm">Inbox Health</h2>
-            <Link href="/admin/outreach/inboxes" className="text-xs text-blue-400 hover:text-blue-300">View all →</Link>
+            <h2 className="text-white/70 font-semibold text-sm">Recent Replies</h2>
+            <Link href="/admin/outreach/crm" className="text-xs text-blue-400 hover:text-blue-300">Open CRM →</Link>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {stats.inboxes.map((inbox) => {
-              const warmupPct = inbox.warmup_target_daily > 0
-                ? Math.min(100, Math.round((inbox.warmup_current_daily / inbox.warmup_target_daily) * 100))
-                : 0;
+          <div className="space-y-2">
+            {stats.recentReplies.map((reply) => {
+              const categoryColors: Record<string, string> = {
+                interested:     "text-emerald-400 bg-emerald-500/15",
+                meeting_booked: "text-blue-400 bg-blue-500/15",
+                not_interested: "text-red-400 bg-red-500/15",
+                ooo:            "text-orange-400 bg-orange-500/15",
+                follow_up:      "text-violet-400 bg-violet-500/15",
+              };
+              const catColor = reply.ai_category && (reply.ai_confidence ?? 0) >= 0.7
+                ? categoryColors[reply.ai_category] ?? ""
+                : "";
+              const timeAgo = (() => {
+                const diff = Date.now() - new Date(reply.received_at).getTime();
+                const m = Math.floor(diff / 60000);
+                if (m < 1) return "just now";
+                if (m < 60) return `${m}m ago`;
+                const h = Math.floor(m / 60);
+                if (h < 24) return `${h}h ago`;
+                return new Date(reply.received_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+              })();
               return (
-                <div key={inbox.id} className="bg-white/4 border border-white/8 rounded-xl p-4 flex items-center gap-3">
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/8 flex items-center justify-center text-xs font-bold text-white/60">
-                    {inbox.email_address.charAt(0).toUpperCase()}
+                <Link key={reply.id} href="/admin/outreach/crm" className="flex items-center gap-3 bg-white/4 hover:bg-white/6 border border-white/8 rounded-xl px-4 py-3 transition-colors">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
+                    <span className="text-emerald-400 text-xs font-bold">{(reply.from_name || reply.from_email).charAt(0).toUpperCase()}</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-white text-xs font-medium truncate">{inbox.label || inbox.email_address}</span>
-                      <span className={`px-1.5 py-0.5 rounded-full text-xs font-semibold flex-shrink-0 ${STATUS_COLORS[inbox.status] ?? "text-white/40 bg-white/8"}`}>
-                        {inbox.status}
-                      </span>
+                      <span className="text-white text-sm font-medium truncate">{reply.from_name || reply.from_email}</span>
+                      {catColor && (
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold flex-shrink-0 ${catColor}`}>
+                          {reply.ai_category?.replace(/_/g, " ")}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-white/35 text-xs truncate mt-0.5">{inbox.email_address}</div>
-                    {inbox.warmup_enabled && (
-                      <div className="mt-1.5 flex items-center gap-2">
-                        <div className="flex-1 h-1 bg-white/8 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500/60 rounded-full" style={{ width: `${warmupPct}%` }} />
-                        </div>
-                        <span className="text-white/25 text-xs flex-shrink-0">{inbox.warmup_current_daily}/{inbox.warmup_target_daily}/d</span>
-                      </div>
-                    )}
+                    <p className="text-white/35 text-xs truncate">{reply.body_text?.slice(0, 80) ?? reply.subject ?? "(no body)"}</p>
                   </div>
-                </div>
+                  <span className="text-white/25 text-[10px] flex-shrink-0">{timeAgo}</span>
+                </Link>
               );
             })}
           </div>
@@ -174,7 +184,7 @@ export default async function OutreachOverviewPage() {
       )}
 
       {/* Quick Start */}
-      {stats.inboxes.length === 0 && (
+      {(stats.inboxCount ?? 0) === 0 && (
         <div className="mt-10 bg-white/4 border border-white/8 rounded-xl p-6">
           <h2 className="text-white/70 font-semibold mb-4">Quick Start</h2>
           <ol className="space-y-3 text-sm text-white/50 list-decimal list-inside">

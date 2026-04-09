@@ -192,12 +192,12 @@ async function fetchImapMessages(
       {
         envelope: true,
         source:   true,   // full raw message — most reliable across all servers
-        headers:  ["in-reply-to", "references", "x-pps-warmup", "message-id"],
+        headers:  ["in-reply-to", "references", "x-pp-ref", "message-id"],
       },
     )) {
       const headerStr  = msg.headers ? msg.headers.toString() : "";
       const inReplyToM = headerStr.match(/in-reply-to:\s*(.+)/im);
-      const warmupM    = headerStr.match(/x-pps-warmup:\s*(.+)/im);
+      const warmupM    = headerStr.match(/x-pp-ref:\s*(.+)/im);
 
       const fromAddr = msg.envelope?.from?.[0]?.address ?? "";
       const fromName = msg.envelope?.from?.[0]?.name ?? null;
