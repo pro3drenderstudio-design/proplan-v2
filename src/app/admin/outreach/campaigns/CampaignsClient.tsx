@@ -103,10 +103,11 @@ export default function CampaignsClient() {
         </div>
       ) : (
         <div className="border border-white/8 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_220px] gap-4 px-5 py-3 bg-white/3 border-b border-white/6">
-            {["Campaign", "Status", "Enrolled", "Sent", "Open Rate", "Replies", ""].map((h) => (
+          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_100px] gap-4 px-5 py-3 bg-white/3 border-b border-white/6">
+            {["Campaign", "Status", "Enrolled", "Sent", "Open Rate", "Replies"].map((h) => (
               <div key={h} className="text-white/35 text-xs font-semibold uppercase tracking-wider">{h}</div>
             ))}
+            <div />
           </div>
           {filtered.map((c, i) => {
             const enrolled  = c.total_enrolled ?? 0;
@@ -117,7 +118,7 @@ export default function CampaignsClient() {
             const progress  = enrolled > 0 ? Math.round(((replied) / enrolled) * 100) : 0;
 
             return (
-              <div key={c.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_220px] gap-4 items-center px-5 py-4 border-b border-white/4 last:border-0 ${i % 2 === 0 ? "" : "bg-white/1"}`}>
+              <div key={c.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_100px] gap-4 items-center px-5 py-4 border-b border-white/4 last:border-0 ${i % 2 === 0 ? "" : "bg-white/1"}`}>
                 <div>
                   <Link href={`/admin/outreach/campaigns/${c.id}`} className="text-white font-medium text-sm hover:text-blue-300 transition-colors">{c.name}</Link>
                   <div className="text-white/30 text-xs mt-0.5">{c.send_days?.join(", ")} · {c.send_start_time}–{c.send_end_time}</div>
@@ -137,15 +138,45 @@ export default function CampaignsClient() {
                   {sent > 0 ? `${openRate}%` : "—"}
                 </div>
                 <div className="text-white/60 text-sm">{replied.toLocaleString()}</div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1 justify-end">
+                  {/* Pause / Activate */}
                   {c.status !== "completed" && (
-                    <button onClick={() => toggleStatus(c)} className="px-2.5 py-1.5 bg-white/6 hover:bg-white/10 text-white/60 hover:text-white text-xs rounded-lg transition-colors">
-                      {c.status === "active" ? "Pause" : "Activate"}
+                    <button
+                      onClick={() => toggleStatus(c)}
+                      title={c.status === "active" ? "Pause" : "Activate"}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/4 hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                    >
+                      {c.status === "active" ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                      ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                      )}
                     </button>
                   )}
-                  <Link href={`/admin/outreach/campaigns/${c.id}`} className="px-2.5 py-1.5 bg-white/6 hover:bg-white/10 text-white/60 hover:text-white text-xs rounded-lg transition-colors">Edit</Link>
-                  <button onClick={() => handleClone(c)} className="px-2.5 py-1.5 bg-white/6 hover:bg-white/10 text-white/60 hover:text-white text-xs rounded-lg transition-colors">Duplicate</button>
-                  <button onClick={() => handleDelete(c)} className="px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs rounded-lg transition-colors">Delete</button>
+                  {/* Edit */}
+                  <Link
+                    href={`/admin/outreach/campaigns/${c.id}`}
+                    title="Edit"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/4 hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </Link>
+                  {/* Duplicate */}
+                  <button
+                    onClick={() => handleClone(c)}
+                    title="Duplicate"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/4 hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  {/* Delete */}
+                  <button
+                    onClick={() => handleDelete(c)}
+                    title="Delete"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/4 hover:bg-red-500/20 text-white/50 hover:text-red-400 transition-colors"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                  </button>
                 </div>
               </div>
             );

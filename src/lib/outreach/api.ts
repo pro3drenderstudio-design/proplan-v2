@@ -2,6 +2,7 @@ import type {
   OutreachInboxSafe, OutreachList, OutreachCampaign,
   OutreachSequenceStep, ImportResult, CrmThread, InboxImportResult,
   OutreachTemplate, CampaignAnalytics, OutreachReply, OutreachCrmFilter,
+  CampaignEnrollmentRow,
 } from "@/types/outreach";
 
 const base = "/api/outreach";
@@ -78,6 +79,13 @@ export async function deleteCampaign(id: string) {
 export async function enrollLeads(campaignId: string, listId: string): Promise<{ enrolled: number }> {
   const r = await fetch(`${base}/campaigns/${campaignId}/enroll`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ list_id: listId }) });
   return r.json();
+}
+export async function getCampaignEnrollments(campaignId: string, page = 0, limit = 50, status = "all"): Promise<{ enrollments: CampaignEnrollmentRow[]; total: number }> {
+  const r = await fetch(`${base}/campaigns/${campaignId}/enrollments?page=${page}&limit=${limit}&status=${status}`);
+  return r.json();
+}
+export async function unenrollLead(campaignId: string, enrollmentId: string): Promise<void> {
+  await fetch(`${base}/campaigns/${campaignId}/enrollments/${enrollmentId}`, { method: "DELETE" });
 }
 
 // ─── Sequences ────────────────────────────────────────────────────────────────

@@ -710,12 +710,7 @@ export default function InboxesClient() {
                         className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 focus:outline-none focus:border-blue-500/50" />
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-xs text-white/40 mb-1">Timezone</label>
-                    <input value={(df("timezone") as string) ?? ""} onChange={(e) => setDf("timezone", e.target.value)}
-                      placeholder="America/New_York"
-                      className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/50" />
-                  </div>
+                  <p className="text-white/20 text-[10px]">Send window timezone is set per campaign, not per inbox.</p>
                 </div>
               </section>
 

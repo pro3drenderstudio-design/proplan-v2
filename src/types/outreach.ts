@@ -194,6 +194,25 @@ export interface CrmThread {
   notes:        OutreachCrmNote[];
 }
 
+// ─── Campaign Enrollment Row (joined) ────────────────────────────────────────
+export interface CampaignEnrollmentRow {
+  id: string;
+  status: EnrollmentStatus;
+  current_step: number;
+  next_send_at: string | null;
+  ab_variant: "a" | "b";
+  created_at: string;
+  updated_at: string;
+  lead: {
+    id: string;
+    email: string;
+    first_name: string | null;
+    last_name: string | null;
+    company: string | null;
+    title: string | null;
+  } | null;
+}
+
 // ─── Blacklist ────────────────────────────────────────────────────────────────
 export interface OutreachBlacklistDomain {
   id: string;

@@ -6,10 +6,12 @@ import {
   getCampaign, getSequence, updateCampaign, saveSequence,
   getInboxes, getTemplates, sendTestEmail, generateSequence,
   getCampaignAnalytics, triggerSendBatch,
+  getCampaignEnrollments, unenrollLead, enrollLeads, getLists,
 } from "@/lib/outreach/api";
 import type {
   OutreachCampaign, OutreachSequenceStep, CampaignStatus,
   OutreachInboxSafe, OutreachTemplate, CampaignAnalytics,
+  CampaignEnrollmentRow, OutreachList,
 } from "@/types/outreach";
 
 const STATUS_COLORS: Record<CampaignStatus, string> = {
@@ -94,7 +96,16 @@ function formatDateTime(ts: string | null | undefined): string {
   return new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-type Tab = "overview" | "analytics" | "activity" | "queue";
+type Tab = "overview" | "analytics" | "activity" | "queue" | "leads";
+
+const COMMON_TIMEZONES = [
+  "America/New_York","America/Chicago","America/Denver","America/Los_Angeles",
+  "America/Phoenix","America/Anchorage","Pacific/Honolulu",
+  "Europe/London","Europe/Paris","Europe/Berlin","Europe/Madrid",
+  "Europe/Amsterdam","Europe/Stockholm","Europe/Zurich",
+  "Asia/Dubai","Asia/Kolkata","Asia/Singapore","Asia/Tokyo","Asia/Shanghai",
+  "Australia/Sydney","Australia/Melbourne","Pacific/Auckland",
+];
 
 export default function CampaignDetailClient({ campaignId }: { campaignId: string }) {
   const searchParams = useSearchParams();
@@ -115,9 +126,23 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
   // Activity filter
   const [activityFilter, setActivityFilter] = useState<string>("all");
 
+  // Leads tab
+  const [leadsData, setLeadsData]           = useState<{ enrollments: CampaignEnrollmentRow[]; total: number } | null>(null);
+  const [leadsLoading, setLeadsLoading]     = useState(false);
+  const [leadsPage, setLeadsPage]           = useState(0);
+  const [leadsStatus, setLeadsStatus]       = useState("all");
+  const [leadsSearch, setLeadsSearch]       = useState("");
+  const [unenrolling, setUnenrolling]       = useState<string | null>(null);
+  const [lists, setLists]                   = useState<OutreachList[]>([]);
+  const [addListId, setAddListId]           = useState("");
+  const [addingLeads, setAddingLeads]       = useState(false);
+  const [addLeadsResult, setAddLeadsResult] = useState<string | null>(null);
+  const LEADS_PAGE_SIZE = 50;
+
   // Edit form state
   const [editName, setEditName]               = useState("");
   const [editInboxes, setEditInboxes]         = useState<string[]>([]);
+  const [editTimezone, setEditTimezone]       = useState("America/New_York");
   const [editStartTime, setEditStartTime]     = useState("09:00");
   const [editEndTime, setEditEndTime]         = useState("17:00");
   const [editDays, setEditDays]               = useState<string[]>(["mon","tue","wed","thu","fri"]);
@@ -172,10 +197,26 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
     }
   }, [tab, analytics, campaignId]);
 
+  // Load leads tab
+  useEffect(() => {
+    if (tab !== "leads") return;
+    setLeadsLoading(true);
+    Promise.all([
+      getCampaignEnrollments(campaignId, leadsPage, LEADS_PAGE_SIZE, leadsStatus),
+      lists.length === 0 ? getLists() : Promise.resolve(lists),
+    ]).then(([data, listData]) => {
+      setLeadsData(data);
+      if (lists.length === 0) setLists(listData as OutreachList[]);
+      setLeadsLoading(false);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, leadsPage, leadsStatus, campaignId]);
+
   function openEdit() {
     if (!campaign) return;
     setEditName(campaign.name);
     setEditInboxes(campaign.inbox_ids ?? []);
+    setEditTimezone(campaign.timezone ?? "America/New_York");
     setEditStartTime(campaign.send_start_time ?? "09:00");
     setEditEndTime(campaign.send_end_time ?? "17:00");
     setEditDays(campaign.send_days ?? ["mon","tue","wed","thu","fri"]);
@@ -192,7 +233,7 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
     if (!campaign) return;
     setSaving(true);
     const [updated] = await Promise.all([
-      updateCampaign(campaign.id, { name: editName, inbox_ids: editInboxes, send_start_time: editStartTime, send_end_time: editEndTime, send_days: editDays, daily_cap: editDailyCap, min_delay_seconds: editMinDelay, max_delay_seconds: editMaxDelay, stop_on_reply: editStopOnReply, pause_after_open: editPauseAfterOpen }),
+      updateCampaign(campaign.id, { name: editName, inbox_ids: editInboxes, timezone: editTimezone, send_start_time: editStartTime, send_end_time: editEndTime, send_days: editDays, daily_cap: editDailyCap, min_delay_seconds: editMinDelay, max_delay_seconds: editMaxDelay, stop_on_reply: editStopOnReply, pause_after_open: editPauseAfterOpen }),
       saveSequence(campaign.id, editSteps.map(s => ({ ...s, subject_template_b: s.subject_template_b || null }))),
     ]);
     setCampaign(updated);
@@ -271,6 +312,14 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
               </label>
             ))}
           </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-white/50 uppercase tracking-wider mb-1.5">Timezone</label>
+          <select value={editTimezone} onChange={e => setEditTimezone(e.target.value)} className="w-full bg-white/6 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/50">
+            {COMMON_TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+          </select>
+          <p className="text-white/25 text-xs mt-1">Send window times are interpreted in this timezone</p>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -440,7 +489,7 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-white/8 pb-0">
-        {(["overview", "analytics", "activity", "queue"] as Tab[]).map(t => (
+        {(["overview", "analytics", "activity", "queue", "leads"] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -449,6 +498,9 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
             {t}
             {t === "queue" && analytics && analytics.upcoming_queue.length > 0 && (
               <span className="ml-1.5 px-1.5 py-0.5 bg-blue-600/30 text-blue-300 text-[10px] rounded-full">{analytics.upcoming_queue.length}</span>
+            )}
+            {t === "leads" && campaign && (campaign.total_enrolled ?? 0) > 0 && (
+              <span className="ml-1.5 px-1.5 py-0.5 bg-white/10 text-white/50 text-[10px] rounded-full">{(campaign.total_enrolled ?? 0).toLocaleString()}</span>
             )}
           </button>
         ))}
@@ -780,6 +832,151 @@ export default function CampaignDetailClient({ campaignId }: { campaignId: strin
             )}
           </div>
         )
+      )}
+
+      {/* ── TAB: LEADS ──────────────────────────────────────────────────────── */}
+      {tab === "leads" && (
+        <div className="space-y-4">
+          {/* Add leads from list */}
+          <div className="bg-white/3 border border-white/6 rounded-xl p-4 flex items-end gap-3 flex-wrap">
+            <div className="flex-1 min-w-48">
+              <label className="block text-xs font-semibold text-white/40 uppercase tracking-wider mb-1.5">Add Leads from List</label>
+              <select
+                value={addListId}
+                onChange={e => setAddListId(e.target.value)}
+                className="w-full bg-white/6 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50"
+              >
+                <option value="">— select a list —</option>
+                {lists.map(l => (
+                  <option key={l.id} value={l.id}>{l.name} ({l.lead_count ?? "?"} leads)</option>
+                ))}
+              </select>
+            </div>
+            <button
+              disabled={!addListId || addingLeads}
+              onClick={async () => {
+                if (!addListId) return;
+                setAddingLeads(true); setAddLeadsResult(null);
+                const res = await enrollLeads(campaignId, addListId);
+                setAddLeadsResult(`${res.enrolled} lead${res.enrolled !== 1 ? "s" : ""} enrolled`);
+                setAddingLeads(false);
+                setAddListId("");
+                const [data, fresh] = await Promise.all([
+                  getCampaignEnrollments(campaignId, leadsPage, LEADS_PAGE_SIZE, leadsStatus),
+                  getCampaign(campaignId),
+                ]);
+                setLeadsData(data);
+                setCampaign(fresh);
+              }}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-semibold rounded-lg transition-colors flex-shrink-0"
+            >
+              {addingLeads ? "Enrolling…" : "Enroll"}
+            </button>
+            {addLeadsResult && <span className="text-green-400 text-xs flex-shrink-0">{addLeadsResult}</span>}
+          </div>
+
+          {/* Filters */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex gap-1 flex-wrap">
+              {["all","active","completed","replied","bounced","unsubscribed"].map(s => (
+                <button key={s} onClick={() => { setLeadsStatus(s); setLeadsPage(0); }} className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${leadsStatus === s ? "bg-white/15 text-white" : "bg-white/5 text-white/40 hover:text-white/60"}`}>{s}</button>
+              ))}
+            </div>
+            <input
+              value={leadsSearch}
+              onChange={e => setLeadsSearch(e.target.value)}
+              placeholder="Search name / email…"
+              className="ml-auto w-48 bg-white/6 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder-white/25 focus:outline-none focus:border-blue-500/50"
+            />
+          </div>
+
+          {/* Table */}
+          {leadsLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-white/4 rounded-xl animate-pulse" />)}</div>
+          ) : !leadsData || leadsData.enrollments.length === 0 ? (
+            <div className="text-center py-16 text-white/25">
+              <p className="text-3xl mb-3">👥</p>
+              <p>No leads enrolled{leadsStatus !== "all" ? ` with status "${leadsStatus}"` : ""}.</p>
+            </div>
+          ) : (
+            <>
+              <div className="border border-white/8 rounded-xl overflow-hidden">
+                <div className="grid grid-cols-[2fr_1fr_1fr_1fr_40px] gap-3 px-5 py-2.5 bg-white/3 border-b border-white/6">
+                  {["Lead", "Company", "Status", "Next Send", ""].map(h => (
+                    <div key={h} className="text-white/30 text-[10px] font-semibold uppercase tracking-wider">{h}</div>
+                  ))}
+                </div>
+                {leadsData.enrollments
+                  .filter(e => {
+                    if (!leadsSearch) return true;
+                    const q = leadsSearch.toLowerCase();
+                    return (
+                      e.lead?.email.toLowerCase().includes(q) ||
+                      (e.lead?.first_name ?? "").toLowerCase().includes(q) ||
+                      (e.lead?.last_name ?? "").toLowerCase().includes(q)
+                    );
+                  })
+                  .map((e, i) => {
+                    const name = [e.lead?.first_name, e.lead?.last_name].filter(Boolean).join(" ") || e.lead?.email || "—";
+                    const statusColors: Record<string, string> = {
+                      active:       "text-green-400 bg-green-500/15",
+                      completed:    "text-blue-400 bg-blue-500/15",
+                      replied:      "text-violet-400 bg-violet-500/15",
+                      bounced:      "text-red-400 bg-red-500/15",
+                      unsubscribed: "text-amber-400 bg-amber-500/15",
+                      paused:       "text-white/40 bg-white/8",
+                    };
+                    return (
+                      <div key={e.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr_40px] gap-3 items-center px-5 py-3 border-b border-white/4 last:border-0 ${i % 2 === 1 ? "bg-white/1" : ""}`}>
+                        <div className="min-w-0">
+                          <p className="text-white/80 text-sm font-medium truncate">{name}</p>
+                          <p className="text-white/30 text-xs truncate">{e.lead?.email}</p>
+                        </div>
+                        <p className="text-white/50 text-sm truncate">{e.lead?.company ?? "—"}</p>
+                        <div>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusColors[e.status] ?? "text-white/30 bg-white/6"}`}>{e.status}</span>
+                        </div>
+                        <p className="text-white/40 text-xs">
+                          {e.next_send_at
+                            ? new Date(e.next_send_at) <= new Date()
+                              ? <span className="text-green-400 font-medium">Due now</span>
+                              : new Date(e.next_send_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+                            : "—"}
+                        </p>
+                        <div className="flex justify-end">
+                          <button
+                            onClick={async () => {
+                              if (!confirm(`Remove ${name} from this campaign?`)) return;
+                              setUnenrolling(e.id);
+                              await unenrollLead(campaignId, e.id);
+                              setLeadsData(prev => prev ? { ...prev, enrollments: prev.enrollments.filter(x => x.id !== e.id), total: prev.total - 1 } : prev);
+                              setUnenrolling(null);
+                            }}
+                            disabled={unenrolling === e.id}
+                            title="Remove from campaign"
+                            className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/4 hover:bg-red-500/20 text-white/30 hover:text-red-400 transition-colors disabled:opacity-40"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {/* Pagination */}
+              {leadsData.total > LEADS_PAGE_SIZE && (
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-white/30 text-xs">{leadsPage * LEADS_PAGE_SIZE + 1}–{Math.min((leadsPage + 1) * LEADS_PAGE_SIZE, leadsData.total)} of {leadsData.total.toLocaleString()}</span>
+                  <div className="flex gap-2">
+                    <button onClick={() => setLeadsPage(p => Math.max(0, p - 1))} disabled={leadsPage === 0} className="px-3 py-1.5 bg-white/6 hover:bg-white/10 disabled:opacity-30 text-white/60 text-xs font-medium rounded-lg transition-colors">← Prev</button>
+                    <button onClick={() => setLeadsPage(p => p + 1)} disabled={(leadsPage + 1) * LEADS_PAGE_SIZE >= leadsData.total} className="px-3 py-1.5 bg-white/6 hover:bg-white/10 disabled:opacity-30 text-white/60 text-xs font-medium rounded-lg transition-colors">Next →</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   );
