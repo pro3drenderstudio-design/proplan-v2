@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/outreach-trigger",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }
