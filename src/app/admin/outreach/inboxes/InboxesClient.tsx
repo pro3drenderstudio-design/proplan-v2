@@ -5,6 +5,74 @@ import { useSearchParams } from "next/navigation";
 import { getInboxes, deleteInbox, updateInbox, importInboxes } from "@/lib/outreach/api";
 import type { OutreachInboxSafe, InboxImportResult } from "@/types/outreach";
 
+// ─── CSV column mapping ────────────────────────────────────────────────────────
+
+const INBOX_FIELDS: { key: string; label: string; required: boolean }[] = [
+  { key: "email",            label: "Email address",     required: true  },
+  { key: "smtp_host",        label: "SMTP host",         required: true  },
+  { key: "smtp_user",        label: "SMTP username",     required: true  },
+  { key: "smtp_pass",        label: "SMTP password",     required: true  },
+  { key: "label",            label: "Label / name",      required: false },
+  { key: "smtp_port",        label: "SMTP port",         required: false },
+  { key: "imap_host",        label: "IMAP host",         required: false },
+  { key: "imap_port",        label: "IMAP port",         required: false },
+  { key: "daily_limit",      label: "Daily send limit",  required: false },
+  { key: "timezone",         label: "Timezone",          required: false },
+  { key: "send_window_start",label: "Send window start", required: false },
+  { key: "send_window_end",  label: "Send window end",   required: false },
+  { key: "warmup_target",    label: "Warmup target",     required: false },
+];
+
+function parseCsvHeaders(text: string): string[] {
+  const firstLine = text.split("\n")[0] ?? "";
+  return firstLine.split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+}
+
+function autoMap(headers: string[]): Record<string, string> {
+  const normalized = headers.map((h) => h.toLowerCase().replace(/[\s\-]/g, "_"));
+  const mapping: Record<string, string> = {};
+  for (const field of INBOX_FIELDS) {
+    const aliases: Record<string, string[]> = {
+      email:             ["email", "email_address", "from_email"],
+      smtp_host:         ["smtp_host", "smtp_server", "mail_server"],
+      smtp_user:         ["smtp_user", "smtp_username", "username", "user"],
+      smtp_pass:         ["smtp_pass", "smtp_password", "password", "pass", "app_password"],
+      label:             ["label", "name", "inbox_name"],
+      smtp_port:         ["smtp_port", "port"],
+      imap_host:         ["imap_host", "imap_server"],
+      imap_port:         ["imap_port"],
+      daily_limit:       ["daily_limit", "daily_send_limit", "limit"],
+      timezone:          ["timezone", "time_zone", "tz"],
+      send_window_start: ["send_window_start", "window_start", "start_time"],
+      send_window_end:   ["send_window_end",   "window_end",   "end_time"],
+      warmup_target:     ["warmup_target", "warmup_target_daily"],
+    };
+    const candidates = aliases[field.key] ?? [field.key];
+    const match = normalized.findIndex((n) => candidates.includes(n));
+    if (match !== -1) mapping[field.key] = headers[match];
+  }
+  return mapping;
+}
+
+function remapCsv(text: string, mapping: Record<string, string>): string {
+  const lines = text.split("\n").filter(Boolean);
+  if (!lines.length) return text;
+  const originalHeaders = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+  // Build new header row using our standard keys
+  const newHeaders = INBOX_FIELDS.map((f) => f.key);
+  const headerLine = newHeaders.join(",");
+  const dataLines = lines.slice(1).map((line) => {
+    const cells = line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+    return newHeaders.map((key) => {
+      const srcCol = mapping[key];
+      if (!srcCol) return "";
+      const idx = originalHeaders.indexOf(srcCol);
+      return idx !== -1 ? (cells[idx] ?? "") : "";
+    }).join(",");
+  });
+  return [headerLine, ...dataLines].join("\n");
+}
+
 const CSV_TEMPLATE_HEADERS = "email,smtp_host,smtp_user,smtp_pass,label,smtp_port,imap_host,imap_port,daily_limit,timezone,send_window_start,send_window_end,warmup_target";
 const CSV_TEMPLATE_ROWS = [
   "you@gmail.com,smtp.gmail.com,you@gmail.com,your-app-password,My Gmail,587,,993,50,America/New_York,09:00,17:00,50",
@@ -36,6 +104,9 @@ export default function InboxesClient() {
   const [importFile, setImportFile]     = useState<File | null>(null);
   const [importing, setImporting]       = useState(false);
   const [importResult, setImportResult] = useState<InboxImportResult | null>(null);
+  const [csvHeaders, setCsvHeaders]     = useState<string[]>([]);
+  const [colMapping, setColMapping]     = useState<Record<string, string>>({});
+  const [showMapping, setShowMapping]   = useState(false);
   const [page, setPage]                 = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const PAGE_SIZE = 10;
@@ -68,11 +139,33 @@ export default function InboxesClient() {
     load();
   }
 
+  async function handleFileSelect(file: File | null) {
+    setImportFile(file);
+    setImportResult(null);
+    setShowMapping(false);
+    setCsvHeaders([]);
+    if (!file) return;
+    const text = await file.text();
+    const headers = parseCsvHeaders(text);
+    setCsvHeaders(headers);
+    setColMapping(autoMap(headers));
+    setShowMapping(true);
+  }
+
   async function handleImport() {
     if (!importFile) return;
     setImporting(true);
     setImportResult(null);
-    const result = await importInboxes(importFile);
+
+    let fileToSend = importFile;
+    // If mapping is active, remap CSV columns before uploading
+    if (showMapping && Object.keys(colMapping).length > 0) {
+      const text = await importFile.text();
+      const remapped = remapCsv(text, colMapping);
+      fileToSend = new File([remapped], importFile.name, { type: "text/csv" });
+    }
+
+    const result = await importInboxes(fileToSend);
     setImportResult(result);
     setImporting(false);
     if (result.imported > 0) {
@@ -80,6 +173,8 @@ export default function InboxesClient() {
       load();
     }
     setImportFile(null);
+    setShowMapping(false);
+    setCsvHeaders([]);
     if (fileRef.current) fileRef.current.value = "";
   }
 
@@ -104,7 +199,7 @@ export default function InboxesClient() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => { setShowImport(true); setImportResult(null); }}
+            onClick={() => { setShowImport(true); setImportResult(null); setShowMapping(false); setCsvHeaders([]); setImportFile(null); }}
             className="px-4 py-2 bg-white/8 hover:bg-white/12 text-white/70 hover:text-white rounded-xl text-sm font-semibold transition-colors border border-white/10"
           >
             Import CSV
@@ -283,10 +378,36 @@ export default function InboxesClient() {
                   ref={fileRef}
                   type="file"
                   accept=".csv,text/csv"
-                  onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
                   className="w-full text-sm text-white/60 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-white/10 file:text-white/70 file:text-xs file:font-semibold hover:file:bg-white/15 cursor-pointer"
                 />
               </div>
+
+              {/* Column mapping */}
+              {showMapping && csvHeaders.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-white/50 uppercase tracking-wider">Map Columns</p>
+                  <div className="bg-white/4 border border-white/8 rounded-xl overflow-hidden divide-y divide-white/5 max-h-64 overflow-y-auto">
+                    {INBOX_FIELDS.map((field) => (
+                      <div key={field.key} className="flex items-center gap-3 px-3 py-2">
+                        <span className={`text-xs w-36 flex-shrink-0 ${field.required ? "text-white/70" : "text-white/35"}`}>
+                          {field.label}{field.required && <span className="text-red-400 ml-0.5">*</span>}
+                        </span>
+                        <select
+                          value={colMapping[field.key] ?? ""}
+                          onChange={(e) => setColMapping((m) => ({ ...m, [field.key]: e.target.value }))}
+                          className="flex-1 bg-white/6 border border-white/10 rounded-lg px-2 py-1 text-xs text-white/70 focus:outline-none focus:border-blue-500/50"
+                        >
+                          <option value="">— skip —</option>
+                          {csvHeaders.map((h) => (
+                            <option key={h} value={h}>{h}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Import button */}
               <button
