@@ -173,14 +173,86 @@ export async function watchGmailInbox(inbox: OutreachInbox): Promise<void> {
     .eq("id", inbox.id);
 }
 
+// ─── fetchRecentMessages (messages.list fallback — no history ID needed) ──────
+
+export async function fetchRecentMessages(
+  inbox: OutreachInbox,
+  lookbackDays = 7,
+): Promise<GmailIncomingMessage[]> {
+  const gmail = await getGmailClient(inbox);
+  const messages: GmailIncomingMessage[] = [];
+
+  // List inbox messages received in the last N days
+  const listRes = await gmail.users.messages.list({
+    userId:     "me",
+    q:          `in:inbox newer_than:${lookbackDays}d`,
+    maxResults: 100,
+  });
+
+  // Also store a history ID now so future polls use the faster history API
+  const profileRes = await gmail.users.getProfile({ userId: "me" }).catch(() => null);
+  if (profileRes?.data.historyId) {
+    await supabase()
+      .from("outreach_inboxes")
+      .update({ gmail_history_id: profileRes.data.historyId })
+      .eq("id", inbox.id);
+  }
+
+  for (const item of listRes.data.messages ?? []) {
+    if (!item.id) continue;
+    const msg = await gmail.users.messages.get({
+      userId:          "me",
+      id:              item.id,
+      format:          "full",
+      metadataHeaders: ["From", "Subject", "In-Reply-To", "References", "X-PPS-Warmup"],
+    });
+
+    const headers  = msg.data.payload?.headers ?? [];
+    const getH     = (n: string) => headers.find((h) => h.name?.toLowerCase() === n.toLowerCase())?.value ?? null;
+    const fromRaw  = getH("From") ?? "";
+    const fromEmail = fromRaw.match(/<([^>]+)>/)?.[1] ?? fromRaw;
+    const inReplyTo = getH("In-Reply-To");
+    const warmupId  = getH("X-PPS-Warmup");
+
+    // Extract plain-text body
+    let bodyText: string | null = null;
+    const extractBody = (part: typeof msg.data.payload): string | null => {
+      if (!part) return null;
+      if (part.mimeType === "text/plain" && part.body?.data) {
+        return Buffer.from(part.body.data, "base64").toString("utf-8");
+      }
+      for (const sub of part.parts ?? []) {
+        const found = extractBody(sub);
+        if (found) return found;
+      }
+      return null;
+    };
+    bodyText = extractBody(msg.data.payload ?? undefined);
+
+    messages.push({
+      messageId:  item.id,
+      threadId:   msg.data.threadId ?? "",
+      inReplyTo,
+      fromEmail,
+      warmupId,
+      subject:    getH("Subject"),
+      bodyText,
+    });
+  }
+
+  return messages;
+}
+
 // ─── fetchNewMessages (reply detection via history API) ───────────────────────
 
 export interface GmailIncomingMessage {
-  messageId: string;
-  threadId: string;
-  inReplyTo: string | null;
-  fromEmail: string;
-  warmupId: string | null;
+  messageId:  string;
+  threadId:   string;
+  inReplyTo:  string | null;
+  fromEmail:  string;
+  warmupId:   string | null;
+  subject?:   string | null;
+  bodyText?:  string | null;
 }
 
 export async function fetchNewMessages(

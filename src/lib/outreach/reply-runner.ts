@@ -445,20 +445,23 @@ export async function runReplyPoll(lookbackDays = 7): Promise<ReplyPollResult> {
           .eq("id", inbox.id);
       }
     }
-    // ── Gmail OAuth history-based fallback ────────────────────────────────────
-    else if (inbox.provider === "gmail" && inbox.oauth_refresh_token && inbox.gmail_history_id) {
+    // ── Gmail OAuth ────────────────────────────────────────────────────────────
+    else if (inbox.provider === "gmail" && inbox.oauth_refresh_token) {
       try {
-        const { fetchNewMessages } = await import("@/lib/outreach/gmail");
-        const raw = await fetchNewMessages(inbox, inbox.gmail_history_id).catch(() => []);
+        const { fetchNewMessages, fetchRecentMessages } = await import("@/lib/outreach/gmail");
+        // Use history API if we have a history ID, otherwise fall back to messages.list
+        const raw = inbox.gmail_history_id
+          ? await fetchNewMessages(inbox, inbox.gmail_history_id).catch(() => [])
+          : await fetchRecentMessages(inbox, lookbackDays).catch(() => []);
         messages = raw.map((r) => ({
           messageId:  (r.messageId ?? "").replace(/^<|>$/g, ""),
-          inReplyTo:  null,
+          inReplyTo:  (r.inReplyTo ?? "").replace(/^<|>$/g, "") || null,
           fromEmail:  r.fromEmail ?? "",
           fromName:   null,
-          subject:    null,
-          bodyText:   null,
+          subject:    r.subject ?? null,
+          bodyText:   r.bodyText ?? null,
           receivedAt: new Date().toISOString(),
-          warmupId:   null,
+          warmupId:   r.warmupId ?? null,
         }));
       } catch (e) { fetchError = String(e); }
     }
