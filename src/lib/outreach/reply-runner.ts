@@ -429,7 +429,8 @@ export async function runReplyPoll(lookbackDays = 7): Promise<ReplyPollResult> {
   const allDetails: ReplyPollResult["details"] = [];
   let totalMatched = 0, totalUnmatched = 0, totalFiltered = 0;
 
-  async function processInbox(inbox: typeof inboxes[0]): Promise<ReplyPollResult["details"][0]> {
+  type InboxRow = NonNullable<typeof inboxes>[number];
+  async function processInbox(inbox: InboxRow): Promise<ReplyPollResult["details"][0]> {
     let messages: RawMessage[] = [];
     let fetchError: string | undefined;
 

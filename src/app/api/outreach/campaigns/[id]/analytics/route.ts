@@ -146,7 +146,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   // ── Recent activity (last 30 sends) ──────────────────────────────────────
   // Build enrollment→lead map
-  const enrollmentLeadMap = new Map(enrollments.map(e => [e.id, e.lead as { first_name?: string; last_name?: string; email: string; company?: string }]));
+  const enrollmentLeadMap = new Map(enrollments.map(e => [e.id, e.lead as unknown as { first_name?: string; last_name?: string; email: string; company?: string }]));
 
   const recent_activity = sends.slice(0, 30).map(s => {
     const lead = enrollmentLeadMap.get(s.enrollment_id);
@@ -167,7 +167,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   // ── Upcoming queue ────────────────────────────────────────────────────────
   const upcoming_queue = queue.map(e => {
-    const lead = e.lead as { first_name?: string; last_name?: string; email: string; company?: string };
+    const lead = e.lead as unknown as { first_name?: string; last_name?: string; email: string; company?: string };
     return {
       enrollment_id: e.id,
       lead_name:     [lead?.first_name, lead?.last_name].filter(Boolean).join(" ") || lead?.email,
