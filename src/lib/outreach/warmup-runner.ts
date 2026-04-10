@@ -1,0 +1,196 @@
+/**
+ * Core warmup pool runner.
+ * Sends warmup emails between active warmup-enabled inboxes,
+ * then replies to ~40% of recent warmup emails received.
+ *
+ * Called directly from the cron route as a fallback when Inngest is not
+ * configured, and from the Inngest outreach-warmup-pool function.
+ */
+
+import { createClient } from "@supabase/supabase-js";
+import { sendGmailMessage } from "@/lib/outreach/gmail";
+import { sendMicrosoftMessage } from "@/lib/outreach/microsoft";
+import { sendSmtpMessage } from "@/lib/outreach/smtp";
+import { selectSendTemplate, selectReplyTemplate } from "@/lib/outreach/warmup-templates";
+import type { OutreachInbox } from "@/types/outreach";
+
+const AUTH_ERROR_PATTERN =
+  /invalid_grant|token.*expired|token.*revoked|access.*denied|unauthorized|authentication.*fail|auth.*fail|535|534|530|credentials|wrong.*password|password.*incorrect|account.*suspended|account.*disabled|login.*fail|AUTHENTICATIONFAILED|AUTH.*FAILED/i;
+
+function supabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+}
+
+export interface WarmupRunResult {
+  sent:    number;
+  skipped: number;
+  replied: number;
+  errors:  number;
+}
+
+// ─── Send warmup emails ───────────────────────────────────────────────────────
+
+export async function runWarmupBatch(): Promise<WarmupRunResult> {
+  const db = supabase();
+  const result: WarmupRunResult = { sent: 0, skipped: 0, replied: 0, errors: 0 };
+
+  const { data: pool } = await db
+    .from("outreach_inboxes")
+    .select("*")
+    .eq("status", "active")
+    .eq("warmup_enabled", true);
+
+  if (!pool || pool.length < 2) {
+    return result;
+  }
+
+  // Count sends already done today per inbox
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+
+  const { data: todayCounts } = await db
+    .from("outreach_warmup_sends")
+    .select("from_inbox_id")
+    .gte("sent_at", todayStart.toISOString());
+
+  const sentToday = new Map<string, number>();
+  for (const row of todayCounts ?? []) {
+    sentToday.set(row.from_inbox_id, (sentToday.get(row.from_inbox_id) ?? 0) + 1);
+  }
+
+  for (const sender of pool) {
+    const perRun    = Math.max(1, Math.floor(sender.warmup_current_daily / 6));
+    const alreadySent = sentToday.get(sender.id) ?? 0;
+    const remaining = Math.max(0, sender.warmup_current_daily - alreadySent);
+    const toSend    = Math.min(perRun, remaining);
+
+    if (toSend === 0) {
+      result.skipped++;
+      continue;
+    }
+
+    const recipients = pool.filter((r) => r.id !== sender.id);
+    if (!recipients.length) continue;
+
+    for (let i = 0; i < toSend; i++) {
+      const recipient = recipients[i % recipients.length];
+      const seed = `${sender.id}-${recipient.id}-${Date.now()}-${i}`;
+      const template = selectSendTemplate(seed);
+      const warmupId = crypto.randomUUID();
+      const warmupHeader = { "X-PP-Ref": warmupId };
+      const htmlBody = `<!--pps-ref:${warmupId}--><p>${template.body.replace(/\n/g, "</p><p>")}</p>`;
+      const textBody = template.body;
+
+      let messageId = "";
+      let threadId  = "";
+
+      try {
+        if (sender.provider === "gmail" && sender.oauth_refresh_token) {
+          const res = await sendGmailMessage(sender as OutreachInbox, {
+            to: recipient.email_address, subject: template.subject,
+            htmlBody, textBody, customHeaders: warmupHeader,
+          });
+          messageId = res.messageId;
+          threadId  = res.threadId;
+        } else if (sender.provider === "outlook" && sender.oauth_refresh_token) {
+          const res = await sendMicrosoftMessage(sender as OutreachInbox, {
+            to: recipient.email_address, subject: template.subject,
+            htmlBody, textBody, customHeaders: warmupHeader,
+          });
+          messageId = res.messageId;
+          threadId  = res.threadId;
+        } else {
+          const res = await sendSmtpMessage(sender as OutreachInbox, {
+            to: recipient.email_address, subject: template.subject,
+            htmlBody, textBody, customHeaders: warmupHeader,
+          });
+          messageId = res.messageId;
+        }
+
+        await db.from("outreach_warmup_sends").insert({
+          id:            warmupId,
+          from_inbox_id: sender.id,
+          to_inbox_id:   recipient.id,
+          message_id:    messageId,
+          thread_id:     threadId || messageId,
+          subject:       template.subject,
+          sent_at:       new Date().toISOString(),
+        });
+
+        result.sent++;
+      } catch (err) {
+        const errMsg = String(err);
+        console.error(`Warmup send failed ${sender.email_address} → ${recipient.email_address}: ${errMsg}`);
+        result.errors++;
+        if (AUTH_ERROR_PATTERN.test(errMsg)) {
+          await db.from("outreach_inboxes")
+            .update({ status: "error", last_error: errMsg.slice(0, 500) })
+            .eq("id", sender.id);
+        }
+      }
+    }
+  }
+
+  // ── Reply to ~40% of recent warmup emails ────────────────────────────────────
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const { data: pending } = await db
+    .from("outreach_warmup_sends")
+    .select("*")
+    .gte("sent_at", since.toISOString())
+    .is("replied_at", null);
+
+  for (const warmupSend of pending ?? []) {
+    if (Math.random() > 0.4) continue;
+
+    const recipientInbox = pool.find((p) => p.id === warmupSend.to_inbox_id);
+    const senderInbox    = pool.find((p) => p.id === warmupSend.from_inbox_id);
+    if (!recipientInbox || !senderInbox) continue;
+
+    const seed         = `reply-${warmupSend.id}`;
+    const replyTpl     = selectReplyTemplate(seed);
+    const replyId      = crypto.randomUUID();
+    const replySubject = warmupSend.subject ? `Re: ${warmupSend.subject}` : "Re: (no subject)";
+    const htmlBody     = `<!--pps-ref:${replyId}--><p>${replyTpl.body}</p>`;
+
+    try {
+      if (recipientInbox.provider === "gmail" && recipientInbox.oauth_refresh_token) {
+        await sendGmailMessage(recipientInbox as OutreachInbox, {
+          to: senderInbox.email_address, subject: replySubject,
+          htmlBody, textBody: replyTpl.body,
+          replyToThreadId: warmupSend.thread_id ?? undefined,
+          inReplyToMessageId: warmupSend.message_id ?? undefined,
+          customHeaders: { "X-PP-Ref": replyId },
+        });
+      } else if (recipientInbox.provider === "outlook" && recipientInbox.oauth_refresh_token) {
+        await sendMicrosoftMessage(recipientInbox as OutreachInbox, {
+          to: senderInbox.email_address, subject: replySubject,
+          htmlBody, textBody: replyTpl.body,
+          replyToThreadId: warmupSend.thread_id ?? undefined,
+          inReplyToMessageId: warmupSend.message_id ?? undefined,
+          customHeaders: { "X-PP-Ref": replyId },
+        });
+      } else {
+        await sendSmtpMessage(recipientInbox as OutreachInbox, {
+          to: senderInbox.email_address, subject: replySubject,
+          htmlBody, textBody: replyTpl.body,
+          inReplyToMessageId: warmupSend.message_id ?? undefined,
+          customHeaders: { "X-PP-Ref": replyId },
+        });
+      }
+
+      await db.from("outreach_warmup_sends")
+        .update({ replied_at: new Date().toISOString() })
+        .eq("id", warmupSend.id);
+
+      result.replied++;
+    } catch (err) {
+      console.error(`Warmup reply failed: ${String(err)}`);
+      result.errors++;
+    }
+  }
+
+  return result;
+}

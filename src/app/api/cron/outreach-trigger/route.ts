@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/lib/inngest";
 import { runSendBatch } from "@/lib/outreach/send-runner";
 import { runReplyPoll } from "@/lib/outreach/reply-runner";
+import { runWarmupBatch } from "@/lib/outreach/warmup-runner";
 
 export const maxDuration = 300; // Vercel Pro: up to 300s for this route
 
@@ -14,18 +15,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── Run sends + replies directly (works without Inngest) ────────────────
-  const [sendResult, replyResult] = await Promise.all([
+  // ── Run sends + replies + warmup directly (works without Inngest) ────────
+  const [sendResult, replyResult, warmupResult] = await Promise.all([
     runSendBatch(20, 2_000, 5_000),
     runReplyPoll(),
+    runWarmupBatch(),
   ]);
 
   // ── Also fire Inngest events (if configured, handles larger / longer jobs) ─
   let inngestOk = false;
   try {
     await inngest.send([
-      { name: "outreach/send.trigger",       data: {} },
-      { name: "outreach/reply-poll.trigger", data: {} },
+      { name: "outreach/send.trigger",         data: {} },
+      { name: "outreach/reply-poll.trigger",   data: {} },
+      { name: "outreach/warmup-pool.trigger",  data: {} },
     ]);
     inngestOk = true;
   } catch {
@@ -36,6 +39,7 @@ export async function GET(req: NextRequest) {
     ts:      new Date().toISOString(),
     sends:   sendResult,
     replies: replyResult,
+    warmup:  warmupResult,
     inngest: inngestOk,
   });
 }
