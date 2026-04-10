@@ -143,11 +143,17 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
   // ── Reply to ~40% of recent warmup emails ────────────────────────────────────
   // Only reply to sends that are at least 30 minutes old — the email needs time
   // to actually arrive in the recipient's inbox before we can reply to it.
+  // Fetch the inbox rows fresh here (not from pool) so that inboxes which were
+  // recently enabled/disabled don't cause silent skips.
   const replyOldest = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const replyNewest = new Date(Date.now() - 30 * 60 * 1000);
   const { data: pending } = await db
     .from("outreach_warmup_sends")
-    .select("*")
+    .select(`
+      *,
+      recipient_inbox:outreach_inboxes!to_inbox_id(*),
+      sender_inbox:outreach_inboxes!from_inbox_id(*)
+    `)
     .gte("sent_at", replyOldest.toISOString())
     .lte("sent_at", replyNewest.toISOString())
     .is("replied_at", null);
@@ -155,9 +161,11 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
   for (const warmupSend of pending ?? []) {
     if (Math.random() > 0.4) continue;
 
-    const recipientInbox = pool.find((p) => p.id === warmupSend.to_inbox_id);
-    const senderInbox    = pool.find((p) => p.id === warmupSend.from_inbox_id);
+    const recipientInbox = warmupSend.recipient_inbox as OutreachInbox | null;
+    const senderInbox    = warmupSend.sender_inbox    as OutreachInbox | null;
     if (!recipientInbox || !senderInbox) continue;
+    // Skip if either inbox is no longer active
+    if (recipientInbox.status !== "active") continue;
 
     const seed         = `reply-${warmupSend.id}`;
     const replyTpl     = selectReplyTemplate(seed);
