@@ -65,10 +65,13 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
     // If warmup_current_daily hasn't been set yet (0), seed it from the ramp value
     // so new inboxes start sending immediately rather than waiting for the Monday ramp.
     const effectiveDaily = sender.warmup_current_daily || sender.warmup_ramp_per_week || 1;
-    const perRun    = Math.max(1, Math.floor(effectiveDaily / 6));
+    // Spread sends evenly across the day. perRun = 1 so each cron run sends at most
+    // one email per inbox, and the daily cap prevents over-sending regardless of
+    // how frequently the cron fires.
+    const perRun      = 1;
     const alreadySent = sentToday.get(sender.id) ?? 0;
-    const remaining = Math.max(0, effectiveDaily - alreadySent);
-    const toSend    = Math.min(perRun, remaining);
+    const remaining   = Math.max(0, effectiveDaily - alreadySent);
+    const toSend      = Math.min(perRun, remaining);
 
     if (toSend === 0) {
       result.skipped++;
@@ -138,11 +141,15 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
   }
 
   // ── Reply to ~40% of recent warmup emails ────────────────────────────────────
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  // Only reply to sends that are at least 30 minutes old — the email needs time
+  // to actually arrive in the recipient's inbox before we can reply to it.
+  const replyOldest = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const replyNewest = new Date(Date.now() - 30 * 60 * 1000);
   const { data: pending } = await db
     .from("outreach_warmup_sends")
     .select("*")
-    .gte("sent_at", since.toISOString())
+    .gte("sent_at", replyOldest.toISOString())
+    .lte("sent_at", replyNewest.toISOString())
     .is("replied_at", null);
 
   for (const warmupSend of pending ?? []) {
