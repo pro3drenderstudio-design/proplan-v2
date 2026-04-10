@@ -62,9 +62,12 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
   }
 
   for (const sender of pool) {
-    const perRun    = Math.max(1, Math.floor(sender.warmup_current_daily / 6));
+    // If warmup_current_daily hasn't been set yet (0), seed it from the ramp value
+    // so new inboxes start sending immediately rather than waiting for the Monday ramp.
+    const effectiveDaily = sender.warmup_current_daily || sender.warmup_ramp_per_week || 1;
+    const perRun    = Math.max(1, Math.floor(effectiveDaily / 6));
     const alreadySent = sentToday.get(sender.id) ?? 0;
-    const remaining = Math.max(0, sender.warmup_current_daily - alreadySent);
+    const remaining = Math.max(0, effectiveDaily - alreadySent);
     const toSend    = Math.min(perRun, remaining);
 
     if (toSend === 0) {
