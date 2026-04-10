@@ -703,7 +703,7 @@ export default async function LandingPage() {
                   "Interactive site maps for your communities",
                   "3D configurator for every home model",
                   "Unlimited traditional 3D renders / month",
-                  `${activePlan?.ai_credits_monthly ?? 250} AI concept renders / month`,
+                  "250 AI concept renders / month",
                   "High-intent lead capture with full config",
                   "Lead CRM, analytics, and CSV export",
                   "Brand customization — logo, colors, domain",
