@@ -86,8 +86,9 @@ export interface GmailSendOptions {
 }
 
 export interface GmailSendResult {
-  messageId: string;
-  threadId: string;
+  messageId:    string; // Gmail internal ID
+  threadId:     string; // Gmail internal thread ID
+  rfcMessageId: string; // RFC 2822 Message-ID header — use this for In-Reply-To / References
 }
 
 export async function sendGmailMessage(
@@ -101,17 +102,18 @@ export async function sendGmailMessage(
     : inbox.email_address;
 
   const boundary = `boundary_${Date.now().toString(36)}`;
+  // Normalise the inReplyToMessageId — it must be an RFC 2822 Message-ID
+  // (e.g. <CABcde@mail.gmail.com>). Ensure it is wrapped in angle brackets.
+  const normaliseId = (id: string) => (id.startsWith("<") ? id : `<${id}>`);
+
   const rawMessage = [
     `From: ${from}`,
     `To: ${opts.to}`,
     `Subject: ${opts.subject}`,
     `MIME-Version: 1.0`,
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    // In-Reply-To and References use the RFC 2822 message ID of the original
-    // message. inReplyToMessageId stores the Gmail internal ID — we wrap it
-    // in angle brackets so mail clients recognise it as a message reference.
-    opts.inReplyToMessageId ? `In-Reply-To: <${opts.inReplyToMessageId}>` : "",
-    opts.inReplyToMessageId ? `References: <${opts.inReplyToMessageId}>` : "",
+    opts.inReplyToMessageId ? `In-Reply-To: ${normaliseId(opts.inReplyToMessageId)}` : "",
+    opts.inReplyToMessageId ? `References: ${normaliseId(opts.inReplyToMessageId)}` : "",
     ...(opts.customHeaders ? Object.entries(opts.customHeaders).map(([k, v]) => `${k}: ${v}`) : []),
     ``,
     `--${boundary}`,
@@ -135,18 +137,70 @@ export async function sendGmailMessage(
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  // Do NOT pass threadId in requestBody for cross-inbox replies — the thread ID
-  // is scoped to the sending account and passing a foreign thread ID causes a
-  // 400 error. Threading is handled by In-Reply-To / References headers instead.
+  // Do NOT pass threadId in requestBody for cross-inbox replies — thread IDs
+  // are scoped to the owning account; a foreign thread ID causes a 400.
+  // Threading is handled entirely via In-Reply-To / References headers.
   const res = await gmail.users.messages.send({
     userId: "me",
     requestBody: { raw: encoded },
   });
 
-  return {
-    messageId: res.data.id ?? "",
-    threadId:  res.data.threadId ?? "",
-  };
+  const gmailId = res.data.id ?? "";
+  const threadId = res.data.threadId ?? "";
+
+  // Fetch the RFC 2822 Message-ID header from the just-sent message.
+  // This is what mail clients use for threading — it differs from Gmail's
+  // internal numeric ID stored in res.data.id.
+  let rfcMessageId = gmailId;
+  try {
+    const detail = await gmail.users.messages.get({
+      userId: "me",
+      id:     gmailId,
+      format: "metadata",
+      metadataHeaders: ["Message-ID"],
+    });
+    const mid = detail.data.payload?.headers
+      ?.find((h) => h.name?.toLowerCase() === "message-id")?.value;
+    if (mid) rfcMessageId = mid;
+  } catch {
+    // Non-fatal — fall back to Gmail internal ID
+  }
+
+  return { messageId: gmailId, threadId, rfcMessageId };
+}
+
+// ─── rescueFromSpam ───────────────────────────────────────────────────────────
+
+/**
+ * Searches the recipient's inbox for a recently received warmup email and:
+ *   1. Moves it out of Spam / Promotions into the inbox
+ *   2. Marks it Important so Gmail's engagement signals treat it favourably
+ *
+ * Called after a warmup send so the recipient account builds positive signals.
+ */
+export async function rescueFromSpam(
+  recipientInbox: OutreachInbox,
+  fromEmail: string,
+  subject: string,
+): Promise<void> {
+  if (!recipientInbox.oauth_refresh_token) return;
+  const gmail = await getGmailClient(recipientInbox);
+
+  // Search the last hour of mail from the sender with a matching subject
+  const q = `from:${fromEmail} subject:"${subject.replace(/"/g, "")}" newer_than:1h`;
+  const list = await gmail.users.messages.list({ userId: "me", q, maxResults: 5 });
+
+  for (const msg of list.data.messages ?? []) {
+    if (!msg.id) continue;
+    await gmail.users.messages.modify({
+      userId: "me",
+      id:     msg.id,
+      requestBody: {
+        addLabelIds:    ["INBOX", "IMPORTANT"],
+        removeLabelIds: ["SPAM", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES"],
+      },
+    }).catch(() => {/* non-fatal */});
+  }
 }
 
 // ─── watchGmailInbox (Pub/Sub push notifications) ────────────────────────────

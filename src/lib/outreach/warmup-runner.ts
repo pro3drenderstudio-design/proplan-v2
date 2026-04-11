@@ -8,7 +8,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { sendGmailMessage } from "@/lib/outreach/gmail";
+import { sendGmailMessage, rescueFromSpam } from "@/lib/outreach/gmail";
 import { sendMicrosoftMessage } from "@/lib/outreach/microsoft";
 import { sendSmtpMessage } from "@/lib/outreach/smtp";
 import { selectSendTemplate, selectReplyTemplate } from "@/lib/outreach/warmup-templates";
@@ -90,8 +90,9 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
       const htmlBody = `<!--pps-ref:${warmupId}--><p>${template.body.replace(/\n/g, "</p><p>")}</p>`;
       const textBody = template.body;
 
-      let messageId = "";
-      let threadId  = "";
+      let messageId    = "";
+      let rfcMessageId = "";
+      let threadId     = "";
 
       try {
         if (sender.provider === "gmail" && sender.oauth_refresh_token) {
@@ -99,31 +100,40 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
             to: recipient.email_address, subject: template.subject,
             htmlBody, textBody, customHeaders: warmupHeader,
           });
-          messageId = res.messageId;
-          threadId  = res.threadId;
+          messageId    = res.messageId;
+          rfcMessageId = res.rfcMessageId;
+          threadId     = res.threadId;
+
+          // Move the email out of spam / promotions in the recipient's inbox
+          // so Gmail builds positive engagement signals for this sender.
+          rescueFromSpam(recipient as OutreachInbox, sender.email_address, template.subject)
+            .catch((e) => console.warn("rescueFromSpam failed:", String(e)));
+
         } else if (sender.provider === "outlook" && sender.oauth_refresh_token) {
           const res = await sendMicrosoftMessage(sender as OutreachInbox, {
             to: recipient.email_address, subject: template.subject,
             htmlBody, textBody, customHeaders: warmupHeader,
           });
-          messageId = res.messageId;
-          threadId  = res.threadId;
+          messageId    = res.messageId;
+          rfcMessageId = res.messageId;
+          threadId     = res.threadId;
         } else {
           const res = await sendSmtpMessage(sender as OutreachInbox, {
             to: recipient.email_address, subject: template.subject,
             htmlBody, textBody, customHeaders: warmupHeader,
           });
-          messageId = res.messageId;
+          messageId    = res.messageId;
+          rfcMessageId = res.messageId;
         }
 
         await db.from("outreach_warmup_sends").insert({
-          id:            warmupId,
-          from_inbox_id: sender.id,
-          to_inbox_id:   recipient.id,
-          message_id:    messageId,
-          thread_id:     threadId || messageId,
-          subject:       template.subject,
-          sent_at:       new Date().toISOString(),
+          id:             warmupId,
+          from_inbox_id:  sender.id,
+          to_inbox_id:    recipient.id,
+          message_id:     rfcMessageId || messageId, // store RFC 2822 ID for reply threading
+          thread_id:      threadId || messageId,
+          subject:        template.subject,
+          sent_at:        new Date().toISOString(),
         });
 
         result.sent++;
