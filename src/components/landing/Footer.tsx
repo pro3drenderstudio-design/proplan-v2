@@ -1,6 +1,9 @@
 import Link from "next/link";
 
-const COLS = [
+interface NavLink { label: string; href: string; external?: boolean }
+interface NavCol  { heading: string; links: NavLink[] }
+
+const COLS: NavCol[] = [
   {
     heading: "Products",
     links: [
@@ -13,27 +16,27 @@ const COLS = [
   {
     heading: "Company",
     links: [
-      { label: "About",   href: "#" },
-      { label: "Pricing", href: "/pricing" },
-      { label: "Blog",    href: "#" },
-      { label: "Contact", href: "#" },
+      { label: "About",          href: "/about"         },
+      { label: "For Builders",   href: "/for-builders"  },
+      { label: "Pricing",        href: "/pricing"       },
+      { label: "Changelog",      href: "/changelog"     },
+      { label: "Book a Demo",    href: "/demo"          },
+      { label: "Contact",        href: "/contact"       },
     ],
   },
   {
     heading: "Legal",
     links: [
-      { label: "Privacy Policy",    href: "#" },
-      { label: "Terms of Service",  href: "#" },
-      { label: "Security",          href: "#" },
-      { label: "Cookie Policy",     href: "#" },
+      { label: "Privacy Policy",    href: "/privacy"   },
+      { label: "Terms of Service",  href: "/terms"     },
+      { label: "Security",          href: "/security"  },
+      { label: "Cookie Policy",     href: "/cookies"   },
     ],
   },
   {
     heading: "Connect",
     links: [
-      { label: "LinkedIn",     href: "#" },
-      { label: "X (Twitter)",  href: "#" },
-      { label: "Instagram",    href: "#" },
+      { label: "LinkedIn", href: "https://www.linkedin.com/company/proplan-studio-llc/", external: true },
     ],
   },
 ];
@@ -61,10 +64,17 @@ export default function Footer() {
               </p>
               <div className="space-y-2.5">
                 {col.links.map((l) => (
-                  <Link key={l.label} href={l.href}
-                    className="block text-sm text-white/38 hover:text-white/70 transition-colors">
-                    {l.label}
-                  </Link>
+                  l.external ? (
+                    <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer"
+                      className="block text-sm text-white/38 hover:text-white/70 transition-colors">
+                      {l.label}
+                    </a>
+                  ) : (
+                    <Link key={l.label} href={l.href}
+                      className="block text-sm text-white/38 hover:text-white/70 transition-colors">
+                      {l.label}
+                    </Link>
+                  )
                 ))}
               </div>
             </div>

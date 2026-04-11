@@ -685,8 +685,8 @@ export default async function LandingPage() {
 
               <div className="grid grid-cols-3 gap-2 mb-7 bg-white/5 rounded-xl p-4">
                 <div className="text-center">
-                  <p className="text-xl font-bold text-white">∞</p>
-                  <p className="text-[9px] text-white/30 mt-0.5">Renders</p>
+                  <p className="text-xl font-bold text-white">{activePlan?.rendering_credits_monthly === -1 ? "∞" : (activePlan?.rendering_credits_monthly ?? "∞")}</p>
+                  <p className="text-[9px] text-white/30 mt-0.5">Renders / mo</p>
                 </div>
                 <div className="text-center border-x border-white/8">
                   <p className="text-xl font-bold text-white">{activePlan?.ai_credits_monthly ?? 250}</p>
