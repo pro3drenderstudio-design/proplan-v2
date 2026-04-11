@@ -126,42 +126,47 @@ export interface MsSendOptions {
 export async function sendMicrosoftMessage(
   inbox: OutreachInbox,
   opts: MsSendOptions,
-): Promise<{ messageId: string; threadId: string }> {
+): Promise<{ messageId: string; threadId: string; rfcMessageId: string }> {
   const client = await getGraphClient(inbox);
 
-  const internetMessageHeaders = opts.customHeaders
-    ? Object.entries(opts.customHeaders).map(([name, value]) => ({ name, value }))
-    : undefined;
+  // Build internet message headers — include In-Reply-To / References for threading
+  const extraHeaders: Array<{ name: string; value: string }> = [];
+  if (opts.inReplyToMessageId) {
+    const mid = opts.inReplyToMessageId.startsWith("<")
+      ? opts.inReplyToMessageId
+      : `<${opts.inReplyToMessageId}>`;
+    extraHeaders.push({ name: "In-Reply-To", value: mid });
+    extraHeaders.push({ name: "References",  value: mid });
+  }
+  if (opts.customHeaders) {
+    for (const [name, value] of Object.entries(opts.customHeaders)) {
+      extraHeaders.push({ name, value });
+    }
+  }
 
   const message: Record<string, unknown> = {
     subject: opts.subject,
-    body: {
-      contentType: "HTML",
-      content: opts.htmlBody,
-    },
-    toRecipients: [
-      {
-        emailAddress: { address: opts.to },
-      },
-    ],
+    body: { contentType: "HTML", content: opts.htmlBody },
+    toRecipients: [{ emailAddress: { address: opts.to } }],
     ...(opts.fromName ? { from: { emailAddress: { name: opts.fromName, address: inbox.email_address } } } : {}),
-    ...(internetMessageHeaders ? { internetMessageHeaders } : {}),
+    ...(extraHeaders.length ? { internetMessageHeaders: extraHeaders } : {}),
   };
 
-  // sendMail and get the sent message ID
   await client.api("/me/sendMail").post({ message, saveToSentItems: true });
 
-  // Fetch the latest sent item to get the message/thread ID
+  // Fetch the latest sent item — select internetMessageId (RFC 2822) in addition to
+  // Graph's internal id so replies can set correct In-Reply-To headers.
   const sent = await client
     .api("/me/mailFolders/SentItems/messages")
     .top(1)
-    .select("id,conversationId")
+    .select("id,conversationId,internetMessageId")
     .get();
 
   const latest = sent?.value?.[0];
   return {
-    messageId: latest?.id ?? "",
-    threadId:  latest?.conversationId ?? "",
+    messageId:    latest?.id ?? "",
+    threadId:     latest?.conversationId ?? "",
+    rfcMessageId: latest?.internetMessageId ?? latest?.id ?? "",
   };
 }
 

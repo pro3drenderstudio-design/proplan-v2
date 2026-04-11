@@ -9,7 +9,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { sendGmailMessage, rescueFromSpam } from "@/lib/outreach/gmail";
-import { sendMicrosoftMessage } from "@/lib/outreach/microsoft";
+import { sendMicrosoftMessage, rescueMicrosoftWarmupFromSpam } from "@/lib/outreach/microsoft";
 import { sendSmtpMessage } from "@/lib/outreach/smtp";
 import { selectSendTemplate, selectReplyTemplate } from "@/lib/outreach/warmup-templates";
 import type { OutreachInbox } from "@/types/outreach";
@@ -115,8 +115,12 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
             htmlBody, textBody, customHeaders: warmupHeader,
           });
           messageId    = res.messageId;
-          rfcMessageId = res.messageId;
+          rfcMessageId = res.rfcMessageId;
           threadId     = res.threadId;
+
+          // Move out of junk in recipient's inbox
+          rescueMicrosoftWarmupFromSpam(recipient as OutreachInbox, warmupId)
+            .catch((e) => console.warn("rescueMicrosoftWarmupFromSpam failed:", String(e)));
         } else {
           const res = await sendSmtpMessage(sender as OutreachInbox, {
             to: recipient.email_address, subject: template.subject,
