@@ -219,8 +219,14 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
 
         result.replied++;
       } catch (err) {
-        console.error(`Warmup reply failed: ${String(err)}`);
+        const msg = String(err);
+        console.error(`Warmup reply failed ${recipientInbox.email_address} → ${senderInbox.email_address}: ${msg}`);
         result.errors++;
+        if (AUTH_ERROR_PATTERN.test(msg)) {
+          await db.from("outreach_inboxes")
+            .update({ status: "error", last_error: msg.slice(0, 500) })
+            .eq("id", recipientInbox.id);
+        }
       }
     }
   }

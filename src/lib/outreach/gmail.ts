@@ -107,8 +107,11 @@ export async function sendGmailMessage(
     `Subject: ${opts.subject}`,
     `MIME-Version: 1.0`,
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    opts.replyToThreadId ? `References: <${opts.replyToThreadId}>` : "",
+    // In-Reply-To and References use the RFC 2822 message ID of the original
+    // message. inReplyToMessageId stores the Gmail internal ID — we wrap it
+    // in angle brackets so mail clients recognise it as a message reference.
     opts.inReplyToMessageId ? `In-Reply-To: <${opts.inReplyToMessageId}>` : "",
+    opts.inReplyToMessageId ? `References: <${opts.inReplyToMessageId}>` : "",
     ...(opts.customHeaders ? Object.entries(opts.customHeaders).map(([k, v]) => `${k}: ${v}`) : []),
     ``,
     `--${boundary}`,
@@ -132,12 +135,12 @@ export async function sendGmailMessage(
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
+  // Do NOT pass threadId in requestBody for cross-inbox replies — the thread ID
+  // is scoped to the sending account and passing a foreign thread ID causes a
+  // 400 error. Threading is handled by In-Reply-To / References headers instead.
   const res = await gmail.users.messages.send({
     userId: "me",
-    requestBody: {
-      raw: encoded,
-      threadId: opts.replyToThreadId,
-    },
+    requestBody: { raw: encoded },
   });
 
   return {
