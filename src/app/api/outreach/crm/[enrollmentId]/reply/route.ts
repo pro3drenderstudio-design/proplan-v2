@@ -56,7 +56,17 @@ export async function POST(
         subject,
         htmlBody,
         textBody,
-        replyToThreadId: send.thread_id ?? undefined,
+        // Do NOT pass replyToThreadId — thread IDs are account-scoped and cause
+        // a 400 when used cross-inbox. Threading is handled by In-Reply-To only.
+        inReplyToMessageId: send.message_id ?? undefined,
+      });
+    } else if (inbox.provider === "outlook" && inbox.oauth_refresh_token) {
+      const { sendMicrosoftMessage } = await import("@/lib/outreach/microsoft");
+      await sendMicrosoftMessage(inbox as OutreachInbox, {
+        to: send.to_email,
+        subject,
+        htmlBody,
+        textBody,
         inReplyToMessageId: send.message_id ?? undefined,
       });
     } else if (inbox.provider === "smtp" || inbox.smtp_host) {

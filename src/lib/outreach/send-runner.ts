@@ -269,10 +269,13 @@ async function sendViaInbox(
   opts: { to: string; subject: string; htmlBody: string; textBody: string },
 ): Promise<{ messageId: string; threadId?: string }> {
   if (inbox.provider === "gmail" && inbox.oauth_refresh_token) {
-    return sendGmailMessage(inbox, opts);
+    const res = await sendGmailMessage(inbox, opts);
+    // Store the RFC 2822 Message-ID so CRM replies can set correct In-Reply-To
+    return { messageId: res.rfcMessageId || res.messageId, threadId: res.threadId };
   }
   if (inbox.provider === "outlook" && inbox.oauth_refresh_token) {
-    return sendMicrosoftMessage(inbox, opts);
+    const res = await sendMicrosoftMessage(inbox, opts);
+    return { messageId: res.rfcMessageId || res.messageId, threadId: res.threadId };
   }
   const r = await sendSmtpMessage(inbox, opts);
   return { messageId: r.messageId };
