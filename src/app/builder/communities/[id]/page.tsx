@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getCommunityById, getAllProjects } from "@/lib/admin-api";
 import { CommunityWithLots, Lot, LotStatus, Project } from "@/types/database";
+import { getBuilderBySlug } from "@/lib/supabase";
+import QRModal, { QRLot } from "@/components/QRModal";
 
 const LOT_COLORS: Record<LotStatus, { fill: string; stroke: string; label: string }> = {
   available: { fill: "rgba(34,197,94,0.25)",   stroke: "#22c55e",              label: "Available" },
@@ -34,7 +36,7 @@ export default function BuilderCommunityEditorPage() {
 
   // Selection / editing
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
-  const [lotForm,     setLotForm]     = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string } | null>(null);
+  const [lotForm,     setLotForm]     = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string } | null>(null);
   const [savingLot,   setSavingLot]   = useState(false);
   const [deletingLot, setDeletingLot] = useState(false);
 
@@ -81,6 +83,11 @@ export default function BuilderCommunityEditorPage() {
 
   // Share & Publish
   const [copiedShare, setCopiedShare] = useState<"url" | "embed" | null>(null);
+  const [qrOpen,      setQrOpen]      = useState(false);
+  const [lotQrOpen,   setLotQrOpen]   = useState<string | null>(null); // lot id
+  const [builderLogo, setBuilderLogo] = useState<string | null>(null);
+  const [accentColor, setAccentColor] = useState<string | null>(null);
+  const [builderNameState, setBuilderNameState] = useState<string | null>(null);
 
   function copyShareUrl() {
     if (!community?.slug || !community?.company_slug) return;
@@ -112,7 +119,18 @@ export default function BuilderCommunityEditorPage() {
     Promise.all([getCommunityById(id), getAllProjects()]).then(([c, p]) => {
       setCommunity(c);
       setProjects(p.filter(proj => proj.status === "live" || proj.status === "in_development"));
-      if (c) setMetaForm({ name: c.name, slug: c.slug, description: c.description ?? "" });
+      if (c) {
+        setMetaForm({ name: c.name, slug: c.slug, description: c.description ?? "" });
+        if (c.company_slug) {
+          getBuilderBySlug(c.company_slug).then(b => {
+            if (b) {
+              setBuilderLogo(b.logo_url);
+              setAccentColor(b.accent_color);
+              setBuilderNameState(b.company_name);
+            }
+          });
+        }
+      }
       setLoading(false);
     });
   }, [id]);
@@ -150,7 +168,7 @@ export default function BuilderCommunityEditorPage() {
     if (drawingPoints.length < 3) return;
     setIsDrawing(false); setMousePos(null);
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "" });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: "#ffffff" });
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
   }
@@ -161,7 +179,7 @@ export default function BuilderCommunityEditorPage() {
     if (isDrawing) return;
     setPendingPolygon(null);
     setSelectedLot(lot);
-    setLotForm({ lot_number: lot.lot_number, status: lot.status, project_id: lot.project_id ?? "", price_modifier: String(lot.price_modifier ?? 0), notes: lot.notes ?? "" });
+    setLotForm({ lot_number: lot.lot_number, status: lot.status, project_id: lot.project_id ?? "", price_modifier: String(lot.price_modifier ?? 0), notes: lot.notes ?? "", text_color: lot.text_color ?? "#ffffff" });
   }
 
   async function handleSaveLot() {
@@ -170,7 +188,7 @@ export default function BuilderCommunityEditorPage() {
     if (selectedLot) {
       const res = await fetch(`/api/communities/${community.id}/lots/${selectedLot.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lot_number: lotForm.lot_number, status: lotForm.status, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), notes: lotForm.notes || null }),
+        body: JSON.stringify({ lot_number: lotForm.lot_number, status: lotForm.status, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), notes: lotForm.notes || null, text_color: lotForm.text_color || null }),
       });
       if (res.ok) {
         setCommunity(prev => prev ? { ...prev, lots: prev.lots.map(l => l.id === selectedLot.id ? { ...l, ...lotForm, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier) } : l) } : null);
@@ -179,7 +197,7 @@ export default function BuilderCommunityEditorPage() {
     } else if (pendingPolygon) {
       const res = await fetch(`/api/communities/${community.id}/lots`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lot_number: lotForm.lot_number, polygon: pendingPolygon, status: lotForm.status, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), notes: lotForm.notes || null }),
+        body: JSON.stringify({ lot_number: lotForm.lot_number, polygon: pendingPolygon, status: lotForm.status, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), notes: lotForm.notes || null, text_color: lotForm.text_color || null }),
       });
       if (res.ok) {
         const newLot = await res.json() as Lot;
@@ -347,7 +365,7 @@ export default function BuilderCommunityEditorPage() {
                       {lot.polygon.length >= 3 && (() => {
                         const cx = (lot.polygon.reduce((s, [x]) => s + x, 0) / lot.polygon.length / 100) * w;
                         const cy = (lot.polygon.reduce((s, [, y]) => s + y, 0) / lot.polygon.length / 100) * h;
-                        return <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fontSize={11} fontWeight="600" fill="white" fillOpacity={0.85}>{lot.lot_number}</text>;
+                        return <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fontSize={11} fontWeight="600" fill={lot.text_color ?? "#ffffff"} fillOpacity={0.9}>{lot.lot_number}</text>;
                       })()}
                     </g>
                   );
@@ -471,6 +489,37 @@ export default function BuilderCommunityEditorPage() {
                   onChange={e => setLotForm(f => f && ({ ...f, notes: e.target.value }))}
                   rows={2} className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
               </div>
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Label Text Color</label>
+                <div className="flex items-center gap-2">
+                  {["#ffffff", "#000000", "#1a1a1a", "#fbbf24", "#f87171", "#34d399"].map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setLotForm(f => f && ({ ...f, text_color: c }))}
+                      className="w-6 h-6 rounded-full border-2 transition-all flex-shrink-0"
+                      style={{
+                        background: c,
+                        borderColor: lotForm.text_color === c ? "#60a5fa" : "rgba(255,255,255,0.15)",
+                        boxShadow: lotForm.text_color === c ? "0 0 0 2px #1d4ed8" : "none",
+                      }}
+                    />
+                  ))}
+                  <label className="w-6 h-6 rounded-full border border-white/15 overflow-hidden cursor-pointer flex-shrink-0 relative" title="Custom color">
+                    <input
+                      type="color"
+                      value={lotForm.text_color ?? "#ffffff"}
+                      onChange={e => setLotForm(f => f && ({ ...f, text_color: e.target.value }))}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <div className="w-full h-full flex items-center justify-center" style={{ background: lotForm.text_color ?? "#ffffff" }}>
+                      <svg className="w-3 h-3" style={{ color: lotForm.text_color === "#ffffff" || lotForm.text_color === "#fbbf24" || lotForm.text_color === "#34d399" ? "#00000060" : "#ffffff60" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                    </div>
+                  </label>
+                </div>
+                <p className="text-[10px] text-white/20 mt-1.5">Color of the lot number on the map</p>
+              </div>
             </div>
             <div className="p-4 border-t border-white/8 space-y-2 flex-shrink-0">
               <button onClick={handleSaveLot} disabled={savingLot}
@@ -534,16 +583,44 @@ export default function BuilderCommunityEditorPage() {
                   {community.lots.map(lot => {
                     const col = LOT_COLORS[lot.status];
                     const proj = projects.find(p => p.id === lot.project_id);
+                    const lotUrl = proj && community.company_slug && proj.slug && proj.company_slug
+                      ? `${window.location.origin}/project/${proj.company_slug}/${proj.slug}?lotId=${lot.id}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${community.slug}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${lot.price_modifier ?? 0}&utm_source=qr`
+                      : null;
                     return (
-                      <button key={lot.id} onClick={() => selectLot(lot)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/4 hover:bg-white/8 transition-colors text-left border border-transparent hover:border-white/8">
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: col.stroke }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-white/80">{lot.lot_number}</p>
-                          <p className="text-[10px] text-white/30 truncate">{proj?.name ?? "No model assigned"}</p>
-                        </div>
-                        <span className="text-[10px] font-medium flex-shrink-0" style={{ color: col.stroke }}>{col.label}</span>
-                      </button>
+                      <div key={lot.id} className="flex items-center gap-1">
+                        <button onClick={() => selectLot(lot)}
+                          className="flex-1 flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/4 hover:bg-white/8 transition-colors text-left border border-transparent hover:border-white/8">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: col.stroke }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-white/80">{lot.lot_number}</p>
+                            <p className="text-[10px] text-white/30 truncate">{proj?.name ?? "No model assigned"}</p>
+                          </div>
+                          <span className="text-[10px] font-medium flex-shrink-0" style={{ color: col.stroke }}>{col.label}</span>
+                        </button>
+                        {lotUrl && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setLotQrOpen(lot.id); }}
+                            className="flex-shrink-0 w-7 h-7 rounded-md bg-white/4 hover:bg-white/10 border border-white/8 flex items-center justify-center transition-colors"
+                            title="QR Code"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5 text-white/40">
+                              <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                              <path strokeLinecap="round" d="M14 14h2m3 0h1M14 17h1m2 0h2M14 20h3m2 0h1"/>
+                            </svg>
+                          </button>
+                        )}
+                        {lotQrOpen === lot.id && lotUrl && (
+                          <QRModal
+                            url={lotUrl}
+                            label={`Lot ${lot.lot_number}`}
+                            sublabel={proj?.name}
+                            builderLogo={builderLogo}
+                            accentColor={accentColor}
+                            builderName={builderNameState}
+                            onClose={() => setLotQrOpen(null)}
+                          />
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -588,8 +665,46 @@ export default function BuilderCommunityEditorPage() {
                     </svg>
                   )}
                 </button>
+                <button
+                  onClick={() => setQrOpen(true)}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/4 border border-white/8 hover:bg-violet-600/12 hover:border-violet-500/30 transition-colors text-left"
+                >
+                  <span className="text-xs font-medium text-white/60">QR Code &amp; Yard Signs</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5 text-white/30 flex-shrink-0">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                    <path strokeLinecap="round" d="M14 14h2m3 0h1M14 17h1m2 0h2M14 20h3m2 0h1"/>
+                  </svg>
+                </button>
               </div>
             )}
+
+            {qrOpen && community.slug && community.company_slug && (() => {
+              const communityUrl = `${window.location.origin}/community/${community.company_slug}/${community.slug}?utm_source=qr`;
+              const lots = community.lots ?? [];
+              const lotItems = lots.filter(l => {
+                const proj = projects.find(p => p.id === l.project_id);
+                return proj?.slug && proj?.company_slug;
+              }).map(l => {
+                const proj = projects.find(p => p.id === l.project_id)!;
+                return {
+                  id: l.id,
+                  lot_number: l.lot_number,
+                  url: `${window.location.origin}/project/${proj.company_slug}/${proj.slug}?lotId=${l.id}&lotNumber=${encodeURIComponent(l.lot_number)}&communitySlug=${community.slug}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${l.price_modifier ?? 0}&utm_source=qr`,
+                  sublabel: proj.name,
+                } as QRLot;
+              });
+              return (
+                <QRModal
+                  url={communityUrl}
+                  label={community.name}
+                  builderLogo={builderLogo}
+                  accentColor={accentColor}
+                  builderName={builderNameState}
+                  lots={lotItems.length > 0 ? lotItems : undefined}
+                  onClose={() => setQrOpen(false)}
+                />
+              );
+            })()}
           </>
         )}
       </div>

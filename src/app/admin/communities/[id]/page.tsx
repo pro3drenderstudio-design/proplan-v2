@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getCommunityById, getAllProjects, getAllBuildersBySlug } from "@/lib/admin-api";
 import { CommunityWithLots, Lot, LotStatus, Project, Builder } from "@/types/database";
+import QRModal, { QRLot } from "@/components/QRModal";
 
 const LOT_COLORS: Record<LotStatus, { fill: string; stroke: string; label: string }> = {
   available: { fill: "rgba(34,197,94,0.25)",  stroke: "#22c55e", label: "Available" },
@@ -39,9 +40,15 @@ export default function CommunityEditorPage() {
 
   // Selection / editing
   const [selectedLot,    setSelectedLot]    = useState<Lot | null>(null);
-  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string } | null>(null);
+  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string } | null>(null);
   const [savingLot,      setSavingLot]      = useState(false);
   const [deletingLot,    setDeletingLot]    = useState(false);
+
+  // Vertex drag editing
+  const [editingVerticesLotId, setEditingVerticesLotId] = useState<string | null>(null);
+  const [editedPolygon,        setEditedPolygon]        = useState<DrawingPoint[]>([]);
+  const [draggingVertex,       setDraggingVertex]       = useState<number | null>(null);
+  const [savingVertices,       setSavingVertices]       = useState(false);
 
   // Mobile panel
   const [panelOpen, setPanelOpen] = useState(false);
@@ -83,10 +90,13 @@ export default function CommunityEditorPage() {
 
   function handlePanEnd() {
     setIsDragging(false);
+    setTimeout(() => { hasDragged.current = false; }, 0);
   }
 
   // Share & Publish
   const [copiedShare, setCopiedShare] = useState<"url" | "embed" | null>(null);
+  const [qrOpen,    setQrOpen]    = useState(false);
+  const [lotQrOpen, setLotQrOpen] = useState<string | null>(null);
 
   function copyShareUrl() {
     if (!community?.slug || !community?.company_slug) return;
@@ -165,7 +175,7 @@ export default function CommunityEditorPage() {
     setMousePos(null);
     // Open the lot form for this new polygon
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "" });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: "#ffffff" });
     // Store drawing points for save
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
@@ -191,6 +201,7 @@ export default function CommunityEditorPage() {
       project_id:     lot.project_id ?? "",
       price_modifier: String(lot.price_modifier ?? 0),
       notes:          lot.notes ?? "",
+      text_color:     lot.text_color ?? "#ffffff",
     });
   }
 
@@ -211,6 +222,7 @@ export default function CommunityEditorPage() {
           project_id:     lotForm.project_id || null,
           price_modifier: Number(lotForm.price_modifier),
           notes:          lotForm.notes || null,
+          text_color:     lotForm.text_color || null,
         }),
       });
       if (res.ok) {
@@ -238,6 +250,7 @@ export default function CommunityEditorPage() {
           project_id:     lotForm.project_id || null,
           price_modifier: Number(lotForm.price_modifier),
           notes:          lotForm.notes || null,
+          text_color:     lotForm.text_color || null,
         }),
       });
       if (res.ok) {
@@ -267,6 +280,60 @@ export default function CommunityEditorPage() {
       showToast("Delete failed");
     }
     setDeletingLot(false);
+  }
+
+  // ── Vertex drag editing ──────────────────────────────────────────────────────
+
+  function startVertexEdit(lot: Lot) {
+    setEditingVerticesLotId(lot.id);
+    setEditedPolygon(lot.polygon.map(p => [...p] as DrawingPoint));
+    setSelectedLot(null);
+    setLotForm(null);
+  }
+
+  function cancelVertexEdit() {
+    setEditingVerticesLotId(null);
+    setEditedPolygon([]);
+    setDraggingVertex(null);
+  }
+
+  function handleVertexPointerDown(e: React.PointerEvent<SVGCircleElement>, idx: number) {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDraggingVertex(idx);
+  }
+
+  function handleVertexPointerMove(e: React.PointerEvent<SVGElement>) {
+    if (draggingVertex === null || !mapRef.current) return;
+    const rect = mapRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+    setEditedPolygon(prev => prev.map((pt, i) => i === draggingVertex ? [x, y] : pt));
+  }
+
+  function handleVertexPointerUp() {
+    setDraggingVertex(null);
+  }
+
+  async function saveVertexEdit() {
+    if (!editingVerticesLotId || !community) return;
+    setSavingVertices(true);
+    const res = await fetch(`/api/communities/${community.id}/lots/${editingVerticesLotId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ polygon: editedPolygon }),
+    });
+    if (res.ok) {
+      setCommunity(prev => prev ? {
+        ...prev,
+        lots: prev.lots.map(l => l.id === editingVerticesLotId ? { ...l, polygon: editedPolygon } : l),
+      } : null);
+      showToast("Vertices saved");
+      cancelVertexEdit();
+    } else {
+      showToast("Save failed");
+    }
+    setSavingVertices(false);
   }
 
   // ── Site map upload ──────────────────────────────────────────────────────────
@@ -365,7 +432,21 @@ export default function CommunityEditorPage() {
                 Preview →
               </a>
             )}
-            {isDrawing ? (
+            {editingVerticesLotId ? (
+              <>
+                <span className="text-[10px] text-amber-400/80 bg-amber-400/10 border border-amber-400/20 px-2 py-1 rounded-lg">
+                  Drag vertices to reshape
+                </span>
+                <button onClick={saveVertexEdit} disabled={savingVertices}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-xs text-white font-medium rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-40">
+                  {savingVertices ? "Saving…" : "Save Shape"}
+                </button>
+                <button onClick={cancelVertexEdit}
+                  className="px-3 py-1.5 border border-white/12 text-xs text-white/40 rounded-lg hover:text-white transition-colors">
+                  Cancel
+                </button>
+              </>
+            ) : isDrawing ? (
               <>
                 {drawingPoints.length >= 3 && (
                   <button onClick={closePolygon}
@@ -427,28 +508,47 @@ export default function CommunityEditorPage() {
                 className="absolute inset-0 pointer-events-none"
                 width={w} height={h}
                 style={{ pointerEvents: isDrawing ? "none" : "auto" }}
+                onPointerMove={editingVerticesLotId ? handleVertexPointerMove : undefined}
+                onPointerUp={editingVerticesLotId ? handleVertexPointerUp : undefined}
               >
                 {/* Saved lots */}
                 {community.lots.map(lot => {
                   const col = LOT_COLORS[lot.status];
                   const isSelected = selectedLot?.id === lot.id;
+                  const isEditingThis = editingVerticesLotId === lot.id;
+                  const displayPoly = isEditingThis ? editedPolygon : lot.polygon;
                   return (
-                    <g key={lot.id} data-lot="true" style={{ pointerEvents: "all", cursor: "pointer" }}
-                      onClick={e => { e.stopPropagation(); if (!hasDragged.current) selectLot(lot); }}>
+                    <g key={lot.id} data-lot="true"
+                      style={{ pointerEvents: editingVerticesLotId && !isEditingThis ? "none" : "all", cursor: isEditingThis ? "default" : "pointer" }}
+                      onClick={e => { e.stopPropagation(); if (!hasDragged.current && !editingVerticesLotId) selectLot(lot); }}>
                       <polygon
-                        points={pointsToSvgPoly(lot.polygon, w, h)}
-                        fill={col.fill}
-                        stroke={isSelected ? "#fff" : col.stroke}
-                        strokeWidth={isSelected ? 2 : 1.5}
-                        strokeDasharray={isSelected ? "5 3" : undefined}
+                        points={pointsToSvgPoly(displayPoly, w, h)}
+                        fill={isEditingThis ? "rgba(251,191,36,0.2)" : col.fill}
+                        stroke={isEditingThis ? "#fbbf24" : isSelected ? "#fff" : col.stroke}
+                        strokeWidth={isEditingThis ? 2 : isSelected ? 2 : 1.5}
+                        strokeDasharray={isEditingThis ? "6 3" : isSelected ? "5 3" : undefined}
                       />
+                      {/* Vertex handles — only when editing this lot */}
+                      {isEditingThis && editedPolygon.map(([x, y], idx) => (
+                        <circle
+                          key={idx}
+                          cx={(x / 100) * w}
+                          cy={(y / 100) * h}
+                          r={6}
+                          fill={draggingVertex === idx ? "#fbbf24" : "#fff"}
+                          stroke="#fbbf24"
+                          strokeWidth={2}
+                          style={{ cursor: "grab", pointerEvents: "all" }}
+                          onPointerDown={e => handleVertexPointerDown(e, idx)}
+                        />
+                      ))}
                       {/* Centroid label */}
-                      {lot.polygon.length >= 3 && (() => {
-                        const cx = (lot.polygon.reduce((s, [x]) => s + x, 0) / lot.polygon.length / 100) * w;
-                        const cy = (lot.polygon.reduce((s, [, y]) => s + y, 0) / lot.polygon.length / 100) * h;
+                      {displayPoly.length >= 3 && (() => {
+                        const cx = (displayPoly.reduce((s, [x]) => s + x, 0) / displayPoly.length / 100) * w;
+                        const cy = (displayPoly.reduce((s, [, y]) => s + y, 0) / displayPoly.length / 100) * h;
                         return (
                           <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
-                            fontSize={11} fontWeight="600" fill="white" fillOpacity={0.85}>
+                            fontSize={11} fontWeight="600" fill={lot.text_color ?? "#ffffff"} fillOpacity={0.9}>
                             {lot.lot_number}
                           </text>
                         );
@@ -608,6 +708,37 @@ export default function CommunityEditorPage() {
                   rows={2}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
               </div>
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Label Text Color</label>
+                <div className="flex items-center gap-2">
+                  {["#ffffff", "#000000", "#1a1a1a", "#fbbf24", "#f87171", "#34d399"].map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setLotForm(f => f && ({ ...f, text_color: c }))}
+                      className="w-6 h-6 rounded-full border-2 transition-all flex-shrink-0"
+                      style={{
+                        background: c,
+                        borderColor: lotForm.text_color === c ? "#60a5fa" : "rgba(255,255,255,0.15)",
+                        boxShadow: lotForm.text_color === c ? "0 0 0 2px #1d4ed8" : "none",
+                      }}
+                    />
+                  ))}
+                  <label className="w-6 h-6 rounded-full border border-white/15 overflow-hidden cursor-pointer flex-shrink-0 relative" title="Custom color">
+                    <input
+                      type="color"
+                      value={lotForm.text_color ?? "#ffffff"}
+                      onChange={e => setLotForm(f => f && ({ ...f, text_color: e.target.value }))}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <div className="w-full h-full flex items-center justify-center" style={{ background: lotForm.text_color ?? "#ffffff" }}>
+                      <svg className="w-3 h-3" style={{ color: lotForm.text_color === "#ffffff" || lotForm.text_color === "#fbbf24" || lotForm.text_color === "#34d399" ? "#00000060" : "#ffffff60" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                    </div>
+                  </label>
+                </div>
+                <p className="text-[10px] text-white/20 mt-1.5">Color of the lot number on the map</p>
+              </div>
             </div>
             <div className="p-4 border-t border-white/8 space-y-2 flex-shrink-0">
               <button onClick={handleSaveLot} disabled={savingLot}
@@ -615,10 +746,18 @@ export default function CommunityEditorPage() {
                 {savingLot ? "Saving…" : selectedLot ? "Save Changes" : "Create Lot"}
               </button>
               {selectedLot && (
-                <button onClick={handleDeleteLot} disabled={deletingLot}
-                  className="w-full py-2 rounded-xl border border-red-500/20 text-red-400/70 hover:text-red-400 hover:border-red-500/40 text-sm transition-colors disabled:opacity-40">
-                  {deletingLot ? "Deleting…" : "Delete Lot"}
-                </button>
+                <>
+                  <button
+                    onClick={() => { startVertexEdit(selectedLot); setPanelOpen(false); }}
+                    className="w-full py-2 rounded-xl border border-amber-500/20 text-amber-400/70 hover:text-amber-400 hover:border-amber-500/40 text-sm transition-colors"
+                  >
+                    Edit Vertices
+                  </button>
+                  <button onClick={handleDeleteLot} disabled={deletingLot}
+                    className="w-full py-2 rounded-xl border border-red-500/20 text-red-400/70 hover:text-red-400 hover:border-red-500/40 text-sm transition-colors disabled:opacity-40">
+                    {deletingLot ? "Deleting…" : "Delete Lot"}
+                  </button>
+                </>
               )}
             </div>
           </>
@@ -689,16 +828,45 @@ export default function CommunityEditorPage() {
                   {community.lots.map(lot => {
                     const col = LOT_COLORS[lot.status];
                     const proj = projects.find(p => p.id === lot.project_id);
+                    const lotUrl = proj && proj.slug && proj.company_slug
+                      ? `${window.location.origin}/project/${proj.company_slug}/${proj.slug}?lotId=${lot.id}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${community.slug}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${lot.price_modifier ?? 0}&utm_source=qr`
+                      : null;
+                    const builder = community.company_slug ? builders[community.company_slug] : null;
                     return (
-                      <button key={lot.id} onClick={() => selectLot(lot)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/4 hover:bg-white/8 transition-colors text-left border border-transparent hover:border-white/8">
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: col.stroke }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-white/80">{lot.lot_number}</p>
-                          <p className="text-[10px] text-white/30 truncate">{proj?.name ?? "No model assigned"}</p>
-                        </div>
-                        <span className="text-[10px] font-medium flex-shrink-0" style={{ color: col.stroke }}>{col.label}</span>
-                      </button>
+                      <div key={lot.id} className="flex items-center gap-1">
+                        <button onClick={() => selectLot(lot)}
+                          className="flex-1 flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/4 hover:bg-white/8 transition-colors text-left border border-transparent hover:border-white/8">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: col.stroke }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-white/80">{lot.lot_number}</p>
+                            <p className="text-[10px] text-white/30 truncate">{proj?.name ?? "No model assigned"}</p>
+                          </div>
+                          <span className="text-[10px] font-medium flex-shrink-0" style={{ color: col.stroke }}>{col.label}</span>
+                        </button>
+                        {lotUrl && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setLotQrOpen(lot.id); }}
+                            className="flex-shrink-0 w-7 h-7 rounded-md bg-white/4 hover:bg-white/10 border border-white/8 flex items-center justify-center transition-colors"
+                            title="QR Code"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5 text-white/40">
+                              <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                              <path strokeLinecap="round" d="M14 14h2m3 0h1M14 17h1m2 0h2M14 20h3m2 0h1"/>
+                            </svg>
+                          </button>
+                        )}
+                        {lotQrOpen === lot.id && lotUrl && (
+                          <QRModal
+                            url={lotUrl}
+                            label={`Lot ${lot.lot_number}`}
+                            sublabel={proj?.name}
+                            builderLogo={builder?.logo_url}
+                            accentColor={builder?.accent_color}
+                            builderName={builder?.company_name}
+                            onClose={() => setLotQrOpen(null)}
+                          />
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -743,8 +911,46 @@ export default function CommunityEditorPage() {
                     </svg>
                   )}
                 </button>
+                <button
+                  onClick={() => setQrOpen(true)}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/4 border border-white/8 hover:bg-violet-600/12 hover:border-violet-500/30 transition-colors text-left"
+                >
+                  <span className="text-xs font-medium text-white/60">QR Code &amp; Yard Signs</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5 text-white/30 flex-shrink-0">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                    <path strokeLinecap="round" d="M14 14h2m3 0h1M14 17h1m2 0h2M14 20h3m2 0h1"/>
+                  </svg>
+                </button>
               </div>
             )}
+
+            {qrOpen && community.slug && community.company_slug && (() => {
+              const builder = builders[community.company_slug];
+              const communityUrl = `${window.location.origin}/community/${community.company_slug}/${community.slug}?utm_source=qr`;
+              const lotItems = (community.lots ?? []).filter(l => {
+                const proj = projects.find(p => p.id === l.project_id);
+                return proj?.slug && proj?.company_slug;
+              }).map(l => {
+                const proj = projects.find(p => p.id === l.project_id)!;
+                return {
+                  id: l.id,
+                  lot_number: l.lot_number,
+                  url: `${window.location.origin}/project/${proj.company_slug}/${proj.slug}?lotId=${l.id}&lotNumber=${encodeURIComponent(l.lot_number)}&communitySlug=${community.slug}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${l.price_modifier ?? 0}&utm_source=qr`,
+                  sublabel: proj.name,
+                } as QRLot;
+              });
+              return (
+                <QRModal
+                  url={communityUrl}
+                  label={community.name}
+                  builderLogo={builder?.logo_url}
+                  accentColor={builder?.accent_color}
+                  builderName={builder?.company_name}
+                  lots={lotItems.length > 0 ? lotItems : undefined}
+                  onClose={() => setQrOpen(false)}
+                />
+              );
+            })()}
           </>
         )}
       </div>

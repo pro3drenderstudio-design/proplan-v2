@@ -2,6 +2,7 @@ import Link from "next/link";
 import Nav  from "@/components/landing/Nav";
 import Footer from "@/components/landing/Footer";
 import VideoPlaceholder from "@/components/landing/VideoPlaceholder";
+import CalendlyButton from "@/components/CalendlyButton";
 import { fetchActivePlan, fmtUSD } from "@/lib/plans";
 
 function Check() {
@@ -55,10 +56,10 @@ export default async function ConfiguratorPage() {
             Your sales team stops guessing what buyers want. They walk into every conversation with a complete picture.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center mb-5">
-            <Link href="/auth/signup"
+            <CalendlyButton
               className="flex items-center justify-center gap-2 px-7 py-3.5 bg-blue-600 hover:bg-blue-500 text-white text-[15px] font-semibold rounded-xl transition-colors shadow-2xl shadow-blue-600/25">
-              Get started <Arrow />
-            </Link>
+              Schedule a Demo <Arrow />
+            </CalendlyButton>
             <Link href="/pricing"
               className="flex items-center justify-center px-7 py-3.5 bg-white/6 hover:bg-white/10 border border-white/10 text-white text-[15px] font-medium rounded-xl transition-all">
               See pricing
@@ -280,10 +281,10 @@ export default async function ConfiguratorPage() {
           </p>
           <p className="text-xs text-white/25 mb-8">No 3D tools. No dev team. Live in weeks.</p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Link href="/auth/signup"
+            <CalendlyButton
               className="flex items-center justify-center gap-2 px-7 py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-colors shadow-xl shadow-blue-600/20">
-              Get started — {fmtUSD(monthlyPrice)}/mo <Arrow />
-            </Link>
+              Schedule a Demo <Arrow />
+            </CalendlyButton>
             <Link href="/pricing"
               className="flex items-center justify-center px-7 py-3.5 bg-white/6 hover:bg-white/10 border border-white/10 text-white font-medium rounded-xl transition-all">
               See full pricing

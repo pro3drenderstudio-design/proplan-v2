@@ -74,10 +74,83 @@ export interface GeometryRule {
 // =============================================================================
 // projects
 // =============================================================================
+export interface SceneRenderSettings {
+  envLightType?: "preset" | "hdri" | "none";
+  envLightPreset?: string;
+  envLightHdriUrl?: string;
+  hdriIntensity?: number;
+  hdriBackgroundBrightness?: number;
+  hdriRotation?: number;
+  hdriContrast?: number;
+  bgType?: "env" | "color" | "sky";
+  bgColor?: string;
+  ambientIntensity?: number;
+  sunIntensity?: number;
+  sunColor?: string;
+  sunElevationDeg?: number;
+  sunAzimuthDeg?: number;
+  sunDistance?: number;
+  shadows?: boolean;
+  shadowRadius?: number;
+  skyDomeLights?: boolean;
+  skyDomeLightIntensity?: number;
+  skyDomeLightColor?: string;
+  skyDomeLightShadows?: boolean;
+  showClouds?: boolean;
+  cloudOpacity?: number;
+  cloudSpeed?: number;
+  cloudColor?: string;
+  cloudHeight?: number;
+  cloudCount?: number;
+  ssao?: boolean;
+  bloom?: boolean;
+  groundPlane?: boolean;
+  groundColor?: string;
+  groundSize?: number;
+  showGrid?: boolean;
+  skyPreset?: string;
+  skyTurbidity?: number;
+  skyRayleigh?: number;
+  skyMieCoeff?: number;
+  skyMieDirectionalG?: number;
+  skyRotation?: number;
+  skyBrightness?: number;
+  showStars?: boolean;
+  fogEnabled?: boolean;
+  fogColor?: string;
+  fogNear?: number;
+  fogFar?: number;
+  aoRadius?: number;
+  aoSamples?: number;
+  aoIntensity?: number;
+  aaMode?: "none" | "smaa";
+  pathTracing?: boolean;
+  pathTracingBounces?: number;
+  cameraFov?: number;
+  architecturalMode?: boolean;
+  rotateSpeed?: number;
+  panSpeed?: number;
+  zoomSpeed?: number;
+  screenSpacePanning?: boolean;
+  // Structural visibility
+  roofNodes?: string[];
+  level1Nodes?: string[];
+  level2Nodes?: string[];
+  level3Nodes?: string[];
+  // Buyer-facing messaging
+  welcomeMessage?: string;
+  exteriorMessage?: string;
+  interiorMessage?: string;
+}
+
 export interface ProjectCameraDefaults {
   blueprint?: CameraCoords;
   interior?: CameraCoords;
   exterior?: CameraCoords;
+  _settings?: SceneRenderSettings;
+  _meshOverrides?: unknown;
+  _meshBaseMats?: Record<string, string>;
+  _glbMatOverrides?: Record<string, { base_color: string; roughness: number; metalness: number; properties?: unknown }>;
 }
 
 export interface Project {
@@ -86,6 +159,13 @@ export interface Project {
   slug?: string;
   company_slug?: string;
   sketchfab_uid: string;
+  // R3F viewer fields (v3) — present when project uses GLB instead of Sketchfab
+  model_url?: string | null;        // public URL to GLB in Supabase storage
+  model_storage_path?: string | null; // storage path for deletion/versioning
+  scene_graph?: SceneNode[] | null; // cached mesh tree from GLB scan
+  env_preset?: string | null;       // HDR environment preset name
+  // Controls which viewer buyers see. null = legacy auto (r3f if model_url, else sketchfab)
+  viewer_mode?: "sketchfab" | "r3f" | null;
   base_price: number;
   beds: number;
   baths: number;
@@ -100,6 +180,13 @@ export interface Project {
   camera_defaults: ProjectCameraDefaults;
   created_at: string;
   updated_at: string;
+}
+
+// Scene graph node returned from GLB scan
+export interface SceneNode {
+  name: string;
+  type: "Mesh" | "Group" | "Object3D";
+  children?: SceneNode[];
 }
 
 // =============================================================================
@@ -168,11 +255,20 @@ export interface Category {
   camera_override: CameraCoords | null;
   sort_order: number;
   created_at: string;
+  // Geometry rules: array of option IDs — this category is only shown when at least one is selected
+  show_when?: string[] | null;
 }
 
 // =============================================================================
 // options
 // =============================================================================
+export type OptionType = "visibility" | "material_variant" | "material_override";
+
+export interface MaterialAssignment {
+  mesh_name: string;
+  material_id: string;
+}
+
 export interface Option {
   id: string;
   category_id: string;
@@ -182,6 +278,100 @@ export interface Option {
   price_impact: number;
   sort_order: number;
   thumbnail_url?: string;
+  // R3F / v3 fields
+  option_type?: OptionType;           // defaults to "visibility"
+  variant_name?: string | null;       // for material_variant: KHR_materials_variants name
+  material_id?: string | null;        // for material_override (legacy single-material)
+  material_assignments?: MaterialAssignment[] | null; // per-mesh material override (replaces material_id)
+  created_at: string;
+}
+
+// Extended physical properties for a material (stored as JSONB in material_library.properties)
+export interface MaterialProperties {
+  // Texture maps
+  albedoMapUrl?:       string | null;
+  normalMapUrl?:       string | null;
+  normalScale?:        number;          // 0–3, default 1
+  bumpMapUrl?:         string | null;
+  bumpScale?:          number;          // 0–1, default 0.05
+  roughnessMapUrl?:    string | null;
+  metalnessMapUrl?:    string | null;
+  aoMapUrl?:           string | null;
+  aoIntensity?:        number;          // 0–2, default 1
+  displacementMapUrl?: string | null;
+  displacementScale?:  number;          // 0–1, default 0.05
+  // Emissive
+  emissiveColor?:      string;          // hex, default "#000000"
+  emissiveIntensity?:  number;          // 0–5, default 0
+  // Opacity
+  opacity?:            number;          // 0–1, default 1
+  // UV / projection
+  uvProjection?:       "uv" | "triplanar" | "planar-top" | "planar-front" | "planar-side";
+  uvScale?:            number;          // world-space scale for triplanar/planar (units per tile)
+  uvScaleX?:           number;          // triplanar X-axis scale (left/right); falls back to uvScale
+  uvScaleY?:           number;          // triplanar Y-axis scale (up/down); falls back to uvScale
+  uvScaleZ?:           number;          // triplanar Z-axis scale (front/back); falls back to uvScale
+  uvTriOffsetX?:       number;          // triplanar world-space offset X
+  uvTriOffsetY?:       number;          // triplanar world-space offset Y
+  uvTriOffsetZ?:       number;          // triplanar world-space offset Z
+  uvTriRotation?:      number;          // triplanar rotation degrees (applied to all faces)
+  uvRepeatX?:          number;          // UV mode tile X, default 1
+  uvRepeatY?:          number;          // UV mode tile Y, default 1
+  uvOffsetX?:          number;          // default 0
+  uvOffsetY?:          number;          // default 0
+  uvRotation?:         number;          // degrees, default 0
+  // Albedo color behaviour
+  colorTint?:          boolean;         // true = multiply base_color over albedo map; false (default) = white (map shows pure)
+  albedoBrightness?:   number;          // 0–4, default 1 — multiplies albedo map brightness via color.multiplyScalar
+  // Physical (MeshPhysicalMaterial)
+  ior?:                number;          // 1–2.5, default 1.5
+  clearcoat?:          number;          // 0–1, default 0
+  clearcoatRoughness?: number;          // 0–1, default 0
+  transmission?:       number;          // 0–1, default 0 (glass)
+}
+
+// Material library entry (v3)
+export interface MaterialLibraryEntry {
+  id: string;
+  name: string;
+  category: string | null;       // "Exterior", "Flooring", "Countertops", etc.
+  base_color: string;            // hex color
+  roughness: number;
+  metalness: number;
+  normal_map_url: string | null;
+  thumbnail_url: string | null;
+  properties?: MaterialProperties; // v6: extended physical properties
+  created_at: string;
+}
+
+// Saved buyer configuration (v3 — buyer portal)
+export interface SavedConfiguration {
+  id: string;
+  project_id: string;
+  lead_id: string | null;
+  token: string;                 // unique URL token for portal link
+  configuration: Record<string, string>; // categoryId → optionId
+  total_price: number;
+  thumbnail_url: string | null;
+  phase_snapshot: string | null; // "exterior" | "interior" | "blueprint"
+  lot_id: string | null;
+  created_at: string;
+  accessed_at: string | null;
+}
+
+// Quote record (v3 — replaces inline lead.configuration)
+export interface Quote {
+  id: string;
+  lead_id: string;
+  project_id: string;
+  lot_id: string | null;
+  configuration: Record<string, string>;
+  base_price: number;
+  options_total: number;
+  lot_modifier: number;
+  total_price: number;
+  render_url: string | null;
+  pdf_url: string | null;
   created_at: string;
 }
 
@@ -203,6 +393,63 @@ export interface ProjectFile {
 // Convenience type for a fully joined category with its options
 export interface CategoryWithOptions extends Category {
   options: Option[];
+}
+
+// =============================================================================
+// placed_shapes (stored per-project in camera_defaults._placedShapes)
+// =============================================================================
+export type ShapeType = "box" | "sphere" | "plane" | "cylinder" | "cone" | "torus";
+
+export interface PlacedShapeData {
+  id: string;
+  shapeType: ShapeType;
+  name: string;           // Object3D.name — add to an option's node_list for visibility control
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+  color: string;
+  roughness: number;
+  metalness: number;
+  opacity: number;
+  wireframe?: boolean;
+  parentMesh?: string;    // Mesh name this shape is parented to (position is relative to parent)
+  material_id?: string;   // Material library entry ID — overrides inline color/roughness/metalness
+}
+
+// =============================================================================
+// placed_props (stored per-project in camera_defaults._placedProps)
+// =============================================================================
+export interface PlacedPropData {
+  id: string;              // nanoid
+  propId: string;          // catalog entry id
+  modelUrl: string;
+  position: [number, number, number];
+  rotation: [number, number, number];  // euler XYZ radians
+  scale: [number, number, number];
+}
+
+export interface PlacedLight {
+  id: string;
+  type: "point" | "spot";
+  position: [number, number, number];
+  color: string;        // hex e.g. "#ffe8cc"
+  intensity: number;    // 0–20
+  distance: number;     // falloff range — 0 = infinite
+  decay: number;        // 2 = physically correct
+  castShadow: boolean;
+  // Spot only
+  angle?: number;       // radians, default π/6
+  penumbra?: number;    // 0–1 edge softness
+}
+
+// Prop catalog entry (hardcoded catalog; no DB table needed)
+export interface PropCatalogEntry {
+  id: string;
+  name: string;
+  category: "tree" | "shrub" | "rock" | "grass" | "ground_cover" | "other";
+  thumbnailUrl: string;
+  modelUrl: string;
+  defaultScale: [number, number, number];
 }
 
 // =============================================================================
@@ -254,9 +501,11 @@ export interface Builder {
   ai_credits_remaining: number;
   ai_credits_total: number;
   max_projects: number;
+  max_communities: number;
   max_monthly_quotes: number;
   max_storage_gb: number;
   active_projects_count: number;
+  active_communities_count: number;
   monthly_quotes_count: number;
   storage_used_gb: number;
   client_since: string;
@@ -347,6 +596,7 @@ export interface Lot {
   polygon: [number, number][];
   price_modifier: number;
   notes: string | null;
+  text_color: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -367,6 +617,7 @@ export interface Plan {
   rendering_credits_monthly:  number;   // -1 = unlimited
   ai_credits_monthly:         number;
   max_projects:               number;   // -1 = unlimited
+  max_communities:            number;   // -1 = unlimited
   seats_included:             number;
   max_storage_gb:             number;
   includes_sitemaps:          boolean;

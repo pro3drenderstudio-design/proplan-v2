@@ -10,7 +10,8 @@ import {
   createOption, updateOption, deleteOption,
 } from "@/lib/builder-api";
 import { Project, CategoryWithOptions, Option, ProjectFile, ProjectMessage, ProjectMessageAttachment } from "@/types/database";
-import { supabase } from "@/lib/supabase";
+import { supabase, getBuilderBySlug } from "@/lib/supabase";
+import QRModal from "@/components/QRModal";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyQuery = any;
@@ -116,6 +117,10 @@ export default function ProjectDetailClient({ id }: { id: string }) {
   const [requestModal,  setRequestModal]  = useState(false);
   const [requestNote,   setRequestNote]   = useState("");
   const [requestingUpd, setRequestingUpd] = useState(false);
+  const [qrOpen,        setQrOpen]        = useState(false);
+  const [builderLogo,   setBuilderLogo]   = useState<string | null>(null);
+  const [accentColor,   setAccentColor]   = useState<string | null>(null);
+  const [builderName,   setBuilderNameState] = useState<string | null>(null);
 
   const fileInputRef  = useRef<HTMLInputElement>(null);
   const chatFileRef   = useRef<HTMLInputElement>(null);
@@ -138,7 +143,19 @@ export default function ProjectDetailClient({ id }: { id: string }) {
       getProjectCategoriesWithOptions(id),
       getProjectFiles(id),
     ]).then(([proj, cats, fls]) => {
-      if (proj) { setProject(proj); setNotes(proj.notes ?? ""); }
+      if (proj) {
+        setProject(proj);
+        setNotes(proj.notes ?? "");
+        if (proj.company_slug) {
+          getBuilderBySlug(proj.company_slug).then(b => {
+            if (b) {
+              setBuilderLogo(b.logo_url);
+              setAccentColor(b.accent_color);
+              setBuilderNameState(b.company_name);
+            }
+          });
+        }
+      }
       setCategories(cats);
       setFiles(fls);
       setLoading(false);
@@ -756,8 +773,31 @@ export default function ProjectDetailClient({ id }: { id: string }) {
                   <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-white/25"><path fillRule="evenodd" d="M6.28 5.22a.75.75 0 010 1.06L2.56 10l3.72 3.72a.75.75 0 01-1.06 1.06L.97 10.53a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0zm7.44 0a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L17.44 10l-3.72-3.72a.75.75 0 010-1.06z" clipRule="evenodd"/></svg>
                 </button>
               )}
+              {confUrl && (
+                <button
+                  onClick={() => setQrOpen(true)}
+                  className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-white/10 hover:border-violet-500/30 hover:bg-violet-600/8 transition-colors group"
+                >
+                  <span className="text-sm text-white/50 group-hover:text-violet-400 font-medium transition-colors">QR Code &amp; Yard Sign</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white/25 group-hover:text-violet-400 transition-colors">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                    <path strokeLinecap="round" d="M14 14h2m3 0h1M14 17h1m2 0h2M14 20h3m2 0h1"/>
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
+
+          {qrOpen && confUrl && (
+            <QRModal
+              url={`${window.location.origin}${confUrl}?utm_source=qr`}
+              label={project.name}
+              builderLogo={builderLogo}
+              accentColor={accentColor}
+              builderName={builderName}
+              onClose={() => setQrOpen(false)}
+            />
+          )}
 
           {/* Messages FAB — mobile only */}
           <div className="lg:hidden fixed bottom-6 right-6 z-40">

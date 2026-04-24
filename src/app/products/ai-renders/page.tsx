@@ -3,6 +3,7 @@ import Nav  from "@/components/landing/Nav";
 import Footer from "@/components/landing/Footer";
 import VideoPlaceholder from "@/components/landing/VideoPlaceholder";
 import AIRenderSlider from "@/components/landing/AIRenderSlider";
+import CalendlyButton from "@/components/CalendlyButton";
 import { fetchActivePlan, fmtUSD } from "@/lib/plans";
 
 function Check() {
@@ -63,10 +64,10 @@ export default async function AIRendersPage() {
             {aiCredits} AI render credits per month, included in your subscription. Generated in seconds, built for residential construction — not generic scenes.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center mb-5">
-            <Link href="/auth/signup"
+            <CalendlyButton
               className="flex items-center justify-center gap-2 px-7 py-3.5 bg-amber-500 hover:bg-amber-400 text-[#080808] text-[15px] font-bold rounded-xl transition-colors shadow-2xl shadow-amber-600/20">
-              Get started <Arrow />
-            </Link>
+              Schedule a Demo <Arrow />
+            </CalendlyButton>
             <Link href="/pricing"
               className="flex items-center justify-center px-7 py-3.5 bg-white/6 hover:bg-white/10 border border-white/10 text-white text-[15px] font-medium rounded-xl transition-all">
               See pricing
@@ -231,10 +232,10 @@ export default async function AIRendersPage() {
                     <li key={i} className="flex items-center gap-2.5 text-sm text-white/55"><Check />{i}</li>
                   ))}
                 </ul>
-                <Link href="/auth/signup"
+                <CalendlyButton
                   className="inline-flex items-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-400 text-[#080808] font-bold rounded-xl transition-colors">
-                  Get started <Arrow />
-                </Link>
+                  Schedule a Demo <Arrow />
+                </CalendlyButton>
               </div>
             </div>
           </div>
@@ -277,10 +278,10 @@ export default async function AIRendersPage() {
             {aiCredits} AI credits and unlimited studio renders are included in your {fmtUSD(monthlyPrice)}/mo subscription. Stop paying $800 per image to an external studio.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Link href="/auth/signup"
+            <CalendlyButton
               className="inline-flex items-center justify-center gap-2 px-7 py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-colors shadow-xl shadow-blue-600/20">
-              Get started — {fmtUSD(monthlyPrice)}/mo <Arrow />
-            </Link>
+              Schedule a Demo <Arrow />
+            </CalendlyButton>
             <Link href="/pricing"
               className="inline-flex items-center justify-center px-7 py-3.5 bg-white/6 hover:bg-white/10 border border-white/10 text-white font-medium rounded-xl transition-all">
               See full pricing

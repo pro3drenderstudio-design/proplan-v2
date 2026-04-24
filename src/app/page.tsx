@@ -4,7 +4,8 @@ import Footer         from "@/components/landing/Footer";
 import VideoPlaceholder from "@/components/landing/VideoPlaceholder";
 import AIRenderSlider  from "@/components/landing/AIRenderSlider";
 import RenderCarousel  from "@/components/landing/RenderCarousel";
-import { fetchActivePlan, buildPlanFeatures, fmtUSD as fmtPlanUSD } from "@/lib/plans";
+import CalendlyButton  from "@/components/CalendlyButton";
+import { fetchActivePlans, buildPlanFeatures, fmtUSD as fmtPlanUSD } from "@/lib/plans";
 
 // ── Image constants ───────────────────────────────────────────────────────────
 const IMG = {
@@ -47,7 +48,9 @@ function Arrow() {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default async function LandingPage() {
-  const activePlan = await fetchActivePlan();
+  const activePlans = await fetchActivePlans();
+  // Fallback plan for display while DB is empty
+  const activePlan = activePlans[0] ?? null;
   const monthlyPrice   = activePlan?.price_monthly  ?? 150000;
   const annualPrice    = activePlan?.price_annually  ?? 1650000;
   const annualPerMonth = Math.round(annualPrice / 12);
@@ -95,17 +98,20 @@ export default async function LandingPage() {
             Every tool your team needs. One subscription. Built for builders who want to close more and spend less.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-3 justify-center mb-6">
-            <Link href="/auth/signup"
-              className="flex items-center justify-center gap-2 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white text-[15px] font-semibold rounded-xl transition-colors shadow-2xl shadow-blue-600/25">
-              See it on your website <Arrow />
-            </Link>
-            <a href="#how-it-works"
-              className="flex items-center justify-center gap-2 px-8 py-4 bg-white/6 hover:bg-white/10 border border-white/10 text-white text-[15px] font-medium rounded-xl transition-all">
-              Watch how it works
-            </a>
+          <div className="flex justify-center mb-4">
+            <CalendlyButton className="flex items-center justify-center gap-2 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white text-[15px] font-semibold rounded-xl transition-colors shadow-2xl shadow-blue-600/25">
+              Schedule a Demo <Arrow />
+            </CalendlyButton>
           </div>
-          <p className="text-xs text-white/20">No dev work required · Live in weeks · Cancel anytime</p>
+          <p className="text-xs text-white/20 mb-10">No commitment · Live demo in 30 minutes · Cancel anytime</p>
+
+          <div className="max-w-4xl mx-auto">
+            <VideoPlaceholder
+              title="ProPlan Studio — The Complete Buyer Journey"
+              duration="1:45"
+              subtitle="Platform Overview"
+            />
+          </div>
         </div>
       </section>
 
@@ -206,32 +212,10 @@ export default async function LandingPage() {
               <p className="text-white font-semibold mb-1">The result: buyers who already know what they want.</p>
               <p className="text-white/40 text-sm">No more cold conversations. Every lead arrives with their configuration, budget, and emotional investment already in place.</p>
             </div>
-            <Link href="/auth/signup"
-              className="flex-shrink-0 flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors whitespace-nowrap">
-              Start capturing leads <Arrow />
-            </Link>
+            <CalendlyButton className="flex-shrink-0 flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors whitespace-nowrap">
+              Schedule a Demo <Arrow />
+            </CalendlyButton>
           </div>
-        </div>
-      </section>
-
-      {/* ── VIDEO OVERVIEW ────────────────────────────────────────────────── */}
-      <section id="how-it-works" className="py-16 px-5 border-t border-white/6 scroll-mt-20">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-8">
-            <p className="text-[11px] font-semibold text-white/30 uppercase tracking-widest mb-2">Platform walkthrough</p>
-            <h2
-              className="text-2xl font-bold text-white/80"
-              style={{ fontFamily: "var(--font-syne), sans-serif" }}
-            >
-              See the full buyer journey in under 2 minutes
-            </h2>
-            <p className="text-white/35 text-sm mt-2">From interactive site map to qualified lead — watch how it flows together.</p>
-          </div>
-          <VideoPlaceholder
-            title="ProPlan Studio — The Complete Buyer Journey"
-            duration="1:45"
-            subtitle="Platform Overview"
-          />
         </div>
       </section>
 
@@ -240,9 +224,9 @@ export default async function LandingPage() {
         <div className="max-w-5xl mx-auto px-5 grid grid-cols-2 md:grid-cols-4">
           {[
             { value: "$800+",    label: "Saved per render vs. any external studio" },
-            { value: "48hr",     label: "Average turnaround on traditional renders" },
+            { value: "48hr",     label: "Turnaround on traditional studio renders" },
             { value: `${activePlan?.ai_credits_monthly ?? 250}`, label: "AI render credits included monthly" },
-            { value: "1 day",    label: "To go live after model approval" },
+            { value: "30 min",   label: "To see a live demo of your model" },
           ].map((s, i) => (
             <div key={i} className="flex flex-col items-center justify-center py-8 text-center border-r border-white/5 last:border-0">
               <p
@@ -280,7 +264,7 @@ export default async function LandingPage() {
                 {[
                   { icon: "⚡", text: "AI-accelerated 3D model production cuts build time by weeks" },
                   { icon: "🎨", text: "Industry-trained AI Render Studio — built specifically for residential construction" },
-                  { icon: "🏗️", text: "Traditional renders by our in-house studio team — included, not invoiced" },
+                  { icon: "🏗️", text: "Traditional studio renders by our in-house team — included in Builder plans" },
                   { icon: "🔄", text: "One unified platform — no integrations, no middleware, no extra seats to buy" },
                 ].map((item) => (
                   <div key={item.text} className="flex items-start gap-3">
@@ -543,17 +527,17 @@ export default async function LandingPage() {
               </span>
             </h2>
             <p className="text-white/45 text-lg leading-relaxed mb-5">
-              External studios charge $800–$2,000 per image. With ProPlan, renders are part of your subscription — unlimited, 48hr turnaround, handled by our team. Run more campaigns, test more variations, post more content — without watching the budget.
+              External studios charge $800–$2,000 per image. With ProPlan, studio renders are included in your subscription — 48hr turnaround, handled by our team. Run more campaigns, test more variations, post more content — without watching the budget.
             </p>
             <div className="bg-[#0e0e0e] border border-white/8 rounded-xl p-4 mb-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-white/30 mb-1">External studio — 10 renders / month</p>
-                  <p className="text-xl font-bold text-white/35 line-through">$8,000–$20,000/mo</p>
+                  <p className="text-xs text-white/30 mb-1">External studio — 5 renders / month</p>
+                  <p className="text-xl font-bold text-white/35 line-through">$4,000–$10,000/mo</p>
                 </div>
                 <div className="w-px h-10 bg-white/8" />
                 <div className="text-right">
-                  <p className="text-xs text-white/30 mb-1">ProPlan Studio — unlimited renders</p>
+                  <p className="text-xs text-white/30 mb-1">ProPlan Studio — included in plan</p>
                   <p className="text-xl font-bold text-white">{fmtUSD(monthlyPrice)}/mo</p>
                 </div>
               </div>
@@ -649,178 +633,156 @@ export default async function LandingPage() {
 
       {/* ── PRICING ───────────────────────────────────────────────────────── */}
       <section className="py-24 px-5 border-b border-white/6">
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
             <Pill>Pricing</Pill>
             <h2
               className="text-4xl md:text-5xl font-extrabold tracking-tight mt-5 mb-4"
               style={{ fontFamily: "var(--font-syne), sans-serif" }}
             >
-              One price.{" "}
+              Simple pricing.{" "}
               <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
                 No surprises.
               </span>
             </h2>
             <p className="text-white/40 text-lg max-w-lg mx-auto">
-              No per-render charges. No per-lead fees. No seat upgrades. Everything is in the subscription — exactly as it should be.
+              Start with one model. Scale as you grow. One-time setup fee per model, then a flat monthly subscription.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-5 gap-6 items-start">
-            {/* Main plan */}
-            <div className="md:col-span-3 bg-blue-600/10 border-2 border-blue-500/50 rounded-2xl p-8 shadow-xl shadow-blue-500/10">
-              <div className="mb-2">
-                <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-blue-500 text-white tracking-wider uppercase">ProPlan Studio</span>
+          {/* Plan cards */}
+          <div className={`grid gap-5 mb-5 ${
+            activePlans.length >= 3 ? "md:grid-cols-3" :
+            activePlans.length === 2 ? "md:grid-cols-2 max-w-3xl mx-auto" :
+            "max-w-sm mx-auto"
+          }`}>
+            {activePlans.map((plan, i) => {
+              const isPopular = activePlans.length >= 2 && i === activePlans.length - 1;
+              const planAnnualPerMonth = Math.round(plan.price_annually / 12);
+              const planAnnualSavings  = plan.price_monthly * 12 - plan.price_annually;
+              return (
+                <div
+                  key={plan.id}
+                  className={`relative rounded-2xl p-7 flex flex-col ${
+                    isPopular
+                      ? "bg-blue-600/10 border-2 border-blue-500/50 shadow-xl shadow-blue-500/10"
+                      : "bg-[#0e0e0e] border border-white/10"
+                  }`}
+                >
+                  {isPopular && (
+                    <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
+                      <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-blue-500 text-white tracking-wider uppercase whitespace-nowrap">
+                        Most Popular
+                      </span>
+                    </div>
+                  )}
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-3">{plan.display_name}</p>
+                  <div className="flex items-end gap-1 mb-1">
+                    <span className="text-4xl font-bold text-white" style={{ fontFamily: "var(--font-syne), sans-serif" }}>
+                      {fmtUSD(plan.price_monthly)}
+                    </span>
+                    <span className="text-white/40 text-sm mb-1">/mo</span>
+                  </div>
+                  <p className="text-[11px] text-white/25 mb-6">
+                    or {fmtUSD(planAnnualPerMonth)}/mo billed annually{" "}
+                    <span className="text-emerald-400/70">— save {fmtUSD(planAnnualSavings)}</span>
+                  </p>
+
+                  <div className="grid grid-cols-3 gap-2 mb-6 bg-white/5 rounded-xl p-3">
+                    <div className="text-center">
+                      <p className="text-base font-bold text-white">{plan.max_projects === -1 ? "∞" : plan.max_projects}</p>
+                      <p className="text-[9px] text-white/30 mt-0.5">Models</p>
+                    </div>
+                    <div className="text-center border-x border-white/8">
+                      <p className="text-base font-bold text-white">{plan.rendering_credits_monthly === -1 ? "∞" : (plan.rendering_credits_monthly === 0 ? "—" : plan.rendering_credits_monthly)}</p>
+                      <p className="text-[9px] text-white/30 mt-0.5">Renders/mo</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-base font-bold text-white">{plan.ai_credits_monthly}</p>
+                      <p className="text-[9px] text-white/30 mt-0.5">AI Credits</p>
+                    </div>
+                  </div>
+
+                  <ul className="space-y-2.5 mb-7 flex-1">
+                    {buildPlanFeatures(plan).map(f => (
+                      <li key={f} className="flex items-start gap-2.5">
+                        <Check />
+                        <span className="text-xs text-white/60 leading-relaxed">{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <CalendlyButton
+                    className={`w-full py-3 rounded-xl text-sm font-semibold transition-colors ${
+                      isPopular
+                        ? "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/25"
+                        : "bg-white/8 hover:bg-white/14 border border-white/10 text-white"
+                    }`}
+                  >
+                    Schedule a Demo
+                  </CalendlyButton>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Setup fee — full-width strip below plan cards */}
+          <div className="bg-[#141414] border border-white/10 rounded-2xl p-7 grid md:grid-cols-[1fr_1fr_auto] gap-x-10 gap-y-6 items-start">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-3">Per-Model Setup Fee</p>
+              <div className="flex items-end gap-1 mb-2">
+                <span className="text-3xl font-bold text-white" style={{ fontFamily: "var(--font-syne), sans-serif" }}>
+                  {fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)}
+                </span>
+                <span className="text-white/40 text-sm mb-1">/ model</span>
               </div>
-              <p className="text-sm text-white/45 mt-3 mb-6 leading-relaxed">
-                The complete buyer experience platform — site maps, 3D configurator, AI renders, studio renders, and lead capture. Everything your team needs, managed by one team.
+              <p className="text-xs text-white/40 leading-relaxed mb-4">
+                One-time fee per model — paid once, yours forever. We handle full production from geometry to live deployment.
               </p>
-              <div className="mb-6">
-                <div className="flex items-end gap-1">
-                  <span className="text-5xl font-bold text-white" style={{ fontFamily: "var(--font-syne), sans-serif" }}>{fmtUSD(monthlyPrice)}</span>
-                  <span className="text-white/40 text-sm mb-2">/mo</span>
-                </div>
-                <p className="text-[11px] text-white/30 mt-1">Billed monthly · or {fmtUSD(annualPrice)}/yr <span className="text-emerald-400/70">— save {fmtUSD(annualSavings)}</span></p>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 mb-7 bg-white/5 rounded-xl p-4">
-                <div className="text-center">
-                  <p className="text-xl font-bold text-white">{activePlan?.rendering_credits_monthly === -1 ? "∞" : (activePlan?.rendering_credits_monthly ?? "∞")}</p>
-                  <p className="text-[9px] text-white/30 mt-0.5">Renders / mo</p>
-                </div>
-                <div className="text-center border-x border-white/8">
-                  <p className="text-xl font-bold text-white">{activePlan?.ai_credits_monthly ?? 250}</p>
-                  <p className="text-[9px] text-white/30 mt-0.5">AI Credits</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-xl font-bold text-white">∞</p>
-                  <p className="text-[9px] text-white/30 mt-0.5">Site Maps</p>
-                </div>
-              </div>
-
-              <ul className="space-y-3 mb-8">
-                {(activePlan ? buildPlanFeatures(activePlan) : [
-                  "Interactive site maps for your communities",
-                  "3D configurator for every home model",
-                  "Unlimited traditional 3D renders / month",
-                  "250 AI concept renders / month",
-                  "High-intent lead capture with full config",
-                  "Lead CRM, analytics, and CSV export",
-                  "Brand customization — logo, colors, domain",
-                  "Priority support",
-                ]).map(f => (
-                  <li key={f} className="flex items-start gap-2.5"><Check /><span className="text-sm text-white/65">{f}</span></li>
+              <ul className="space-y-2">
+                {[
+                  "Full 3D model build & optimization",
+                  "Interior, exterior & option phases",
+                  "Option categories & pricing rules wired",
+                  "Tested and deployed live",
+                  "Revisions until you approve",
+                ].map(item => (
+                  <li key={item} className="flex items-start gap-2">
+                    <Check />
+                    <span className="text-xs text-white/50">{item}</span>
+                  </li>
                 ))}
               </ul>
-
-              <Link href="/auth/signup"
-                className="w-full py-3.5 rounded-xl text-sm font-semibold text-center bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/25 transition-colors block">
-                Get started today
-              </Link>
             </div>
 
-            {/* Setup fee + how it works */}
-            <div className="md:col-span-2 space-y-4">
-              <div className="bg-[#141414] border border-white/10 rounded-2xl p-6">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-4">Per-Model Setup Fee</p>
-                <div className="flex items-end gap-1 mb-2">
-                  <span className="text-3xl font-bold text-white" style={{ fontFamily: "var(--font-syne), sans-serif" }}>{fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)}</span>
-                  <span className="text-white/40 text-sm mb-1">/ model</span>
-                </div>
-                <p className="text-xs text-white/40 leading-relaxed mb-5">
-                  A one-time fee per 3D configurator model — paid once, used forever. We handle every step of production and deployment.
-                </p>
-                <ul className="space-y-2">
-                  {[
-                    "3D model build and optimization",
-                    "Phase setup (blueprint / interior / exterior)",
-                    "Option categories and pricing rules wired",
-                    "Tested and deployed live",
-                    "Revisions until you're happy",
-                  ].map(item => (
-                    <li key={item} className="flex items-start gap-2">
-                      <Check />
-                      <span className="text-xs text-white/50">{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+            <div>
+              <p className="text-xs font-semibold text-white/60 mb-4">How it works</p>
+              <ol className="space-y-3">
+                {[
+                  "Schedule a 30-min demo call",
+                  "Pick your plan, pay setup fee",
+                  "We build your model — you review & approve",
+                  "Go live. Buyers configure. Leads flow in.",
+                ].map((step, idx) => (
+                  <li key={step} className="flex items-start gap-2.5 text-xs text-white/40">
+                    <span className="w-4 h-4 rounded-full bg-white/8 text-white/40 text-[9px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                      {idx + 1}
+                    </span>
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
 
-              <div className="bg-[#141414] border border-white/10 rounded-2xl p-5">
-                <p className="text-xs font-semibold text-white/60 mb-3">How to get started</p>
-                <ol className="space-y-2.5">
-                  {[
-                    `Subscribe for ${fmtUSD(monthlyPrice)}/mo`,
-                    "Request a model from your dashboard",
-                    `Pay ${fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)} setup fee`,
-                    "We build it — you start capturing leads",
-                  ].map((step, i) => (
-                    <li key={step} className="flex items-start gap-2.5 text-xs text-white/40">
-                      <span className="w-4 h-4 rounded-full bg-white/8 text-white/40 text-[9px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
-                        {i + 1}
-                      </span>
-                      {step}
-                    </li>
-                  ))}
-                </ol>
-              </div>
-
+            <div className="flex flex-col gap-3 justify-center">
+              <CalendlyButton className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-semibold transition-colors whitespace-nowrap">
+                Book a Free Demo <Arrow />
+              </CalendlyButton>
               <Link href="/pricing"
-                className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-medium border border-white/12 text-white/50 hover:text-white hover:border-white/25 transition-all">
+                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-medium border border-white/12 text-white/50 hover:text-white hover:border-white/25 transition-all whitespace-nowrap">
                 Full pricing details <Arrow />
               </Link>
             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── TESTIMONIALS ──────────────────────────────────────────────────── */}
-      <section className="py-24 px-5 border-b border-white/6">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-14">
-            <Pill>Builder stories</Pill>
-            <h2
-              className="text-3xl md:text-4xl font-extrabold tracking-tight mt-5"
-              style={{ fontFamily: "var(--font-syne), sans-serif" }}
-            >
-              What builders are saying.
-            </h2>
-          </div>
-          <div className="grid md:grid-cols-3 gap-4">
-            {[
-              {
-                quote: "Before ProPlan, buyers waited two weeks for a rendering. Now they configure their home and we get a fully qualified lead with every selection before the first meeting.",
-                name: "Marcus T.", role: "Sales Director", company: "Meridian Custom Homes", init: "MT", grad: "from-blue-600 to-indigo-700",
-              },
-              {
-                quote: "We were paying a studio $1,200 per image. Now renders and AI concepts are included in the subscription. I can show five design variations in one meeting without waiting days or spending a cent extra.",
-                name: "Sandra K.", role: "Marketing Manager", company: "Ridgeline Communities", init: "SK", grad: "from-violet-600 to-purple-800",
-              },
-              {
-                quote: "The configurator captures buyer intent we never had before — elevation, finishes, upgrades, budget. Our team walks into every conversation knowing exactly what that buyer wants and what they're willing to spend.",
-                name: "James P.", role: "VP of Sales", company: "Keystone Builders", init: "JP", grad: "from-teal-600 to-cyan-800",
-              },
-            ].map((t) => (
-              <div key={t.name} className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-7 flex flex-col">
-                <div className="flex mb-4">
-                  {[...Array(5)].map((_, i) => (
-                    <svg key={i} className="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                    </svg>
-                  ))}
-                </div>
-                <p className="text-sm text-white/50 leading-relaxed flex-1 mb-6">&ldquo;{t.quote}&rdquo;</p>
-                <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${t.grad} flex items-center justify-center flex-shrink-0`}>
-                    <span className="text-[11px] font-bold text-white">{t.init}</span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-white">{t.name}</p>
-                    <p className="text-[11px] text-white/30">{t.role} · {t.company}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       </section>
@@ -834,33 +796,32 @@ export default async function LandingPage() {
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-32 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
             <div className="relative">
               <div className="flex justify-center mb-6">
-                <Pill>Start today</Pill>
+                <Pill>Book a demo</Pill>
               </div>
               <h2
                 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-5 leading-tight"
                 style={{ fontFamily: "var(--font-syne), sans-serif" }}
               >
-                If you&apos;re not giving buyers
+                See it live on your model
                 <br />
                 <span className="bg-gradient-to-r from-blue-400 via-violet-400 to-indigo-400 bg-clip-text text-transparent">
-                  this experience — someone else will.
+                  in 30 minutes.
                 </span>
               </h2>
               <p className="text-white/40 text-lg mb-10 max-w-lg mx-auto leading-relaxed">
-                One subscription. Interactive site maps, 3D configurators, AI renders, studio renders, lead capture. Your buyers deserve better than a PDF. Give it to them.
+                No slides. No generic demo. We show you the full buyer journey — site map, 3D configurator, AI render, PDF quote — using your actual home plans.
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center mb-8">
-                <Link href="/auth/signup"
-                  className="flex items-center justify-center gap-2 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white text-[15px] font-semibold rounded-xl transition-colors shadow-2xl shadow-blue-600/25">
-                  Get started — {fmtUSD(monthlyPrice)}/mo <Arrow />
-                </Link>
+                <CalendlyButton className="flex items-center justify-center gap-2 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white text-[15px] font-semibold rounded-xl transition-colors shadow-2xl shadow-blue-600/25">
+                  Schedule a Demo <Arrow />
+                </CalendlyButton>
                 <Link href="/pricing"
                   className="flex items-center justify-center px-8 py-4 bg-white/6 hover:bg-white/10 border border-white/10 text-white text-[15px] font-medium rounded-xl transition-all">
-                  See full pricing
+                  See pricing
                 </Link>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-white/25">
-                <span className="flex items-center gap-1.5"><Check />No dev work required</span>
+                <span className="flex items-center gap-1.5"><Check />30-minute call, no pressure</span>
                 <span className="flex items-center gap-1.5"><Check />{fmtPlanUSD(activePlan?.model_setup_fee ?? 100000)} per model setup</span>
                 <span className="flex items-center gap-1.5"><Check />Cancel anytime</span>
               </div>

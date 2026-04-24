@@ -13,10 +13,17 @@ export async function PATCH(
   const { lotId } = await params;
   const body = await req.json().catch(() => ({}));
 
+  const payload = { ...body, updated_at: new Date().toISOString() };
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase.from("lots") as any)
-    .update({ ...body, updated_at: new Date().toISOString() })
-    .eq("id", lotId);
+  let { error } = await (supabase.from("lots") as any).update(payload).eq("id", lotId);
+
+  // If text_color column doesn't exist yet, retry without it
+  if (error?.message?.includes("text_color")) {
+    delete payload.text_color;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ({ error } = await (supabase.from("lots") as any).update(payload).eq("id", lotId));
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

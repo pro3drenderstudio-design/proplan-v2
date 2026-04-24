@@ -3,10 +3,11 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { getAllProjects, updateProjectStatus, updateProject, getBuilderByCompanySlug, getCategoriesWithOptions, getAllBuilders } from "@/lib/admin-api";
+import { getAllProjects, updateProjectStatus, updateProject, getBuilderByCompanySlug, getCategoriesWithOptions, getAllBuilders, updateViewerMode, createCategory, updateCategory, deleteCategory, createOption, updateOption, deleteOption } from "@/lib/admin-api";
 import { getProjectFiles, deleteProjectFile } from "@/lib/builder-api";
 import { supabase } from "@/lib/supabase";
-import { Project, Builder, CategoryWithOptions, ProjectFile } from "@/types/database";
+import { Project, Builder, CategoryWithOptions, ProjectFile, PhaseColumn } from "@/types/database";
+import QRModal from "@/components/QRModal";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ChatMsg = { id: string; project_id: string; sender_type: string; sender_id: string; sender_name: string; body: string | null; attachments: { url: string; name: string; type: string; size: number }[]; created_at: string; };
@@ -70,6 +71,7 @@ export default function ProjectDetailPage() {
   const builderDropRef = useRef<HTMLDivElement>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [toast,       setToast]       = useState("");
+  const [qrOpen,      setQrOpen]      = useState(false);
   const [editing,     setEditing]     = useState(false);
   const [editForm,    setEditForm]    = useState<{
     name: string; slug: string; sketchfab_uid: string; home_type: string;
@@ -77,10 +79,26 @@ export default function ProjectDetailPage() {
     sqft: string; base_price: string; thumbnail_url: string;
   } | null>(null);
   const [saving,         setSaving]         = useState(false);
+  const [switching,      setSwitching]      = useState(false);
   const [thumbUploading, setThumbUploading] = useState(false);
   const [thumbPreview,   setThumbPreview]   = useState<string | null>(null);
   const fileInputRef  = useRef<HTMLInputElement>(null);
   const thumbInputRef = useRef<HTMLInputElement>(null);
+
+  // Categories & Options editor state
+  const [catEditorOpen,   setCatEditorOpen]   = useState(false);
+  const [newCatName,      setNewCatName]      = useState("");
+  const [newCatPhase,     setNewCatPhase]     = useState<PhaseColumn>("exterior");
+  const [editingCatId,    setEditingCatId]    = useState<string | null>(null);
+  const [editCatName,     setEditCatName]     = useState("");
+  const [editCatPhase,    setEditCatPhase]    = useState<PhaseColumn>("exterior");
+  const [expandedCatId,   setExpandedCatId]   = useState<string | null>(null);
+  const [newOptName,      setNewOptName]      = useState<Record<string, string>>({});
+  const [newOptPrice,     setNewOptPrice]     = useState<Record<string, string>>({});
+  const [editingOptId,    setEditingOptId]    = useState<string | null>(null);
+  const [editOptName,     setEditOptName]     = useState("");
+  const [editOptPrice,    setEditOptPrice]    = useState("");
+  const [uploadingOptThumb, setUploadingOptThumb] = useState<string | null>(null);
 
   // Chat state
   const [chatMsgs,      setChatMsgs]      = useState<ChatMsg[]>([]);
@@ -95,6 +113,15 @@ export default function ProjectDetailPage() {
   const chatFileRef   = useRef<HTMLInputElement>(null);
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(""), 3000); }
+
+  async function handleSwitchMode(mode: "sketchfab" | "r3f") {
+    if (!project || switching) return;
+    setSwitching(true);
+    const ok = await updateViewerMode(project.id, mode);
+    if (ok) setProject(prev => prev ? { ...prev, viewer_mode: mode } : prev);
+    else showToast("Failed to switch viewer mode");
+    setSwitching(false);
+  }
 
   useEffect(() => {
     getAllProjects().then(async all => {
@@ -281,6 +308,91 @@ export default function ProjectDetailPage() {
     finally { setThumbUploading(false); }
   }, [project]);
 
+  // ── Categories & Options CRUD ─────────────────────────────────────────────
+  async function handleAddCategory() {
+    if (!project || !newCatName.trim()) return;
+    const cat = await createCategory({ project_id: project.id, name: newCatName.trim(), phase: newCatPhase, sort_order: categories.length });
+    if (cat) {
+      setCategories(prev => [...prev, { ...cat, options: [] }]);
+      setNewCatName(""); showToast("Category added");
+    } else showToast("Failed to add category");
+  }
+
+  async function handleUpdateCategory(catId: string, name: string, phase: PhaseColumn) {
+    const ok = await updateCategory(catId, { name: name.trim(), phase });
+    if (ok) {
+      setCategories(prev => prev.map(c => c.id === catId ? { ...c, name: name.trim(), phase } : c));
+      setEditingCatId(null); showToast("Category updated");
+    } else showToast("Failed to update category");
+  }
+
+  async function handleDeleteCategory(catId: string) {
+    if (!confirm("Delete this category and all its options?")) return;
+    const ok = await deleteCategory(catId);
+    if (ok) {
+      setCategories(prev => prev.filter(c => c.id !== catId));
+      if (expandedCatId === catId) setExpandedCatId(null);
+      showToast("Category deleted");
+    } else showToast("Failed to delete category");
+  }
+
+  async function handleAddOption(catId: string) {
+    const name = newOptName[catId]?.trim();
+    if (!name) return;
+    const price = Number(newOptPrice[catId] ?? 0) || 0;
+    const opt = await createOption({ category_id: catId, friendly_name: name, price_impact: price, sort_order: (categories.find(c => c.id === catId)?.options.length ?? 0) });
+    if (opt) {
+      setCategories(prev => prev.map(c => c.id === catId ? { ...c, options: [...c.options, opt] } : c));
+      setNewOptName(p => ({ ...p, [catId]: "" }));
+      setNewOptPrice(p => ({ ...p, [catId]: "" }));
+      showToast("Option added");
+    } else showToast("Failed to add option");
+  }
+
+  async function handleUpdateOption(optId: string, name: string, price: string) {
+    const ok = await updateOption(optId, { friendly_name: name.trim(), price_impact: Number(price) || 0 });
+    if (ok) {
+      setCategories(prev => prev.map(c => ({
+        ...c,
+        options: c.options.map(o => o.id === optId ? { ...o, friendly_name: name.trim(), price_impact: Number(price) || 0 } : o),
+      })));
+      setEditingOptId(null); showToast("Option updated");
+    } else showToast("Failed to update option");
+  }
+
+  async function handleDeleteOption(optId: string, catId: string) {
+    if (!confirm("Delete this option?")) return;
+    const ok = await deleteOption(optId);
+    if (ok) {
+      setCategories(prev => prev.map(c => c.id === catId ? { ...c, options: c.options.filter(o => o.id !== optId) } : c));
+      showToast("Option deleted");
+    } else showToast("Failed to delete option");
+  }
+
+  async function handleOptionThumbnailUpload(optId: string, file: File) {
+    setUploadingOptThumb(optId);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("optionId", optId);
+      const res = await fetch("/api/admin/option-thumbnail", { method: "POST", body: fd });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        showToast(`Upload failed: ${body.error ?? res.statusText}`);
+        return;
+      }
+      const { url } = await res.json() as { url: string };
+      const ok = await updateOption(optId, { thumbnail_url: url });
+      if (ok) {
+        setCategories(prev => prev.map(c => ({
+          ...c,
+          options: c.options.map(o => o.id === optId ? { ...o, thumbnail_url: url } : o),
+        })));
+        showToast("Thumbnail updated");
+      } else showToast("Failed to save thumbnail URL");
+    } finally { setUploadingOptThumb(null); }
+  }
+
   if (loading) return (
     <div className="flex items-center justify-center h-full">
       <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -344,14 +456,106 @@ export default function ProjectDetailPage() {
                 Preview Configurator
               </a>
             )}
+            {project.slug && project.company_slug && (
+              <button
+                onClick={() => setQrOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-500/15 border border-violet-400/25 text-xs text-violet-400 font-medium rounded-lg hover:bg-violet-500/25 transition-colors"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5">
+                  <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                  <path strokeLinecap="round" d="M14 14h2m3 0h1M14 17h1m2 0h2M14 20h3m2 0h1"/>
+                </svg>
+                QR &amp; Yard Sign
+              </button>
+            )}
+            {qrOpen && project.slug && project.company_slug && (
+              <QRModal
+                url={`${window.location.origin}/project/${project.company_slug}/${project.slug}?utm_source=qr`}
+                label={project.name}
+                builderLogo={builder?.logo_url}
+                accentColor={builder?.accent_color}
+                builderName={builder?.company_name}
+                onClose={() => setQrOpen(false)}
+              />
+            )}
+
+            {/* Viewer mode toggle */}
+            {(() => {
+              const effective: "sketchfab" | "r3f" =
+                project.viewer_mode === "r3f" ? "r3f"
+                : project.viewer_mode === "sketchfab" ? "sketchfab"
+                : project.model_url ? "r3f"
+                : "sketchfab";
+              const isR3F = effective === "r3f";
+              const hasGlb = !!project.model_url;
+              const hasSf  = !!project.sketchfab_uid;
+              return (
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-white/30 select-none">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                    Live
+                  </div>
+                  <div className="flex items-center bg-white/6 border border-white/10 rounded-lg p-0.5 gap-0.5">
+                    <button
+                      disabled={switching || !hasSf}
+                      onClick={() => handleSwitchMode("sketchfab")}
+                      title={!hasSf ? "No Sketchfab UID configured" : "Switch live viewer to Sketchfab"}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                        !isR3F
+                          ? "bg-white/12 text-white shadow-sm"
+                          : "text-white/35 hover:text-white/60 disabled:opacity-25 disabled:cursor-not-allowed"
+                      }`}>
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
+                      </svg>
+                      Sketchfab
+                    </button>
+                    <button
+                      disabled={switching || !hasGlb}
+                      onClick={() => handleSwitchMode("r3f")}
+                      title={!hasGlb ? "No GLB uploaded yet" : "Switch live viewer to Scene Editor"}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                        isR3F
+                          ? "bg-blue-600/80 text-white shadow-sm"
+                          : "text-white/35 hover:text-white/60 disabled:opacity-25 disabled:cursor-not-allowed"
+                      }`}>
+                      {switching
+                        ? <span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />
+                        : <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 10V7" />
+                          </svg>
+                      }
+                      Scene Editor
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
             <button onClick={() => moveStatus("archived")} disabled={updating || project.status === "archived"}
               className="flex items-center gap-1.5 px-3 py-1.5 border border-white/12 text-xs text-white/50 rounded-lg hover:text-white hover:border-white/25 transition-colors disabled:opacity-40">
               Archive
             </button>
-            <Link href={`/admin/node-bridge?project=${project.id}`}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-xs text-white font-medium rounded-lg hover:bg-blue-500 transition-colors">
-              Enter Node Bridge
+            <Link href={`/admin/projects/${project.id}/scene-editor`}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a2a1a] border border-green-600/30 text-xs text-green-400 font-medium rounded-lg hover:bg-green-600/20 transition-colors">
+              Scene Editor →
             </Link>
+            {(() => {
+              const isR3F = (project.viewer_mode === "r3f") || (!project.viewer_mode && !!project.model_url);
+              return (
+                <Link
+                  href={isR3F ? "#" : `/admin/node-bridge?project=${project.id}`}
+                  onClick={isR3F ? (e) => e.preventDefault() : undefined}
+                  title={isR3F ? "Node Bridge is for Sketchfab — switch live viewer to Sketchfab to use" : undefined}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                    isR3F
+                      ? "border-white/8 text-white/25 cursor-not-allowed opacity-50"
+                      : "bg-blue-600 border-transparent text-white hover:bg-blue-500"
+                  }`}>
+                  Node Bridge
+                </Link>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -527,19 +731,8 @@ export default function ProjectDetailPage() {
                       </div>
                     </div>
                     <div>
-                      <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Categories Configured</p>
-                      {categories.length === 0 ? (
-                        <p className="text-xs text-white/25">No categories yet</p>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {categories.slice(0, 6).map(cat => (
-                            <div key={cat.id} className="flex items-center justify-between text-xs">
-                              <span className="text-white/60">{cat.name}</span>
-                              <span className="text-white/30">{cat.options.length} options</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Categories</p>
+                      <p className="text-xs text-white/60">{categories.length} categories · {categories.reduce((s,c) => s + c.options.length, 0)} options</p>
                     </div>
                   </div>
                 </>
@@ -595,6 +788,236 @@ export default function ProjectDetailPage() {
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* Categories & Options Editor */}
+          <div className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/8">
+              <div>
+                <h3 className="text-xs font-bold text-white">Categories & Options</h3>
+                <p className="text-[10px] text-white/30 mt-0.5">{categories.length} categories · {categories.reduce((s, c) => s + c.options.length, 0)} options</p>
+              </div>
+              <button
+                onClick={() => setCatEditorOpen(v => !v)}
+                className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-white/12 text-white/40 hover:text-white hover:border-white/25 transition-colors"
+              >
+                {catEditorOpen ? (
+                  <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>Done</>
+                ) : (
+                  <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>Edit</>
+                )}
+              </button>
+            </div>
+
+            {catEditorOpen ? (
+              <div className="p-4 space-y-3">
+                {/* Add new category */}
+                <div className="flex gap-2">
+                  <input
+                    value={newCatName} onChange={e => setNewCatName(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleAddCategory()}
+                    placeholder="New category name"
+                    className="flex-1 bg-[#111] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors"
+                  />
+                  <select
+                    value={newCatPhase}
+                    onChange={e => setNewCatPhase(e.target.value as PhaseColumn)}
+                    className="bg-[#111] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white/70 focus:outline-none focus:border-blue-500/60 transition-colors"
+                  >
+                    <option value="exterior">Exterior</option>
+                    <option value="interior">Interior</option>
+                    <option value="blueprint">Blueprint</option>
+                  </select>
+                  <button onClick={handleAddCategory} disabled={!newCatName.trim()}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium disabled:opacity-40 hover:bg-blue-500 transition-colors flex-shrink-0">
+                    Add
+                  </button>
+                </div>
+
+                {/* Category list */}
+                <div className="space-y-2">
+                  {categories.map(cat => (
+                    <div key={cat.id} className="bg-[#111] border border-white/8 rounded-xl overflow-hidden">
+                      {/* Category header */}
+                      <div className="flex items-center gap-2 px-3 py-2.5">
+                        {editingCatId === cat.id ? (
+                          <>
+                            <input
+                              value={editCatName} onChange={e => setEditCatName(e.target.value)}
+                              onKeyDown={e => e.key === "Enter" && handleUpdateCategory(cat.id, editCatName, editCatPhase)}
+                              className="flex-1 bg-[#1a1a1a] border border-white/15 rounded-lg px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-blue-500/60"
+                            />
+                            <select value={editCatPhase} onChange={e => setEditCatPhase(e.target.value as PhaseColumn)}
+                              className="bg-[#1a1a1a] border border-white/15 rounded px-2 py-1 text-xs text-white/80 focus:outline-none">
+                              <option value="exterior">Exterior</option>
+                              <option value="interior">Interior</option>
+                              <option value="blueprint">Blueprint</option>
+                            </select>
+                            <button onClick={() => handleUpdateCategory(cat.id, editCatName, editCatPhase)}
+                              className="px-2 py-1 bg-blue-600 text-white rounded text-[10px] font-medium hover:bg-blue-500 flex-shrink-0">Save</button>
+                            <button onClick={() => setEditingCatId(null)}
+                              className="px-2 py-1 border border-white/12 text-white/40 rounded text-[10px] hover:text-white flex-shrink-0">Cancel</button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => setExpandedCatId(expandedCatId === cat.id ? null : cat.id)}
+                              className="flex-1 flex items-center gap-2 text-left min-w-0"
+                            >
+                              <svg className={`w-3 h-3 text-white/30 transition-transform flex-shrink-0 ${expandedCatId === cat.id ? "rotate-90" : ""}`} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4" />
+                              </svg>
+                              <span className="text-xs text-white/80 font-medium truncate">{cat.name}</span>
+                              <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
+                                cat.phase === "exterior" ? "text-green-400 bg-green-400/10" :
+                                cat.phase === "interior" ? "text-blue-400 bg-blue-400/10" :
+                                "text-amber-400 bg-amber-400/10"
+                              }`}>{cat.phase}</span>
+                              <span className="text-[10px] text-white/25 ml-auto flex-shrink-0">{cat.options.length} opts</span>
+                            </button>
+                            <button
+                              onClick={() => { setEditingCatId(cat.id); setEditCatName(cat.name); setEditCatPhase(cat.phase); }}
+                              className="text-white/25 hover:text-white/70 p-1 rounded transition-colors flex-shrink-0"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCategory(cat.id)}
+                              className="text-white/25 hover:text-red-400 p-1 rounded transition-colors flex-shrink-0"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Options list — expanded */}
+                      {expandedCatId === cat.id && (
+                        <div className="border-t border-white/6 px-3 pb-3 pt-2">
+                          <div className="space-y-1">
+                            {cat.options.map(opt => (
+                              <div key={opt.id} className="flex items-center gap-2 py-1 group">
+                                {/* Thumbnail with upload overlay */}
+                                <div className="relative w-8 h-8 flex-shrink-0">
+                                  {opt.thumbnail_url ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={opt.thumbnail_url} alt="" className="w-8 h-8 rounded-lg object-cover ring-1 ring-white/10" />
+                                  ) : (
+                                    <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/8 flex items-center justify-center">
+                                      <svg className="w-3 h-3 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909" />
+                                      </svg>
+                                    </div>
+                                  )}
+                                  {uploadingOptThumb === opt.id && (
+                                    <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/60">
+                                      <div className="w-3 h-3 border border-white/50 border-t-white rounded-full animate-spin" />
+                                    </div>
+                                  )}
+                                  <label className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/0 hover:bg-black/55 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <input type="file" accept="image/*" className="hidden"
+                                      onChange={e => { const f = e.target.files?.[0]; if (f) handleOptionThumbnailUpload(opt.id, f); e.target.value = ""; }} />
+                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                                    </svg>
+                                  </label>
+                                </div>
+
+                                {editingOptId === opt.id ? (
+                                  <>
+                                    <input value={editOptName} onChange={e => setEditOptName(e.target.value)}
+                                      onKeyDown={e => e.key === "Enter" && handleUpdateOption(opt.id, editOptName, editOptPrice)}
+                                      className="flex-1 bg-[#1a1a1a] border border-white/15 rounded-lg px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-blue-500/60 min-w-0" />
+                                    <span className="text-white/30 text-xs flex-shrink-0">$</span>
+                                    <input type="number" value={editOptPrice} onChange={e => setEditOptPrice(e.target.value)}
+                                      className="w-20 bg-[#1a1a1a] border border-white/15 rounded-lg px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-blue-500/60 flex-shrink-0" />
+                                    <button onClick={() => handleUpdateOption(opt.id, editOptName, editOptPrice)}
+                                      className="px-2 py-1 bg-blue-600 text-white rounded text-[10px] font-medium hover:bg-blue-500 flex-shrink-0">Save</button>
+                                    <button onClick={() => setEditingOptId(null)}
+                                      className="px-2 py-1 border border-white/12 text-white/40 rounded text-[10px] hover:text-white flex-shrink-0">✕</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="flex-1 text-xs text-white/70 truncate">{opt.friendly_name}</span>
+                                    <span className="text-[10px] text-white/35 flex-shrink-0">
+                                      {opt.price_impact === 0
+                                        ? "incl."
+                                        : `+${opt.price_impact.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}`}
+                                    </span>
+                                    <button
+                                      onClick={() => { setEditingOptId(opt.id); setEditOptName(opt.friendly_name); setEditOptPrice(String(opt.price_impact)); }}
+                                      className="text-white/20 hover:text-white/70 p-0.5 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                                    >
+                                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                                      </svg>
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteOption(opt.id, cat.id)}
+                                      className="text-white/20 hover:text-red-400 p-0.5 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                                    >
+                                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          {/* Add option */}
+                          <div className="flex gap-2 mt-2 pt-2 border-t border-white/6">
+                            <input
+                              value={newOptName[cat.id] ?? ""} onChange={e => setNewOptName(p => ({ ...p, [cat.id]: e.target.value }))}
+                              onKeyDown={e => e.key === "Enter" && handleAddOption(cat.id)}
+                              placeholder="Option name"
+                              className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white/80 focus:outline-none focus:border-blue-500/60 min-w-0"
+                            />
+                            <span className="text-white/30 text-xs self-center flex-shrink-0">$</span>
+                            <input type="number" value={newOptPrice[cat.id] ?? ""} onChange={e => setNewOptPrice(p => ({ ...p, [cat.id]: e.target.value }))}
+                              placeholder="0"
+                              className="w-20 bg-[#1a1a1a] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white/80 focus:outline-none focus:border-blue-500/60 flex-shrink-0"
+                            />
+                            <button onClick={() => handleAddOption(cat.id)} disabled={!(newOptName[cat.id]?.trim())}
+                              className="px-3 py-1.5 bg-blue-600/70 text-white rounded-lg text-xs font-medium disabled:opacity-30 hover:bg-blue-600 transition-colors flex-shrink-0">
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {categories.length === 0 && (
+                    <p className="text-center text-xs text-white/25 py-4">No categories yet. Add one above.</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="px-4 py-3">
+                {categories.length === 0 ? (
+                  <p className="text-xs text-white/25 py-2">No categories yet — click Edit to add some</p>
+                ) : (
+                  <div className="space-y-1">
+                    {categories.slice(0, 6).map(cat => (
+                      <div key={cat.id} className="flex items-center justify-between text-xs py-0.5">
+                        <span className="text-white/60">{cat.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[9px] font-bold uppercase ${
+                            cat.phase === "exterior" ? "text-green-400" : cat.phase === "interior" ? "text-blue-400" : "text-amber-400"
+                          }`}>{cat.phase}</span>
+                          <span className="text-white/25">{cat.options.length} opts</span>
+                        </div>
+                      </div>
+                    ))}
+                    {categories.length > 6 && <p className="text-[10px] text-white/25 mt-1">+{categories.length - 6} more</p>}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Stage controls */}
@@ -679,7 +1102,7 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* Builder Info + Reassign */}
-          <div className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">
+          <div className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-visible">
             <div className="px-4 py-3 border-b border-white/8 flex items-center gap-2">
               {builder?.logo_url && (
                 // eslint-disable-next-line @next/next/no-img-element

@@ -1,71 +1,77 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { uploadToR2 } from "@/lib/r2";
 
-export const maxDuration = 120;
+export const maxDuration = 30;
 
 const FAL_KEY = process.env.FAL_KEY;
 
-// Service-role client for storage uploads
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+const PROMPTS: Record<string, string> = {
+  exterior: [
+    "photorealistic architectural exterior render",
+    "preserve every color and material exactly as shown in the input image — roof tile color must remain identical, siding color must remain identical, window frame color must remain identical, door color must remain identical, trim color must remain identical",
+    "do not change any paint colors, material colors, or finishes from the original",
+    "keep the building structure completely identical — same windows, doors, roofline shape, garage placement",
+    "add lush professionally landscaped front yard with large mature trees flanking both sides",
+    "trimmed boxwood hedges along the building foundation, colorful flower beds with roses and lavender in the foreground",
+    "thick manicured green lawn, stone walkway from driveway to front door",
+    "add tasteful outdoor lifestyle props: a luxury sedan parked in the driveway, Adirondack chairs or a bistro set on the front porch, potted topiaries flanking the front door, hanging lantern sconces, a decorative welcome mat, subtle uplighting on the facade at dusk",
+    "golden hour warm lighting, amber sunlight raking across the facade, long soft shadows",
+    "deep orange and soft pink sunset sky with volumetric clouds, warm light glowing in the windows",
+    "professional real estate photography, award-winning architectural photography",
+    "8k ultra-detailed, Hasselblad medium format",
+  ].join(", "),
 
-const PROMPT = [
-  "photorealistic architectural exterior render",
-  "keep the building structure completely identical — same windows, doors, roofline, garage",
-  "add lush professionally landscaped front yard",
-  "large mature oak and maple trees flanking both sides of the house",
-  "trimmed boxwood hedges along the building foundation",
-  "colorful flower beds with roses and lavender in the foreground",
-  "thick manicured green lawn covering the entire front yard",
-  "stone walkway from driveway to front door lined with low plants",
-  "golden hour warm lighting, amber sunlight raking across the facade",
-  "long soft shadows stretching across the lawn",
-  "deep orange and soft pink sunset sky with volumetric clouds",
-  "warm light glowing in the windows",
-  "professional real estate photography, award-winning architectural photography",
-  "8k ultra-detailed, Hasselblad medium format",
-].join(", ");
+  interior: [
+    "photorealistic architectural interior render",
+    "preserve all material colors and finishes exactly as shown — floor color and material must stay identical, wall paint color must stay identical, ceiling color must stay identical, cabinet color and finish must stay identical, countertop color and material must stay identical",
+    "do not change any existing colors, materials, or textures from the original image",
+    "keep all existing furniture, appliances, and objects exactly as shown — do not add or remove any furniture, sofas, chairs, tables, rugs, or objects that are not already present",
+    "only add small tasteful surface props that are consistent with the room type shown: if kitchen is visible add only a fruit bowl or herb plant on the counter, if living area is visible add only a throw pillow or folded blanket on existing sofas",
+    "do not invent new rooms, furniture layouts, or seating areas not visible in the original",
+    "warm natural light streaming through windows, soft ambient recessed ceiling lighting",
+    "interior design magazine photography quality, perfectly sharp focus throughout",
+    "no exterior elements, no sky visible",
+    "8k ultra-detailed, professional architectural photography",
+  ].join(", "),
+};
 
+// ── Submit job — returns {statusUrl, responseUrl} immediately ─────────────────
 export async function POST(req: NextRequest) {
   if (!FAL_KEY) {
     return NextResponse.json({ error: "FAL_KEY not configured" }, { status: 503 });
   }
 
   let imageBase64: string;
+  let phase = "exterior";
   try {
-    ({ imageBase64 } = (await req.json()) as { imageBase64: string });
+    const body = (await req.json()) as { imageBase64: string; phase?: string };
+    imageBase64 = body.imageBase64;
+    if (body.phase) phase = body.phase;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  // Upload input image to Supabase Storage to get a public URL for fal.ai
-  const imageBuffer     = Buffer.from(imageBase64, "base64");
-  const inputFileName   = `configurator-input-${Date.now()}.png`;
-  const { error: uploadErr } = await supabase.storage
-    .from("render-studio")
-    .upload(inputFileName, imageBuffer, { contentType: "image/png", upsert: false });
+  const prompt = PROMPTS[phase] ?? PROMPTS.exterior;
 
-  if (uploadErr) {
-    console.error("Input upload error:", uploadErr.message);
-    return NextResponse.json({ error: `Upload failed: ${uploadErr.message}` }, { status: 500 });
+  // Upload input image to R2 so fal.ai can fetch it via a public URL
+  const imageBuffer = Buffer.from(imageBase64, "base64");
+  const inputKey    = `configurator-inputs/${Date.now()}.png`;
+  let inputImageUrl: string;
+  try {
+    inputImageUrl = await uploadToR2(inputKey, imageBuffer, "image/png");
+  } catch (err: any) {
+    console.error("R2 input upload error:", err.message);
+    return NextResponse.json({ error: `Upload failed: ${err.message}` }, { status: 500 });
   }
 
-  const { data: urlData } = supabase.storage.from("render-studio").getPublicUrl(inputFileName);
-  const inputImageUrl = urlData.publicUrl;
-
-  // ── Submit to fal.ai queue ────────────────────────────────────────────────
+  // Submit to fal.ai queue — do NOT poll; return URLs for client-side polling
   const submitRes = await fetch("https://queue.fal.run/fal-ai/nano-banana-2/edit", {
     method: "POST",
     headers: {
       Authorization:  `Key ${FAL_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      image_urls: [inputImageUrl],
-      prompt:     PROMPT,
-    }),
+    body: JSON.stringify({ image_urls: [inputImageUrl], prompt }),
   });
 
   if (!submitRes.ok) {
@@ -80,37 +86,5 @@ export async function POST(req: NextRequest) {
     response_url: string;
   };
 
-  // ── Poll until complete ───────────────────────────────────────────────────
-  const falHeaders = { Authorization: `Key ${FAL_KEY}` };
-
-  for (let i = 0; i < 60; i++) {
-    await new Promise(r => setTimeout(r, 2000));
-    const statusRes = await fetch(status_url, { headers: falHeaders });
-    if (!statusRes.ok) continue;
-    const { status } = (await statusRes.json()) as { status: string };
-    if (status === "COMPLETED") break;
-    if (status === "FAILED") {
-      return NextResponse.json({ error: "fal.ai job failed" }, { status: 502 });
-    }
-  }
-
-  // ── Fetch result ──────────────────────────────────────────────────────────
-  const resultRes = await fetch(response_url, { headers: falHeaders });
-  if (!resultRes.ok) {
-    const text = await resultRes.text();
-    console.error("fal.ai result error:", resultRes.status, text);
-    return NextResponse.json({ error: text }, { status: resultRes.status });
-  }
-
-  const json = (await resultRes.json()) as { images?: { url: string }[] };
-  const resultImageUrl = json.images?.[0]?.url;
-
-  if (!resultImageUrl) {
-    return NextResponse.json({ error: "No image returned from fal.ai" }, { status: 502 });
-  }
-
-  const resultBuffer   = Buffer.from(await (await fetch(resultImageUrl)).arrayBuffer());
-  const imageBase64Out = resultBuffer.toString("base64");
-
-  return NextResponse.json({ imageBase64: imageBase64Out });
+  return NextResponse.json({ statusUrl: status_url, responseUrl: response_url });
 }

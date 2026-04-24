@@ -129,7 +129,12 @@ export default function CommunityMapPage({
     setPanOffset({ x: panStart.current.px + dx, y: panStart.current.py + dy });
   }
 
-  function handlePanEnd() { setIsDragging(false); }
+  function handlePanEnd() {
+    setIsDragging(false);
+    // Reset after the click event fires so drags don't accidentally open the drawer,
+    // but subsequent clicks on lots work correctly.
+    setTimeout(() => { hasDragged.current = false; }, 0);
+  }
 
   useEffect(() => {
     params.then(p => { setCompanySlug(p.companySlug); setCommunitySlug(p.communitySlug); });
@@ -308,7 +313,7 @@ export default function CommunityMapPage({
                         x={svgCx} y={svgCy}
                         textAnchor="middle" dominantBaseline="middle"
                         fontSize={fs} fontWeight="700"
-                        fill="rgba(255,255,255,0.9)"
+                        fill={lot.text_color ?? "rgba(255,255,255,0.9)"}
                         style={{ pointerEvents: "none", userSelect: "none" }}
                         filter="url(#label-shadow)"
                       >
@@ -441,30 +446,150 @@ export default function CommunityMapPage({
         </div>
       )}
 
-      {/* ── Hover tooltip ────────────────────────────────────────────────────── */}
+      {/* ── Hover card ───────────────────────────────────────────────────────── */}
       {tooltip && hoveredLot && !selectedLot && (() => {
         const lot = lots.find(l => l.id === hoveredLot);
         if (!lot) return null;
-        const s = STATUS[lot.status] ?? STATUS.available;
+        const s    = STATUS[lot.status] ?? STATUS.available;
+        const proj = lot.project;
+        const totalPrice = proj ? proj.base_price + (lot.price_modifier ?? 0) : null;
+        const hasPremium = (lot.price_modifier ?? 0) !== 0;
+
+        const cardW  = 252;
+        const margin = 14;
+        const flipX  = tooltip.x + margin + cardW > window.innerWidth - 12;
+        const left   = flipX ? tooltip.x - cardW - margin : tooltip.x + margin;
+        const top    = Math.min(tooltip.y - 12, window.innerHeight - 340);
+
         return (
           <div
             className="fixed z-50 pointer-events-none"
             style={{
-              left: tooltip.x + 14,
-              top: tooltip.y - 48,
-              background: "rgba(8,8,8,0.92)",
-              backdropFilter: "blur(16px)",
+              left,
+              top: Math.max(8, top),
+              width: cardW,
+              background: "rgba(6,6,10,0.94)",
+              backdropFilter: "blur(28px)",
+              WebkitBackdropFilter: "blur(28px)",
               border: `1px solid ${s.stroke}`,
-              borderRadius: 10,
-              padding: "8px 12px",
+              borderRadius: 14,
+              boxShadow: `0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04), inset 0 1px 0 rgba(255,255,255,0.07)`,
+              overflow: "hidden",
+              animation: "hoverCardIn 0.14s ease-out",
             }}
           >
-            <p className="text-xs font-bold text-white">{lot.lot_number}</p>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.dot }} />
-              <span className="text-[11px]" style={{ color: s.dot }}>{s.label}</span>
+            <style>{`@keyframes hoverCardIn { from { opacity:0; transform:translateY(4px) scale(0.97); } to { opacity:1; transform:none; } }`}</style>
+
+            {/* Status accent line */}
+            <div style={{ height: 2, background: s.dot, opacity: 0.8 }} />
+
+            {/* Thumbnail */}
+            {proj?.thumbnail_url && (
+              <div className="relative overflow-hidden" style={{ height: 118 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={proj.thumbnail_url}
+                  alt={proj.name}
+                  className="w-full h-full object-cover"
+                />
+                <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0) 30%, rgba(6,6,10,0.85) 100%)" }} />
+                {/* Price badge over image */}
+                {totalPrice !== null && (
+                  <div className="absolute bottom-2.5 right-3">
+                    <span className="text-sm font-bold text-white" style={{ textShadow: "0 1px 6px rgba(0,0,0,0.8)" }}>
+                      {fmtPrice(totalPrice)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="px-3.5 pt-3 pb-3.5 space-y-2.5">
+              {/* Lot number + status */}
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: "rgba(255,255,255,0.3)" }}>Lot</p>
+                  <p className="text-base font-bold text-white leading-none">{lot.lot_number}</p>
+                </div>
+                <span
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0 mt-0.5"
+                  style={{ background: `${s.dot}18`, border: `1px solid ${s.dot}55`, color: s.dot }}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: s.dot }} />
+                  {s.label}
+                </span>
+              </div>
+
+              {/* Model info */}
+              {proj ? (
+                <>
+                  <div>
+                    <p className="text-xs font-semibold text-white/80 leading-tight">{proj.name}</p>
+                    {proj.home_type && (
+                      <p className="text-[10px] text-white/35 mt-0.5 capitalize">{proj.home_type.replace("_", " ")}</p>
+                    )}
+                  </div>
+
+                  {/* Specs */}
+                  {(proj.beds || proj.baths || proj.sqft || proj.floors) && (
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[
+                        { v: proj.beds,   l: "Bed"   },
+                        { v: proj.baths,  l: "Bath"  },
+                        { v: proj.sqft ? `${proj.sqft >= 1000 ? (proj.sqft/1000).toFixed(1)+"k" : proj.sqft}` : null, l: "Sqft" },
+                        { v: proj.floors, l: "Floor" },
+                      ].map(({ v, l }) => v != null && (
+                        <div key={l}
+                          className="flex flex-col items-center py-1.5 rounded-lg"
+                          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}
+                        >
+                          <p className="text-xs font-bold text-white leading-none">{v}</p>
+                          <p className="text-[8px] uppercase tracking-wider text-white/30 mt-0.5">{l}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Price */}
+                  {totalPrice !== null && !proj.thumbnail_url && (
+                    <div className="flex items-baseline justify-between pt-1">
+                      <span className="text-base font-bold text-white">{fmtPrice(totalPrice)}</span>
+                      {hasPremium && (
+                        <span className="text-[10px]" style={{ color: (lot.price_modifier ?? 0) > 0 ? "#fbbf24" : "#34d399" }}>
+                          {(lot.price_modifier ?? 0) > 0 ? "+" : "−"}{fmtPrice(Math.abs(lot.price_modifier ?? 0))} lot
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Premium line under thumbnail price */}
+                  {totalPrice !== null && proj.thumbnail_url && hasPremium && (
+                    <div className="flex items-center gap-1.5 -mt-1">
+                      <span className="text-[10px] text-white/30">{fmtPrice(proj.base_price)} base</span>
+                      <span className="text-[10px] text-white/20">·</span>
+                      <span className="text-[10px]" style={{ color: (lot.price_modifier ?? 0) > 0 ? "#fbbf24" : "#34d399" }}>
+                        {(lot.price_modifier ?? 0) > 0 ? "+" : "−"}{fmtPrice(Math.abs(lot.price_modifier ?? 0))} lot
+                      </span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-[11px] text-white/30 italic">No model assigned</p>
+              )}
+
+              {/* Notes */}
+              {lot.notes && (
+                <p className="text-[10px] text-white/35 leading-relaxed border-t border-white/6 pt-2">{lot.notes}</p>
+              )}
+
+              {/* Click hint */}
+              <div className="flex items-center justify-between pt-0.5 border-t border-white/6">
+                <p className="text-[9px] text-white/20 uppercase tracking-widest">Click to explore</p>
+                <svg className="w-3 h-3 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                </svg>
+              </div>
             </div>
-            {lot.project && <p className="text-[11px] text-white/40 mt-1">{lot.project.name}</p>}
           </div>
         );
       })()}

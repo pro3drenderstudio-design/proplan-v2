@@ -124,7 +124,7 @@ function SubscribeContent() {
         <img src="/logo_light.png" alt="ProPlan Studio" className="h-8 object-contain mx-auto mb-8" />
         <h1 className="text-3xl font-extrabold text-white mb-3">Start your subscription</h1>
         <p className="text-white/40 text-sm max-w-md mx-auto">
-          One plan. Unlimited models, renders, and site maps — everything your team needs.
+          {plan ? `${plan.display_name} — everything your team needs to capture and close buyers.` : "Everything your team needs to capture and close buyers."}
         </p>
 
         {canceled && (
@@ -171,7 +171,7 @@ function SubscribeContent() {
           <div className="bg-blue-600/10 border-2 border-blue-500/50 rounded-2xl p-8 shadow-xl shadow-blue-500/10">
             <div className="mb-1">
               <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-blue-500 text-white tracking-wider uppercase">
-                ProPlan Studio
+                {plan.display_name}
               </span>
             </div>
             <p className="text-xs text-white/35 mt-3 mb-6">Full platform access — cancel anytime.</p>

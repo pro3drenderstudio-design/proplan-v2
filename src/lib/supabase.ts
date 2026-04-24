@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 import { Database, VariableMapEntry, Project, CategoryWithOptions, ProjectGeometryRule } from "@/types/database";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -11,11 +11,19 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+// createBrowserClient from @supabase/ssr persists auth tokens in cookies
+// so the proxy (src/proxy.ts) can read them server-side for route protection.
+export const supabase = createBrowserClient<Database>(supabaseUrl, supabaseAnonKey);
 
 // Fetch a builder by company slug (for configurator / quote branding)
-export async function getBuilderBySlug(companySlug: string) {
-  const { data } = await supabase
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyQuery = any;
+export async function getBuilderBySlug(companySlug: string): Promise<{
+  id: string; company_name: string; logo_url: string | null; accent_color: string | null;
+  contact_email: string | null; phone: string | null; billing_address: string | null;
+  city: string | null; state: string | null; zip: string | null; website_url: string | null;
+} | null> {
+  const { data } = await (supabase as AnyQuery)
     .from("builders")
     .select("id,company_name,logo_url,accent_color,contact_email,phone,billing_address,city,state,zip,website_url")
     .eq("company_slug", companySlug)
