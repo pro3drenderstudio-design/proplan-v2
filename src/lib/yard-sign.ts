@@ -1,24 +1,72 @@
 import jsPDF from "jspdf";
+import QRCode from "qrcode";
 
 interface YardSignOptions {
   url: string;
-  qrDataUrl: string;           // pre-rendered QR as data URL (PNG) — should be black for print
+  qrDataUrl: string;
   label: string;
   sublabel?: string;
   logoUrl?: string | null;
   accentColor?: string | null;
   builderName?: string | null;
-  thumbnailUrl?: string | null; // house render for left panel
+  thumbnailUrl?: string | null;
+  curbCaptureUrl?: string | null;
 }
 
+function hexToRgb(hex: string): [number, number, number] {
+  const h = (hex ?? "#2563eb").replace("#", "");
+  const full = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
+  return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
+}
+
+// Fetch image via same-origin proxy, convert to JPEG data URL.
+// Blob URLs are same-origin so canvas.toDataURL() never throws a security error.
 async function toDataUrl(url: string): Promise<string | null> {
   try {
-    const resp = await fetch(url);
-    const blob = await resp.blob();
-    return new Promise<string>((res, rej) => {
+    const proxyUrl = url.startsWith("/")
+      ? url
+      : `/api/proxy-image?url=${encodeURIComponent(url)}`;
+    const res = await fetch(proxyUrl);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return new Promise<string | null>((resolve) => {
+      const objUrl = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(objUrl);
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width  = img.naturalWidth  || 800;
+          canvas.height = img.naturalHeight || 600;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { resolve(null); return; }
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/jpeg", 0.92));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => { URL.revokeObjectURL(objUrl); resolve(null); };
+      img.src = objUrl;
+    });
+  } catch {
+    return null;
+  }
+}
+
+// Like toDataUrl but preserves PNG transparency (no JPEG conversion via canvas).
+async function toDataUrlPng(url: string): Promise<string | null> {
+  try {
+    const proxyUrl = url.startsWith("/")
+      ? url
+      : `/api/proxy-image?url=${encodeURIComponent(url)}`;
+    const res = await fetch(proxyUrl);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return new Promise<string | null>((resolve) => {
       const reader = new FileReader();
-      reader.onload = () => res(reader.result as string);
-      reader.onerror = rej;
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
       reader.readAsDataURL(blob);
     });
   } catch {
@@ -35,156 +83,223 @@ async function getImageAspect(dataUrl: string): Promise<number> {
   });
 }
 
-function drawPhone(doc: jsPDF, x: number, y: number, w: number, h: number) {
-  const r = w * 0.18;
-  doc.setDrawColor(0, 0, 0);
-  doc.setFillColor(255, 255, 255);
-  doc.setLineWidth(w * 0.09);
-  doc.roundedRect(x, y, w, h, r, r, "S");
-  doc.setFillColor(0, 0, 0);
-  // top notch
-  doc.roundedRect(x + w * 0.28, y + h * 0.06, w * 0.44, h * 0.038, 0.6, 0.6, "F");
-  // home button ring
-  doc.setLineWidth(w * 0.07);
-  doc.circle(x + w / 2, y + h * 0.88, w * 0.1, "S");
-}
-
 export async function generateYardSign(opts: YardSignOptions): Promise<Blob> {
-  // 24" × 18" landscape
-  const W = 609.6; // 24"
-  const H = 457.2; // 18"
+  // 24" × 18" landscape + 0.125" (3.175 mm) bleed each side
+  const BLEED = 3.175;
+  const W  = 609.6;
+  const H  = 457.2;
+  const TW = W + BLEED * 2;
+  const TH = H + BLEED * 2;
+  const OX = BLEED;
+  const OY = BLEED;
+  const toMm = (pt: number) => (pt / 72) * 25.4;
 
-  const doc = new jsPDF({ unit: "mm", format: [W, H] });
+  const doc = new jsPDF({ unit: "mm", format: [TW, TH], orientation: "landscape" });
 
-  // Layout constants
-  const SPLIT  = W * 0.545;  // ≈ 332mm — left/right divider
-  const rW     = W - SPLIT;  // ≈ 278mm — right panel width
-  const PAD    = 19;          // horizontal padding inside right panel
-  const CX     = SPLIT + rW / 2; // horizontal center of right panel
+  const accent = opts.accentColor ?? "#2563eb";
+  const [ar, ag, ab] = hexToRgb(accent);
 
-  // ── White base ────────────────────────────────────────────────────────────────
+  // ── Panel geometry ─────────────────────────────────────────────────────────
+  const LEFT_FRAC = 0.565;
+  const STRIPE_W  = 5;
+  const LEFT_W    = W * LEFT_FRAC;
+  const SPLIT_X   = OX + LEFT_W;
+  const RIGHT_X   = SPLIT_X + STRIPE_W;
+  const RIGHT_W   = W - LEFT_W - STRIPE_W;
+  const CX        = RIGHT_X + RIGHT_W / 2;
+  const PAD       = 14;
+  const cW        = RIGHT_W - PAD * 2;
+
+  // ── White base ─────────────────────────────────────────────────────────────
   doc.setFillColor(255, 255, 255);
-  doc.rect(0, 0, W, H, "F");
+  doc.rect(0, 0, TW, TH, "F");
 
-  // ── Left panel: house render ──────────────────────────────────────────────────
+  // ── Full-bleed background image ────────────────────────────────────────────
+  let thumbnailLoaded = false;
   if (opts.thumbnailUrl) {
     const houseData = await toDataUrl(opts.thumbnailUrl);
     if (houseData) {
+      thumbnailLoaded = true;
       const aspect = await getImageAspect(houseData);
-      // Cover-scale: fill the full panel height, center horizontally
-      const dH = H;
-      const dW = H * aspect;
-      const dX = (SPLIT - dW) / 2;
-      doc.addImage(houseData, "JPEG", dX, 0, dW, dH, undefined, "FAST");
+      // Cover the entire sign
+      let iW = TH * aspect;
+      let iH = TH;
+      if (iW < TW) { iW = TW; iH = TW / aspect; }
+      const ix = (TW - iW) / 2;
+      const iy = (TH - iH) / 2;
+      doc.addImage(houseData, "JPEG", ix, iy, iW, iH, undefined, "FAST");
     }
   }
 
-  // Right panel white background (covers any image overflow)
-  doc.setFillColor(255, 255, 255);
-  doc.rect(SPLIT, 0, rW, H, "F");
+  // Fallback: accent-color panel when no thumbnail
+  if (!thumbnailLoaded) {
+    doc.setFillColor(ar, ag, ab);
+    doc.rect(0, 0, TW, TH, "F");
+    doc.setGState(doc.GState({ opacity: 0.22 }));
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, TW, TH * 0.5, "F");
+    doc.setGState(doc.GState({ opacity: 1 }));
+  }
 
-  // Subtle left border
-  doc.setDrawColor(225, 225, 225);
-  doc.setLineWidth(0.4);
-  doc.line(SPLIT, 0, SPLIT, H);
+  // ── Accent stripe ──────────────────────────────────────────────────────────
+  doc.setFillColor(ar, ag, ab);
+  doc.rect(SPLIT_X, 0, STRIPE_W, TH, "F");
 
-  // ── QR code ───────────────────────────────────────────────────────────────────
-  const qrSize = Math.min(rW - PAD * 2, H * 0.41); // ≈ 187mm
-  const qrX    = SPLIT + (rW - qrSize) / 2;
-  const qrY    = 20;
+  // ── Right panel: frosted glass (semi-transparent white over the photo) ─────
+  doc.setGState(doc.GState({ opacity: 0.75 }));
+  doc.setFillColor(250, 250, 252);
+  doc.rect(RIGHT_X, 0, RIGHT_W + BLEED, TH, "F");
+  doc.setGState(doc.GState({ opacity: 1 }));
 
-  // White frame around QR
-  doc.setFillColor(255, 255, 255);
-  doc.rect(qrX - 2, qrY - 2, qrSize + 4, qrSize + 4, "F");
-  doc.addImage(opts.qrDataUrl, "PNG", qrX, qrY, qrSize, qrSize);
+  // ── QR code ────────────────────────────────────────────────────────────────
+  const qrTop  = OY + 16;
+  const qrSize = Math.min(cW - 4, H * 0.41);
+  const qrX    = CX - qrSize / 2;
+  const qrPad  = 4.5;
 
-  // ── Text block ────────────────────────────────────────────────────────────────
-  doc.setTextColor(0, 0, 0);
+  // Blurred drop shadow — multiple passes at increasing spread + low opacity
+  doc.setFillColor(0, 0, 0);
+  for (let s = 7; s >= 1; s--) {
+    doc.setGState(doc.GState({ opacity: 0.022 }));
+    doc.roundedRect(
+      qrX - qrPad - s * 0.4 + 4,
+      qrTop - qrPad - s * 0.4 + 4,
+      qrSize + qrPad * 2 + s * 0.8,
+      qrSize + qrPad * 2 + s * 0.8,
+      2.5 + s * 0.3, 2.5 + s * 0.3, "F"
+    );
+  }
+  doc.setGState(doc.GState({ opacity: 1 }));
+
+  // QR card — light gray background, accent top bar
+  doc.setFillColor(248, 248, 250);
+  doc.roundedRect(qrX - qrPad, qrTop - qrPad, qrSize + qrPad * 2, qrSize + qrPad * 2, 2.5, 2.5, "F");
+  doc.setFillColor(ar, ag, ab);
+  doc.roundedRect(qrX - qrPad, qrTop - qrPad, qrSize + qrPad * 2, 2.8, 1.5, 1.5, "F");
+  doc.setFillColor(248, 248, 250);
+  doc.rect(qrX - qrPad, qrTop - qrPad + 1.4, qrSize + qrPad * 2, 1.4, "F");
+
+  doc.addImage(opts.qrDataUrl, "PNG", qrX, qrTop, qrSize, qrSize);
+
+  // ── CTA text ───────────────────────────────────────────────────────────────
+  const BRAND_H   = 32;
+  const textStart = qrTop + qrSize + qrPad + 12;
+  const textEnd   = OY + H - BRAND_H - 4;
+  const zone      = textEnd - textStart;
+
+  const scanFontSize = Math.min(Math.round((zone * 0.14 / 25.4) * 72), 42);
   doc.setFont("helvetica", "bold");
+  doc.setFontSize(scanFontSize);
+  doc.setTextColor(ar, ag, ab);
+  doc.text("SCAN TO", CX, textStart + toMm(scanFontSize), { align: "center" });
 
-  const tY = qrY + qrSize + 16; // top of text zone
-  const bY = H - 16;            // bottom (above branding)
-  const tH = bY - tY;           // total height available for text + branding
+  const scanRuleY = textStart + toMm(scanFontSize) + 3.5;
+  doc.setDrawColor(ar, ag, ab);
+  doc.setLineWidth(0.8);
+  doc.line(CX - 20, scanRuleY, CX + 20, scanRuleY);
 
-  // Four text lines with relative proportions
-  // Heights as fraction of available text zone (after reserving ~18mm for branding)
-  const zone = tH - 22; // reserve for branding row
+  const lineZone = textEnd - scanRuleY - 6;
+  const unitH = lineZone / 4.10;
+  const fs1 = Math.round((unitH * 1.00 / 25.4) * 72 * 0.68);
+  const fs2 = Math.round((unitH * 0.88 / 25.4) * 72 * 0.68);
+  const fs3 = Math.round((unitH * 1.00 / 25.4) * 72 * 0.68);
+  const fs4 = Math.round((unitH * 1.22 / 25.4) * 72 * 0.68);
+  const LEAD = 0.20;
 
-  // Compute font sizes so lines fill the zone proportionally
-  // Weight ratios: 1.0 / 0.78 / 0.93 / 1.18 (SCAN TO / C&P / THIS HOME / INSTANTLY)
-  // Line heights (including leading) in ratio: 1.0 / 0.78 / 0.93 / 1.18 → sum = 3.89
-  // Each "unit" = zone / 3.89
-  const unit  = zone / 3.89;
-  const fs1   = Math.round((unit * 1.00 / 25.4) * 72 * 0.7);
-  const fs2   = Math.round((unit * 0.78 / 25.4) * 72 * 0.7);
-  const fs3   = Math.round((unit * 0.93 / 25.4) * 72 * 0.7);
-  const fs4   = Math.round((unit * 1.18 / 25.4) * 72 * 0.7);
+  let cy = scanRuleY + 6 + toMm(fs1);
 
-  const toMm = (pt: number) => (pt / 72) * 25.4;
-
-  // Baseline positions
-  const y1 = tY + toMm(fs1);
-  const y2 = y1 + toMm(fs1) * 0.35 + toMm(fs2);
-  const y3 = y2 + toMm(fs2) * 0.35 + toMm(fs3);
-  const y4 = y3 + toMm(fs3) * 0.35 + toMm(fs4);
-
-  // Line 1: "SCAN TO"
   doc.setFontSize(fs1);
-  doc.text("SCAN TO", CX, y1, { align: "center" });
+  doc.setTextColor(20, 20, 28);
+  doc.setDrawColor(20, 20, 28);
+  doc.setLineWidth(0.14);
+  doc.text("CUSTOMIZE", CX, cy, { align: "center", renderingMode: "fillThenStroke" });
 
-  // Line 2: "CUSTOMIZE & PRICE"
+  cy += toMm(fs1) * LEAD + toMm(fs2);
   doc.setFontSize(fs2);
-  doc.text("CUSTOMIZE & PRICE", CX, y2, { align: "center" });
+  doc.setTextColor(ar, ag, ab);
+  doc.setLineWidth(0);
+  doc.text("& PRICE", CX, cy, { align: "center" });
 
-  // Line 3: "THIS HOME" + phone icon
+  cy += toMm(fs2) * LEAD + toMm(fs3);
   doc.setFontSize(fs3);
-  const tw3    = doc.getTextWidth("THIS HOME");
-  const ph3    = toMm(fs3) * 0.72;
-  const pw3    = ph3 * 0.57;
-  const row3W  = tw3 + 4 + pw3;
-  const row3X  = CX - row3W / 2;
-  doc.text("THIS HOME", row3X, y3);
-  drawPhone(doc, row3X + tw3 + 4, y3 - toMm(fs3) * 0.82, pw3, ph3);
+  doc.setTextColor(20, 20, 28);
+  doc.text("THIS HOME", CX, cy, { align: "center" });
 
-  // Line 4: "INSTANTLY" + phone icon
+  cy += toMm(fs3) * LEAD + toMm(fs4);
   doc.setFontSize(fs4);
-  const tw4   = doc.getTextWidth("INSTANTLY");
-  const ph4   = toMm(fs4) * 0.72;
-  const pw4   = ph4 * 0.57;
-  const row4W = tw4 + 4 + pw4;
-  const row4X = CX - row4W / 2;
-  doc.text("INSTANTLY", row4X, y4);
-  drawPhone(doc, row4X + tw4 + 4, y4 - toMm(fs4) * 0.82, pw4, ph4);
+  doc.setTextColor(ar, ag, ab);
+  doc.setDrawColor(ar, ag, ab);
+  doc.setLineWidth(0.14);
+  doc.text("INSTANTLY", CX, cy, { align: "center", renderingMode: "fillThenStroke" });
+  doc.setLineWidth(0);
 
-  // ── Branding row ─────────────────────────────────────────────────────────────
-  const brandY = H - 8;
-  doc.setFontSize(11);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(130, 130, 130);
+  // ── Branding section ───────────────────────────────────────────────────────
+  const brandTop = OY + H - BRAND_H;
 
-  const divider = "  |  ";
-  const suffix  = "CURB CAPTURE";
+  doc.setDrawColor(210, 210, 218);
+  doc.setLineWidth(0.3);
+  doc.line(RIGHT_X + PAD, brandTop, RIGHT_X + PAD + cW, brandTop);
 
-  if (opts.logoUrl) {
-    const logoData = await toDataUrl(opts.logoUrl);
-    if (logoData) {
-      const logoH = 9;
-      const aspect = await getImageAspect(logoData);
-      const logoW = logoH * aspect;
-      const divW  = doc.getTextWidth(divider);
-      const sufW  = doc.getTextWidth(suffix);
-      const totalW = logoW + divW + sufW;
-      const startX = CX - totalW / 2;
-      doc.addImage(logoData, "PNG", startX, brandY - logoH + 1.5, logoW, logoH, undefined, "FAST");
-      doc.text(divider + suffix, startX + logoW, brandY);
-    } else {
-      const name = opts.builderName ?? "ProPlan Studio";
-      doc.text(`${name}${divider}${suffix}`, CX, brandY, { align: "center" });
-    }
+  // Branding QR
+  const brandQrSize = 24;
+  let brandQrDataUrl: string | null = null;
+  const brandingUrl = opts.curbCaptureUrl ?? "https://proplanstudio.com";
+  try {
+    brandQrDataUrl = await QRCode.toDataURL(brandingUrl, {
+      width: 160, margin: 0,
+      color: { dark: "#14141cff", light: "#ffffffff" },
+      errorCorrectionLevel: "M",
+    });
+  } catch { /* skip */ }
+
+  // ProPlan Studio logo — use PNG-preserving fetch to keep transparent background
+  const proplanLogoData = await toDataUrlPng("/logo_dark.png");
+
+  // Layout: logo + text on left, QR on right
+  const brandMidY    = brandTop + BRAND_H / 2;
+  const brandQrX     = RIGHT_X + PAD + cW - brandQrSize;
+  const brandQrY     = brandTop + (BRAND_H - brandQrSize) / 2;
+  const textAreaMaxW = cW - brandQrSize - 6;
+
+  if (proplanLogoData) {
+    const logoH  = 8;
+    const logoAspect = await getImageAspect(proplanLogoData);
+    const logoW  = Math.min(logoH * logoAspect, textAreaMaxW * 0.7);
+    const logoX  = RIGHT_X + PAD;
+    const logoY  = brandTop + 5;
+    doc.addImage(proplanLogoData, "PNG", logoX, logoY, logoW, logoH, undefined, "FAST");
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 115);
+    doc.text("Powered by ProPlan Studio", RIGHT_X + PAD, brandMidY + 9, { align: "left" });
   } else {
-    const name = opts.builderName ?? "ProPlan Studio";
-    doc.text(`${name}${divider}${suffix}`, CX, brandY, { align: "center" });
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(25, 25, 35);
+    doc.text("CURB CAPTURE TECHNOLOGY", RIGHT_X + PAD, brandMidY - 2, { align: "left" });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(100, 100, 115);
+    doc.text("Powered by ProPlan Studio", RIGHT_X + PAD, brandMidY + 7, { align: "left" });
   }
+
+  if (brandQrDataUrl) {
+    doc.addImage(brandQrDataUrl, "PNG", brandQrX, brandQrY, brandQrSize, brandQrSize);
+  }
+
+  // ── Crop / trim marks ──────────────────────────────────────────────────────
+  const G = 1.5;
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.2);
+  doc.line(0, OY, OX - G, OY);
+  doc.line(OX, 0, OX, OY - G);
+  doc.line(OX + W + G, OY, TW, OY);
+  doc.line(OX + W, 0, OX + W, OY - G);
+  doc.line(0, OY + H, OX - G, OY + H);
+  doc.line(OX, OY + H + G, OX, TH);
+  doc.line(OX + W + G, OY + H, TW, OY + H);
+  doc.line(OX + W, OY + H + G, OX + W, TH);
 
   return doc.output("blob");
 }

@@ -475,6 +475,7 @@ export default function ProjectDetailPage() {
                 builderLogo={builder?.logo_url}
                 accentColor={builder?.accent_color}
                 builderName={builder?.company_name}
+                thumbnailUrl={project.thumbnail_url ?? null}
                 onClose={() => setQrOpen(false)}
               />
             )}
@@ -1163,7 +1164,7 @@ export default function ProjectDetailPage() {
                 )}
               </div>
               {builder && (
-                <Link href="/admin/builders" className="text-[10px] text-blue-400 hover:underline block">
+                <Link href={`/admin/builders/${builder.id}`} className="text-[10px] text-blue-400 hover:underline block">
                   View Builder Profile →
                 </Link>
               )}

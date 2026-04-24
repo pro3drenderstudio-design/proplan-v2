@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getCommunityById, getAllProjects, getAllBuildersBySlug } from "@/lib/admin-api";
-import { CommunityWithLots, Lot, LotStatus, Project, Builder } from "@/types/database";
+import { CommunityWithLots, Lot, LotStatus, MapSettings, Project, Builder } from "@/types/database";
 import QRModal, { QRLot } from "@/components/QRModal";
 
 const LOT_COLORS: Record<LotStatus, { fill: string; stroke: string; label: string }> = {
@@ -52,6 +52,12 @@ export default function CommunityEditorPage() {
 
   // Mobile panel
   const [panelOpen, setPanelOpen] = useState(false);
+
+  // Map settings
+  const [mapSettingsOpen,   setMapSettingsOpen]   = useState(false);
+  const [mapSettings,       setMapSettings]       = useState<MapSettings>({});
+  const [savingMapSettings, setSavingMapSettings] = useState(false);
+  const [applyToAll,        setApplyToAll]        = useState(false);
 
   // Site map upload
   const [mapUploading,   setMapUploading]   = useState(false);
@@ -133,7 +139,10 @@ export default function CommunityEditorPage() {
       setCommunity(c);
       setProjects(p.filter(proj => proj.status === "live" || proj.status === "in_development"));
       setBuilders(b);
-      if (c) setMetaForm({ name: c.name, slug: c.slug, description: c.description ?? "", company_slug: c.company_slug ?? "" });
+      if (c) {
+        setMetaForm({ name: c.name, slug: c.slug, description: c.description ?? "", company_slug: c.company_slug ?? "" });
+        if (c.map_settings) setMapSettings(c.map_settings);
+      }
       setLoading(false);
     });
   }, [id]);
@@ -184,7 +193,7 @@ export default function CommunityEditorPage() {
     setMousePos(null);
     // Open the lot form for this new polygon
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: "#ffffff", label_x: null, label_y: null, label_font_size: 11 });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11 });
     // Store drawing points for save
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
@@ -396,6 +405,28 @@ export default function CommunityEditorPage() {
     setSavingMeta(false);
   }
 
+  async function handleSaveMapSettings() {
+    if (!community) return;
+    setSavingMapSettings(true);
+    const res = await fetch(`/api/communities/${community.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ map_settings: mapSettings }),
+    });
+    if (res.ok) {
+      setCommunity(prev => prev ? { ...prev, map_settings: mapSettings } : null);
+      if (applyToAll) {
+        await fetch(`/api/communities/${community.id}/lots`, { method: "PATCH" });
+        setCommunity(prev => prev ? {
+          ...prev,
+          lots: prev.lots.map(l => ({ ...l, text_color: null, label_font_size: null })),
+        } : null);
+        setApplyToAll(false);
+      }
+      showToast("Map settings saved");
+    } else { showToast("Save failed"); }
+    setSavingMapSettings(false);
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>;
   }
@@ -543,7 +574,7 @@ export default function CommunityEditorPage() {
                         points={pointsToSvgPoly(displayPoly, w, h)}
                         fill={isEditingThis ? "rgba(251,191,36,0.2)" : col.fill}
                         stroke={isEditingThis ? "#fbbf24" : isSelected ? "#fff" : col.stroke}
-                        strokeWidth={isEditingThis ? 2 : isSelected ? 2 : 1.5}
+                        strokeWidth={isEditingThis ? 2 : isSelected ? 2 : (mapSettings.stroke_width ?? 1.5)}
                         strokeDasharray={isEditingThis ? "6 3" : isSelected ? "5 3" : undefined}
                       />
                       {/* Vertex handles — only when editing this lot */}
@@ -561,17 +592,18 @@ export default function CommunityEditorPage() {
                         />
                       ))}
                       {/* Label */}
-                      {displayPoly.length >= 3 && (() => {
+                      {mapSettings.show_labels !== false && displayPoly.length >= 3 && (() => {
                         const centX = (displayPoly.reduce((s, [x]) => s + x, 0) / displayPoly.length / 100) * w;
                         const centY = (displayPoly.reduce((s, [, y]) => s + y, 0) / displayPoly.length / 100) * h;
                         const lx = (isSelected && lotForm?.label_x != null) ? (lotForm.label_x / 100) * w : (lot.label_x != null ? (lot.label_x / 100) * w : centX);
                         const ly = (isSelected && lotForm?.label_y != null) ? (lotForm.label_y / 100) * h : (lot.label_y != null ? (lot.label_y / 100) * h : centY);
-                        const fs = isSelected ? (lotForm?.label_font_size ?? 11) : (lot.label_font_size ?? 11);
+                        const fs = isSelected ? (lotForm?.label_font_size ?? mapSettings.default_label_size ?? 11) : (lot.label_font_size ?? mapSettings.default_label_size ?? 11);
+                        const fc = lot.text_color ?? mapSettings.default_label_color ?? "#ffffff";
                         return (
                           <text
                             x={lx} y={ly} textAnchor="middle" dominantBaseline="middle"
                             fontSize={fs} fontWeight="600"
-                            fill={lot.text_color ?? "#ffffff"} fillOpacity={0.9}
+                            fill={fc} fillOpacity={0.9}
                             style={{ cursor: isSelected ? "move" : "default", pointerEvents: isSelected ? "all" : "none", userSelect: "none" }}
                             onMouseDown={isSelected ? e => { e.stopPropagation(); isDraggingLabel.current = true; } : undefined}
                             onClick={isSelected ? e => e.stopPropagation() : undefined}
@@ -870,6 +902,90 @@ export default function CommunityEditorPage() {
               )}
             </div>
 
+            {/* Map Settings */}
+            <div className="border-b border-white/8">
+              <button
+                onClick={() => setMapSettingsOpen(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/4 transition-colors"
+              >
+                <span className="text-xs font-semibold text-white/50">Map Settings</span>
+                <svg className={`w-3.5 h-3.5 text-white/25 transition-transform ${mapSettingsOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {mapSettingsOpen && (
+                <div className="px-4 pb-4 space-y-4">
+                  <div>
+                    <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Default Label Color</label>
+                    <div className="flex items-center gap-2">
+                      {["#ffffff", "#000000", "#1a1a1a", "#fbbf24", "#f87171", "#34d399"].map(c => (
+                        <button key={c} onClick={() => setMapSettings(s => ({ ...s, default_label_color: c }))}
+                          className="w-5 h-5 rounded-full border-2 flex-shrink-0 transition-all"
+                          style={{ background: c, borderColor: mapSettings.default_label_color === c ? "#60a5fa" : "rgba(255,255,255,0.15)", boxShadow: mapSettings.default_label_color === c ? "0 0 0 2px #1d4ed8" : "none" }} />
+                      ))}
+                      <label className="w-5 h-5 rounded-full border border-white/15 overflow-hidden cursor-pointer flex-shrink-0 relative">
+                        <input type="color" value={mapSettings.default_label_color ?? "#ffffff"}
+                          onChange={e => setMapSettings(s => ({ ...s, default_label_color: e.target.value }))}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                        <div className="w-full h-full" style={{ background: mapSettings.default_label_color ?? "#ffffff" }} />
+                      </label>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Default Label Size</label>
+                    <div className="flex items-center gap-3">
+                      <input type="range" min={7} max={30} step={1} value={mapSettings.default_label_size ?? 11}
+                        onChange={e => setMapSettings(s => ({ ...s, default_label_size: Number(e.target.value) }))}
+                        className="flex-1 accent-blue-500" />
+                      <span className="text-xs tabular-nums text-white/50 w-5 text-right">{mapSettings.default_label_size ?? 11}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Stroke Width</label>
+                    <div className="flex gap-1.5">
+                      {[1, 1.5, 2, 3].map(w => (
+                        <button key={w} onClick={() => setMapSettings(s => ({ ...s, stroke_width: w }))}
+                          className="flex-1 py-1 rounded text-[10px] font-medium border transition-colors"
+                          style={{ background: (mapSettings.stroke_width ?? 1.5) === w ? "rgba(59,130,246,0.2)" : "transparent", borderColor: (mapSettings.stroke_width ?? 1.5) === w ? "rgba(59,130,246,0.6)" : "rgba(255,255,255,0.1)", color: (mapSettings.stroke_width ?? 1.5) === w ? "#60a5fa" : "rgba(255,255,255,0.4)" }}>
+                          {w}px
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Show Lot Labels</p>
+                      <p className="text-[10px] text-white/20 mt-0.5">Display lot numbers on map</p>
+                    </div>
+                    <button
+                      onClick={() => setMapSettings(s => ({ ...s, show_labels: s.show_labels === false ? true : false }))}
+                      className={`w-9 h-5 rounded-full border transition-colors relative flex-shrink-0 ${mapSettings.show_labels === false ? "bg-white/8 border-white/15" : "bg-blue-600 border-blue-500"}`}
+                    >
+                      <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-all ${mapSettings.show_labels === false ? "left-0.5" : "left-4"}`} />
+                    </button>
+                  </div>
+                  <label className="flex items-start gap-2.5 cursor-pointer group">
+                    <div className={`w-4 h-4 rounded border flex-shrink-0 mt-0.5 flex items-center justify-center transition-colors ${applyToAll ? "bg-amber-500 border-amber-400" : "bg-transparent border-white/20 group-hover:border-white/40"}`}
+                      onClick={() => setApplyToAll(v => !v)}>
+                      {applyToAll && (
+                        <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                    <div onClick={() => setApplyToAll(v => !v)}>
+                      <p className="text-[10px] font-medium text-white/60">Apply to all lots</p>
+                      <p className="text-[9px] text-white/25 mt-0.5">Overwrite per-lot color &amp; size on save. Position is preserved.</p>
+                    </div>
+                  </label>
+                  <button onClick={handleSaveMapSettings} disabled={savingMapSettings}
+                    className={`w-full py-2 rounded-lg border text-xs transition-colors disabled:opacity-40 ${applyToAll ? "bg-amber-500/15 border-amber-400/40 text-amber-300 hover:bg-amber-500/25" : "bg-white/6 hover:bg-white/10 border-white/8 text-white/60 hover:text-white"}`}>
+                    {savingMapSettings ? "Saving…" : applyToAll ? "Save & Apply to All Lots" : "Save Map Settings"}
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Lots list */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {community.lots.length === 0 ? (
@@ -914,6 +1030,7 @@ export default function CommunityEditorPage() {
                             builderLogo={builder?.logo_url}
                             accentColor={builder?.accent_color}
                             builderName={builder?.company_name}
+                            thumbnailUrl={proj?.thumbnail_url}
                             onClose={() => setLotQrOpen(null)}
                           />
                         )}
@@ -998,6 +1115,7 @@ export default function CommunityEditorPage() {
                   builderLogo={builder?.logo_url}
                   accentColor={builder?.accent_color}
                   builderName={builder?.company_name}
+                  thumbnailUrl={lotItems[0]?.thumbnailUrl ?? null}
                   lots={lotItems.length > 0 ? lotItems : undefined}
                   onClose={() => setQrOpen(false)}
                 />

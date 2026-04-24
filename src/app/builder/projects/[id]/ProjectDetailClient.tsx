@@ -795,6 +795,7 @@ export default function ProjectDetailClient({ id }: { id: string }) {
               builderLogo={builderLogo}
               accentColor={accentColor}
               builderName={builderName}
+              thumbnailUrl={project.thumbnail_url ?? null}
               onClose={() => setQrOpen(false)}
             />
           )}

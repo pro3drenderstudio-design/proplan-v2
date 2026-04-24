@@ -20,8 +20,9 @@ interface QRModalProps {
   builderLogo?: string | null;
   accentColor?: string | null;
   builderName?: string | null;
-  thumbnailUrl?: string | null;  // model render for yard sign left panel
-  lots?: QRLot[];                // if provided, shows bulk ZIP option
+  thumbnailUrl?: string | null;
+  curbCaptureUrl?: string | null; // homepage URL for branding QR on yard sign
+  lots?: QRLot[];
   onClose: () => void;
 }
 
@@ -92,7 +93,7 @@ async function buildQRDataUrl(
 }
 
 export default function QRModal({
-  url, label, sublabel, builderLogo, accentColor, builderName, thumbnailUrl, lots, onClose,
+  url, label, sublabel, builderLogo, accentColor, builderName, thumbnailUrl, curbCaptureUrl, lots, onClose,
 }: QRModalProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<"qr" | "yards">("qr");
@@ -135,6 +136,7 @@ export default function QRModal({
         accentColor,
         builderName,
         thumbnailUrl,
+        curbCaptureUrl,
       });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
@@ -169,6 +171,7 @@ export default function QRModal({
           accentColor,
           builderName,
           thumbnailUrl: lot.thumbnailUrl,
+          curbCaptureUrl,
         });
         const pdfArrayBuffer = await pdfBlob.arrayBuffer();
         yardFolder.file(`lot-${lot.lot_number.replace(/[^a-z0-9]/gi, "-")}-yard-sign.pdf`, pdfArrayBuffer);
