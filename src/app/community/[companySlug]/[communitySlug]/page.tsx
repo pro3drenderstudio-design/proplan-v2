@@ -50,11 +50,11 @@ const STATUS: Record<string, { fill: string; stroke: string; glow: string; label
     dot:    "#fbbf24",
   },
   sold: {
-    fill:   "rgba(255,255,255,0.05)",
-    stroke: "rgba(255,255,255,0.25)",
-    glow:   "rgba(255,255,255,0.1)",
+    fill:   "rgba(239,68,68,0.15)",
+    stroke: "rgba(239,68,68,0.7)",
+    glow:   "rgba(239,68,68,0.3)",
     label:  "Sold",
-    dot:    "rgba(255,255,255,0.3)",
+    dot:    "#ef4444",
   },
 };
 

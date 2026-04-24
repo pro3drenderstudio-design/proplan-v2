@@ -10,7 +10,7 @@ import QRModal, { QRLot } from "@/components/QRModal";
 const LOT_COLORS: Record<LotStatus, { fill: string; stroke: string; label: string }> = {
   available: { fill: "rgba(34,197,94,0.25)",  stroke: "#22c55e", label: "Available" },
   reserved:  { fill: "rgba(251,191,36,0.25)", stroke: "#fbbf24", label: "Reserved"  },
-  sold:      { fill: "rgba(255,255,255,0.08)", stroke: "rgba(255,255,255,0.2)", label: "Sold" },
+  sold:      { fill: "rgba(239,68,68,0.15)",   stroke: "rgba(239,68,68,0.7)",   label: "Sold" },
 };
 
 type DrawingPoint = [number, number];
