@@ -10,6 +10,7 @@ export interface QRLot {
   lot_number: string;
   url: string;
   sublabel?: string;
+  thumbnailUrl?: string | null;
 }
 
 interface QRModalProps {
@@ -19,7 +20,8 @@ interface QRModalProps {
   builderLogo?: string | null;
   accentColor?: string | null;
   builderName?: string | null;
-  lots?: QRLot[];          // if provided, shows bulk ZIP option
+  thumbnailUrl?: string | null;  // model render for yard sign left panel
+  lots?: QRLot[];                // if provided, shows bulk ZIP option
   onClose: () => void;
 }
 
@@ -61,22 +63,27 @@ async function buildQRDataUrl(
       img.crossOrigin = "anonymous";
       img.onload = () => {
         const ctx = canvas.getContext("2d")!;
-        const logoSize = size * 0.2;
-        const logoX = (size - logoSize) / 2;
-        const logoY = (size - logoSize) / 2;
-        const pad = logoSize * 0.12;
+        const maxSize = size * 0.2;
+        const pad = maxSize * 0.14;
 
-        // White circle background
+        // Preserve aspect ratio
+        const aspect = img.naturalWidth / img.naturalHeight;
+        const logoW = aspect >= 1 ? maxSize : maxSize * aspect;
+        const logoH = aspect >= 1 ? maxSize / aspect : maxSize;
+        const logoX = (size - logoW) / 2;
+        const logoY = (size - logoH) / 2;
+
+        // White circle sized to the largest dimension
+        const circleR = Math.max(logoW, logoH) / 2 + pad;
         ctx.beginPath();
-        ctx.arc(size / 2, size / 2, logoSize / 2 + pad, 0, Math.PI * 2);
+        ctx.arc(size / 2, size / 2, circleR, 0, Math.PI * 2);
         ctx.fillStyle = "#ffffff";
         ctx.fill();
 
-        // Draw logo
-        ctx.drawImage(img, logoX, logoY, logoSize, logoSize);
+        ctx.drawImage(img, logoX, logoY, logoW, logoH);
         resolve();
       };
-      img.onerror = () => resolve(); // skip if logo fails
+      img.onerror = () => resolve();
       img.src = logoUrl;
     });
   }
@@ -85,7 +92,7 @@ async function buildQRDataUrl(
 }
 
 export default function QRModal({
-  url, label, sublabel, builderLogo, accentColor, builderName, lots, onClose,
+  url, label, sublabel, builderLogo, accentColor, builderName, thumbnailUrl, lots, onClose,
 }: QRModalProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<"qr" | "yards">("qr");
@@ -117,14 +124,17 @@ export default function QRModal({
     if (!qrDataUrl) return;
     setYardLoading(true);
     try {
+      // Generate black QR for print quality
+      const printQr = await buildQRDataUrl(url, "#000000", builderLogo);
       const blob = await generateYardSign({
         url,
-        qrDataUrl,
+        qrDataUrl: printQr,
         label,
         sublabel,
         logoUrl: builderLogo,
         accentColor,
         builderName,
+        thumbnailUrl,
       });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
@@ -149,14 +159,16 @@ export default function QRModal({
         const base64 = lotQr.split(",")[1];
         qrFolder.file(`lot-${lot.lot_number.replace(/[^a-z0-9]/gi, "-")}-qr.png`, base64, { base64: true });
 
+        const blackQr = await buildQRDataUrl(lot.url, "#000000", builderLogo);
         const pdfBlob = await generateYardSign({
           url: lot.url,
-          qrDataUrl: lotQr,
+          qrDataUrl: blackQr,
           label: `Lot ${lot.lot_number}`,
           sublabel: lot.sublabel,
           logoUrl: builderLogo,
           accentColor,
           builderName,
+          thumbnailUrl: lot.thumbnailUrl,
         });
         const pdfArrayBuffer = await pdfBlob.arrayBuffer();
         yardFolder.file(`lot-${lot.lot_number.replace(/[^a-z0-9]/gi, "-")}-yard-sign.pdf`, pdfArrayBuffer);

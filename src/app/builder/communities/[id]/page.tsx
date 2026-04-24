@@ -738,6 +738,7 @@ export default function BuilderCommunityEditorPage() {
                   lot_number: l.lot_number,
                   url: `${window.location.origin}/project/${proj.company_slug}/${proj.slug}?lotId=${l.id}&lotNumber=${encodeURIComponent(l.lot_number)}&communitySlug=${community.slug}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${l.price_modifier ?? 0}&utm_source=qr`,
                   sublabel: proj.name,
+                  thumbnailUrl: proj.thumbnail_url ?? null,
                 } as QRLot;
               });
               return (
