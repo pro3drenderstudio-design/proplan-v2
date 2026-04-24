@@ -106,6 +106,8 @@ export default function AddBuilderPage() {
       rendering_credits_total:  form.plan_tier === "enterprise" ? 5000 : 2500,
       ai_credits_remaining:     250,
       ai_credits_total:         250,
+      max_communities:         form.plan_tier === "enterprise" ? 50 : form.plan_tier === "pro" ? 10 : 3,
+      active_communities_count: 0,
       max_projects:            form.plan_tier === "enterprise" ? 100 : form.plan_tier === "pro" ? 25 : 5,
       max_monthly_quotes:      form.plan_tier === "enterprise" ? 500 : form.plan_tier === "pro" ? 100 : 25,
       max_storage_gb:          form.plan_tier === "enterprise" ? 500 : 50,
