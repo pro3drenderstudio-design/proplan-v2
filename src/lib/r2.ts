@@ -41,14 +41,14 @@ const PUBLIC = () => {
 
 export async function uploadToR2(
   key: string,
-  body: ArrayBuffer,
+  body: Buffer | ArrayBuffer,
   contentType: string,
 ): Promise<string> {
   const client = getClient();
   await client.send(new PutObjectCommand({
     Bucket: BUCKET(),
     Key: key,
-    Body: Buffer.from(body),
+    Body: Buffer.isBuffer(body) ? body : Buffer.from(new Uint8Array(body as ArrayBuffer)),
     ContentType: contentType,
   }));
   return `${PUBLIC()}/${key}`;

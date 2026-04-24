@@ -16,9 +16,10 @@ export default function CalendlyButton({ children, className, as: Tag = "button"
   return (
     <>
       <Tag
-        onClick={() => setOpen(true)}
         className={className}
-        {...(Tag === "a" ? { href: "#", onClick: (e: React.MouseEvent) => { e.preventDefault(); setOpen(true); } } : {})}
+        {...(Tag === "a"
+          ? { href: "#", onClick: (e: React.MouseEvent) => { e.preventDefault(); setOpen(true); } }
+          : { onClick: () => setOpen(true) })}
       >
         {children}
       </Tag>
