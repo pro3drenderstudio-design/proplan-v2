@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 
-// Sales center tablet mode — full-screen QR code display
-// Usage: /display?url=https://...&label=Lot+42&accent=%232563eb&logo=https://...
-export default function DisplayPage() {
+function DisplayContent() {
   const params      = useSearchParams();
   const url         = params.get("url") ?? "";
   const label       = params.get("label") ?? "Scan to Configure";
@@ -17,10 +15,9 @@ export default function DisplayPage() {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [clock, setClock] = useState("");
 
-  // Generate QR with accent color dots
   useEffect(() => {
     if (!url) return;
-    const h = accent.replace("#", "");
+    const h    = accent.replace("#", "");
     const full = h.length === 3 ? h.split("").map((c: string) => c + c).join("") : h;
     const r = parseInt(full.slice(0, 2), 16);
     const g = parseInt(full.slice(2, 4), 16);
@@ -60,7 +57,6 @@ export default function DisplayPage() {
     });
   }, [url, accent, logoUrl]);
 
-  // Live clock
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
     tick();
@@ -81,25 +77,17 @@ export default function DisplayPage() {
       className="min-h-screen flex flex-col items-center justify-center px-8 py-12 overflow-hidden"
       style={{ background: "#08080f" }}
     >
-      {/* Top bar */}
       <div className="absolute top-0 left-0 right-0 h-1.5" style={{ background: accent }} />
 
-      {/* Clock + builder name top */}
       <div className="absolute top-5 left-0 right-0 flex items-center justify-between px-8">
         <div className="flex items-center gap-3">
-          {logoUrl && (
-            <img src={logoUrl} alt={builderName} className="h-8 object-contain" />
-          )}
-          {builderName && !logoUrl && (
-            <span className="text-sm font-semibold text-white/50">{builderName}</span>
-          )}
+          {logoUrl && <img src={logoUrl} alt={builderName} className="h-8 object-contain" />}
+          {builderName && !logoUrl && <span className="text-sm font-semibold text-white/50">{builderName}</span>}
         </div>
         <span className="text-sm font-mono text-white/20">{clock}</span>
       </div>
 
-      {/* Main content */}
       <div className="flex flex-col items-center gap-8 max-w-lg w-full">
-        {/* Label */}
         <div className="text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] mb-3" style={{ color: accent }}>
             Interactive Configurator
@@ -107,7 +95,6 @@ export default function DisplayPage() {
           <h1 className="text-3xl font-bold text-white leading-tight">{label}</h1>
         </div>
 
-        {/* QR Code */}
         <div className="rounded-3xl bg-white p-5 shadow-2xl" style={{ boxShadow: `0 0 80px ${accent}33` }}>
           {qrDataUrl ? (
             <img src={qrDataUrl} alt="QR Code" className="w-72 h-72 block" />
@@ -118,18 +105,27 @@ export default function DisplayPage() {
           )}
         </div>
 
-        {/* CTA */}
         <div className="text-center">
           <p className="text-lg font-semibold text-white/70 mb-2">Point your camera here</p>
           <p className="text-sm text-white/30">Customize colors, finishes &amp; options — then request a quote instantly</p>
         </div>
 
-        {/* URL hint */}
         <p className="text-[11px] font-mono text-white/15">{url.replace(/^https?:\/\//, "").split("?")[0]}</p>
       </div>
 
-      {/* Bottom bar */}
       <div className="absolute bottom-0 left-0 right-0 h-1" style={{ background: accent, opacity: 0.4 }} />
     </div>
+  );
+}
+
+export default function DisplayPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#08080f] flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-white/10 border-t-white/40 rounded-full animate-spin" />
+      </div>
+    }>
+      <DisplayContent />
+    </Suspense>
   );
 }
