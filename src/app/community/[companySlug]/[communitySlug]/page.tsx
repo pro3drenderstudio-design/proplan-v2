@@ -241,7 +241,8 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
   };
 
   // ── Map settings ──────────────────────────────────────────────────────────
-  const ms: MapSettings    = community.map_settings ?? {};
+  const comm               = community!;
+  const ms: MapSettings    = comm.map_settings ?? {};
   const showLabels         = ms.show_labels !== false;
   const defaultLabelColor  = ms.default_label_color ?? "rgba(255,255,255,0.9)";
   const defaultLabelSize   = ms.default_label_size ?? null;
@@ -358,7 +359,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
 
               {lot.status === "available" && (
                 <Link
-                  href={`/project/${proj.company_slug}/${proj.slug}?lotId=${encodeURIComponent(lot.id)}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${encodeURIComponent(community.slug)}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${lot.price_modifier ?? 0}`}
+                  href={`/project/${proj.company_slug}/${proj.slug}?lotId=${encodeURIComponent(lot.id)}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${encodeURIComponent(comm.slug)}&communityName=${encodeURIComponent(comm.name)}&lotPriceModifier=${lot.price_modifier ?? 0}`}
                   className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110"
                   style={{ background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" }}
                 >
