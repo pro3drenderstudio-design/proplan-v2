@@ -19,7 +19,7 @@ export async function getAllProjects(): Promise<Project[]> {
 export async function getCategoriesWithOptions(projectId: string): Promise<CategoryWithOptions[]> {
   const { data, error } = await supabase
     .from("categories")
-    .select("*, options(id, friendly_name, node_list, node_conditions, price_impact, sort_order)")
+    .select("*, options(id, category_id, friendly_name, node_list, node_conditions, price_impact, sort_order, thumbnail_url, option_type, variant_name, material_id, material_assignments, created_at)")
     .eq("project_id", projectId)
     .order("sort_order")
     .order("sort_order", { referencedTable: "options" });
@@ -180,6 +180,17 @@ export async function updateProjectStatus(
     body: JSON.stringify({ status }),
   });
   if (!res.ok) { console.error("updateProjectStatus:", await res.text()); return false; }
+  return true;
+}
+
+export async function updateViewerMode(
+  id: string,
+  mode: "sketchfab" | "r3f" | null,
+): Promise<boolean> {
+  const { error } = await (supabase.from("projects") as AnyQuery)
+    .update({ viewer_mode: mode, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) { console.error("updateViewerMode:", error.message); return false; }
   return true;
 }
 
@@ -445,7 +456,7 @@ export async function createCategory(
 
 export async function updateCategory(
   id: string,
-  payload: Partial<Pick<Category, "name" | "phase" | "default_option" | "is_mandatory" | "sort_order">>
+  payload: Partial<Pick<Category, "name" | "phase" | "default_option" | "is_mandatory" | "sort_order" | "show_when">>
 ): Promise<boolean> {
   const { data, error } = await (supabase.from("categories") as AnyQuery)
     .update(payload)
