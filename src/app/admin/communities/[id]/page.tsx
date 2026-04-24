@@ -40,7 +40,7 @@ export default function CommunityEditorPage() {
 
   // Selection / editing
   const [selectedLot,    setSelectedLot]    = useState<Lot | null>(null);
-  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string } | null>(null);
+  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number } | null>(null);
   const [savingLot,      setSavingLot]      = useState(false);
   const [deletingLot,    setDeletingLot]    = useState(false);
 
@@ -64,7 +64,8 @@ export default function CommunityEditorPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mapAreaRef   = useRef<HTMLDivElement>(null);
   const panStart     = useRef({ cx: 0, cy: 0, px: 0, py: 0 });
-  const hasDragged   = useRef(false);
+  const hasDragged       = useRef(false);
+  const isDraggingLabel  = useRef(false);
 
   function handleMapWheel(e: React.WheelEvent) {
     e.preventDefault();
@@ -81,6 +82,13 @@ export default function CommunityEditorPage() {
   }
 
   function handlePanMove(e: React.MouseEvent) {
+    if (isDraggingLabel.current && mapRef.current) {
+      const rect = mapRef.current.getBoundingClientRect();
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+      setLotForm(f => f ? { ...f, label_x: x, label_y: y } : f);
+      return;
+    }
     if (!isDragging || isDrawing) return;
     const dx = e.clientX - panStart.current.cx;
     const dy = e.clientY - panStart.current.cy;
@@ -89,6 +97,7 @@ export default function CommunityEditorPage() {
   }
 
   function handlePanEnd() {
+    isDraggingLabel.current = false;
     setIsDragging(false);
     setTimeout(() => { hasDragged.current = false; }, 0);
   }
@@ -175,7 +184,7 @@ export default function CommunityEditorPage() {
     setMousePos(null);
     // Open the lot form for this new polygon
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: "#ffffff" });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: "#ffffff", label_x: null, label_y: null, label_font_size: 11 });
     // Store drawing points for save
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
@@ -196,12 +205,15 @@ export default function CommunityEditorPage() {
     setPendingPolygon(null);
     setSelectedLot(lot);
     setLotForm({
-      lot_number:     lot.lot_number,
-      status:         lot.status,
-      project_id:     lot.project_id ?? "",
-      price_modifier: String(lot.price_modifier ?? 0),
-      notes:          lot.notes ?? "",
-      text_color:     lot.text_color ?? "#ffffff",
+      lot_number:      lot.lot_number,
+      status:          lot.status,
+      project_id:      lot.project_id ?? "",
+      price_modifier:  String(lot.price_modifier ?? 0),
+      notes:           lot.notes ?? "",
+      text_color:      lot.text_color ?? "#ffffff",
+      label_x:         lot.label_x ?? null,
+      label_y:         lot.label_y ?? null,
+      label_font_size: lot.label_font_size ?? 11,
     });
   }
 
@@ -217,12 +229,15 @@ export default function CommunityEditorPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lot_number:     lotForm.lot_number,
-          status:         lotForm.status,
-          project_id:     lotForm.project_id || null,
-          price_modifier: Number(lotForm.price_modifier),
-          notes:          lotForm.notes || null,
-          text_color:     lotForm.text_color || null,
+          lot_number:      lotForm.lot_number,
+          status:          lotForm.status,
+          project_id:      lotForm.project_id || null,
+          price_modifier:  Number(lotForm.price_modifier),
+          notes:           lotForm.notes || null,
+          text_color:      lotForm.text_color || null,
+          label_x:         lotForm.label_x,
+          label_y:         lotForm.label_y,
+          label_font_size: lotForm.label_font_size,
         }),
       });
       if (res.ok) {
@@ -244,13 +259,16 @@ export default function CommunityEditorPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lot_number:     lotForm.lot_number,
-          polygon:        pendingPolygon,
-          status:         lotForm.status,
-          project_id:     lotForm.project_id || null,
-          price_modifier: Number(lotForm.price_modifier),
-          notes:          lotForm.notes || null,
-          text_color:     lotForm.text_color || null,
+          lot_number:      lotForm.lot_number,
+          polygon:         pendingPolygon,
+          status:          lotForm.status,
+          project_id:      lotForm.project_id || null,
+          price_modifier:  Number(lotForm.price_modifier),
+          notes:           lotForm.notes || null,
+          text_color:      lotForm.text_color || null,
+          label_x:         lotForm.label_x,
+          label_y:         lotForm.label_y,
+          label_font_size: lotForm.label_font_size,
         }),
       });
       if (res.ok) {
@@ -542,13 +560,22 @@ export default function CommunityEditorPage() {
                           onPointerDown={e => handleVertexPointerDown(e, idx)}
                         />
                       ))}
-                      {/* Centroid label */}
+                      {/* Label */}
                       {displayPoly.length >= 3 && (() => {
-                        const cx = (displayPoly.reduce((s, [x]) => s + x, 0) / displayPoly.length / 100) * w;
-                        const cy = (displayPoly.reduce((s, [, y]) => s + y, 0) / displayPoly.length / 100) * h;
+                        const centX = (displayPoly.reduce((s, [x]) => s + x, 0) / displayPoly.length / 100) * w;
+                        const centY = (displayPoly.reduce((s, [, y]) => s + y, 0) / displayPoly.length / 100) * h;
+                        const lx = (isSelected && lotForm?.label_x != null) ? (lotForm.label_x / 100) * w : (lot.label_x != null ? (lot.label_x / 100) * w : centX);
+                        const ly = (isSelected && lotForm?.label_y != null) ? (lotForm.label_y / 100) * h : (lot.label_y != null ? (lot.label_y / 100) * h : centY);
+                        const fs = isSelected ? (lotForm?.label_font_size ?? 11) : (lot.label_font_size ?? 11);
                         return (
-                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
-                            fontSize={11} fontWeight="600" fill={lot.text_color ?? "#ffffff"} fillOpacity={0.9}>
+                          <text
+                            x={lx} y={ly} textAnchor="middle" dominantBaseline="middle"
+                            fontSize={fs} fontWeight="600"
+                            fill={lot.text_color ?? "#ffffff"} fillOpacity={0.9}
+                            style={{ cursor: isSelected ? "move" : "default", pointerEvents: isSelected ? "all" : "none", userSelect: "none" }}
+                            onMouseDown={isSelected ? e => { e.stopPropagation(); isDraggingLabel.current = true; } : undefined}
+                            onClick={isSelected ? e => e.stopPropagation() : undefined}
+                          >
                             {lot.lot_number}
                           </text>
                         );
@@ -738,6 +765,30 @@ export default function CommunityEditorPage() {
                   </label>
                 </div>
                 <p className="text-[10px] text-white/20 mt-1.5">Color of the lot number on the map</p>
+              </div>
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Label Size</label>
+                <div className="flex items-center gap-3">
+                  <input type="range" min={7} max={30} step={1} value={lotForm.label_font_size}
+                    onChange={e => setLotForm(f => f && ({ ...f, label_font_size: Number(e.target.value) }))}
+                    className="flex-1 accent-blue-500" />
+                  <span className="text-xs tabular-nums text-white/50 w-5 text-right">{lotForm.label_font_size}</span>
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-white/25">Label Position</label>
+                  {lotForm.label_x != null && (
+                    <button onClick={() => setLotForm(f => f && ({ ...f, label_x: null, label_y: null }))}
+                      className="text-[10px] text-blue-400/60 hover:text-blue-400 transition-colors">
+                      Reset
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-white/30">
+                  {lotForm.label_x != null ? `${lotForm.label_x.toFixed(1)}% × ${(lotForm.label_y ?? 0).toFixed(1)}%` : "Centered in lot"}
+                </p>
+                <p className="text-[10px] text-white/20 mt-0.5">Drag the label on the map to reposition</p>
               </div>
             </div>
             <div className="p-4 border-t border-white/8 space-y-2 flex-shrink-0">

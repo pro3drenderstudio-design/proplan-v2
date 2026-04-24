@@ -26,13 +26,19 @@ export async function POST(
     notes:          body.notes          ?? null,
   };
   if (body.text_color != null) payload.text_color = body.text_color;
+  if (body.label_x != null) payload.label_x = body.label_x;
+  if (body.label_y != null) payload.label_y = body.label_y;
+  if (body.label_font_size != null) payload.label_font_size = body.label_font_size;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let { data, error } = await (supabase.from("lots") as any).insert(payload).select().single();
 
-  // If text_color column doesn't exist yet, retry without it
-  if (error?.message?.includes("text_color")) {
+  // If new columns don't exist yet, retry without them
+  if (error?.message?.includes("text_color") || error?.message?.includes("label_")) {
     delete payload.text_color;
+    delete payload.label_x;
+    delete payload.label_y;
+    delete payload.label_font_size;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ({ data, error } = await (supabase.from("lots") as any).insert(payload).select().single());
   }

@@ -18,9 +18,12 @@ export async function PATCH(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let { error } = await (supabase.from("lots") as any).update(payload).eq("id", lotId);
 
-  // If text_color column doesn't exist yet, retry without it
-  if (error?.message?.includes("text_color")) {
+  // If new columns don't exist yet, retry without them
+  if (error?.message?.includes("text_color") || error?.message?.includes("label_")) {
     delete payload.text_color;
+    delete payload.label_x;
+    delete payload.label_y;
+    delete payload.label_font_size;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ({ error } = await (supabase.from("lots") as any).update(payload).eq("id", lotId));
   }

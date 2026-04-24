@@ -276,10 +276,10 @@ export default function CommunityMapPage({
                   const isHov = hoveredLot === lot.id;
                   const isSel = selectedLot?.id === lot.id;
                   const [cx, cy] = centroid(lot.polygon);
-                  const svgCx = (cx / 100) * imgRect.w;
-                  const svgCy = (cy / 100) * imgRect.h;
+                  const svgCx = lot.label_x != null ? (lot.label_x / 100) * imgRect.w : (cx / 100) * imgRect.w;
+                  const svgCy = lot.label_y != null ? (lot.label_y / 100) * imgRect.h : (cy / 100) * imgRect.h;
                   const pts   = toSvgPoints(lot.polygon, imgRect.w, imgRect.h);
-                  const fs    = Math.max(9, Math.min(13, imgRect.w / 70));
+                  const fs    = lot.label_font_size ?? Math.max(9, Math.min(13, imgRect.w / 70));
 
                   return (
                     <g key={lot.id}>

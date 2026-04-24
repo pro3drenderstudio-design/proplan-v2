@@ -597,6 +597,9 @@ export interface Lot {
   price_modifier: number;
   notes: string | null;
   text_color: string | null;
+  label_x: number | null;
+  label_y: number | null;
+  label_font_size: number | null;
   created_at: string;
   updated_at: string;
 }
