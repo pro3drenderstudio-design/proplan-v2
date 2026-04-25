@@ -222,6 +222,7 @@ export default function SummaryPage({
         exteriorOptionRows, interiorOptionRows,
         totalPrice,
         exteriorRender, interiorRender, interior2Render,
+        aiVisualized: !!aiRenders.exterior,
         builder: builderWithLogo,
         logoNaturalW, logoNaturalH, lotInfo,
       });
@@ -1013,6 +1014,7 @@ interface PdfInput {
   exteriorRender: string | null;
   interiorRender: string | null;
   interior2Render?: string | null;
+  aiVisualized?: boolean;
   builder?: BuilderBranding | null;
   logoNaturalW?: number | null;
   logoNaturalH?: number | null;
@@ -1024,6 +1026,7 @@ function buildPdf({
   exteriorOptionRows, interiorOptionRows,
   totalPrice,
   exteriorRender, interiorRender, interior2Render,
+  aiVisualized = false,
   builder, logoNaturalW, logoNaturalH, lotInfo,
 }: PdfInput): jsPDF {
   // Landscape A4: 297 × 210 mm — better proportions for renders
@@ -1290,8 +1293,8 @@ function buildPdf({
   doc.setTextColor(210, 220, 240);
   doc.text(date, pageW - margin, 16, { align: "right" });
 
-  // ── Bottom scrim — flat semi-transparent rectangle, no gradient ──
-  const scrimY = pageH * 0.58;           // starts ~58% down
+  // ── Bottom scrim — 35% shorter than original (starts at ~72.7% down) ──
+  const scrimY = pageH * 0.727;          // was 0.58 → reduced height by 35%
   const scrimH = pageH - scrimY;         // fills to page bottom
   doc.saveGraphicsState();
   doc.setGState(new GState({ opacity: 0.76 }));
@@ -1307,18 +1310,18 @@ function buildPdf({
   doc.setFillColor(aR, aG, aB);
   doc.rect(tx, ty - 5, 16, 0.7, "F");
 
-  // Eyebrow
-  doc.setFont("helvetica", "bold"); doc.setFontSize(5);
+  // Eyebrow (+80%)
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9);
   doc.setTextColor(aR, aG, aB);
   doc.text("YOUR NEW HOME", tx, ty);
 
-  // Project name — large
-  doc.setFont("helvetica", "bold"); doc.setFontSize(22);
+  // Project name — large (+15%: 22 → 25)
+  doc.setFont("helvetica", "bold"); doc.setFontSize(25);
   doc.setTextColor(245, 248, 255);
   const maxNameW = pageW * 0.52;
   const nameLines = doc.splitTextToSize(project.name, maxNameW) as string[];
-  doc.text(nameLines, tx, ty + 10);
-  let nameEndY = ty + 10 + nameLines.length * 9.5;
+  doc.text(nameLines, tx, ty + 12);
+  let nameEndY = ty + 12 + nameLines.length * 11;
 
   // Community / lot
   if (lotInfo?.communityName || lotInfo?.lotNumber) {
@@ -1329,14 +1332,14 @@ function buildPdf({
     nameEndY += 9;
   }
 
-  // Prepared for
-  doc.setFont("helvetica", "normal"); doc.setFontSize(6);
+  // Prepared for (+100%: 6 → 12)
+  doc.setFont("helvetica", "normal"); doc.setFontSize(12);
   doc.setTextColor(145, 165, 210);
   doc.text(`Prepared for  ${buyer.firstName} ${buyer.lastName}`, tx, nameEndY + 5);
 
-  // ── Price box — right side of scrim ──────────────────────────────
+  // ── Price box — right side of scrim (+15% height: 21 → 24) ──────
   const pBoxW  = 88;
-  const pBoxH  = 42;
+  const pBoxH  = 24;
   const pBoxX  = pageW - margin - pBoxW;
   const pBoxY2 = scrimY + (scrimH - 10 - pBoxH) / 2 + 4; // centered in scrim above footer
 
@@ -1349,16 +1352,16 @@ function buildPdf({
   doc.setFillColor(aR, aG, aB);
   doc.roundedRect(pBoxX, pBoxY2, pBoxW, 2, 1, 1, "F");
 
-  doc.setFont("helvetica", "bold"); doc.setFontSize(5);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10);
   doc.setTextColor(aR, aG, aB);
-  doc.text("YOUR ESTIMATE", pBoxX + pBoxW / 2, pBoxY2 + 12, { align: "center" });
+  doc.text("YOUR ESTIMATE", pBoxX + pBoxW / 2, pBoxY2 + 7, { align: "center" });
 
-  doc.setFont("helvetica", "bold"); doc.setFontSize(20);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(40);
   doc.setTextColor(245, 248, 255);
-  doc.text(priceStr, pBoxX + pBoxW / 2, pBoxY2 + 30, { align: "center" });
+  doc.text(priceStr, pBoxX + pBoxW / 2, pBoxY2 + 20, { align: "center" });
 
-  // ── AI Visualized badge — bottom-left ────────────────────────────
-  if (exteriorRender) {
+  // ── AI Visualized badge — only when user triggered AI render ─────
+  if (aiVisualized) {
     doc.setFillColor(aR, aG, aB);
     doc.roundedRect(margin, pageH - 15, 28, 6, 1.5, 1.5, "F");
     doc.setFont("helvetica", "bold"); doc.setFontSize(4.5);
