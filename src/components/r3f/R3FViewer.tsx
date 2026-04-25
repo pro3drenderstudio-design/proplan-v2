@@ -257,8 +257,18 @@ export default function R3FViewer({
   const autoLowPerf = useAutoLowPerf();
   const lowPerf = lowPerfProp ?? autoLowPerf;
   const [ready, setReady] = useState(false);
+  const [canvasMounted, setCanvasMounted] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const modelLoadedRef = useRef(false);
+
+  // Defer Canvas mount by one animation frame so the Preloader's compositor
+  // layer is fully established before WebGL creates its own GPU layer.
+  // On iOS (CAMetalLayer), WebGL layers can appear above CSS layers if they
+  // are created simultaneously — the 1-frame delay prevents this race.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setCanvasMounted(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   const [ptStatus, setPtStatus] = useState<PTStatus>({ state: "off", samples: 0 });
   const ptActive = ptStatus.state === "rendering" || ptStatus.state === "done";
@@ -334,7 +344,7 @@ export default function R3FViewer({
       )}
 
       <CanvasErrorBoundary onError={handleCanvasError}>
-      <Canvas
+      {canvasMounted && <Canvas
         style={{ background: "#0d0d0d" }}
         shadows={(sceneSettings?.shadows ?? true) && !lowPerf ? "soft" : false}
         dpr={lowPerf ? 1 : [1, 2]}
@@ -450,7 +460,7 @@ export default function R3FViewer({
           sceneVersion={sceneVersion}
           onStatus={setPtStatus}
         />
-      </Canvas>
+      </Canvas>}
       </CanvasErrorBoundary>
     </div>
   );
