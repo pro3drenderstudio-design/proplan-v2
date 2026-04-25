@@ -85,7 +85,8 @@ function buildPrompt(body: {
   if (isRevision && revision) {
     return [
       revision,
-      "keep building structure identical",
+      "do NOT modify walls, ceiling, floor, or any architectural surfaces unless explicitly instructed above",
+      "keep building structure and all existing materials identical",
       "photorealistic architectural render, 8k ultra-detailed",
       STYLE_PROMPTS[style] ?? "",
       LIGHTING_PROMPTS[lighting] ?? "",
@@ -127,7 +128,10 @@ function buildPrompt(body: {
   if (renderType === "interior") {
     return [
       "convert this into a photorealistic interior architectural render",
-      "beautiful materials and finishes throughout",
+      "do NOT modify walls, ceiling, floor, or any architectural surfaces — preserve every color, material, and finish exactly as shown",
+      "do NOT add, remove, or rearrange any furniture or built-in elements",
+      "only enhance realism: improve lighting quality, add subtle shadows and reflections, sharpen material textures",
+      "only add a very small number of tasteful props where surfaces are bare: a fruit bowl or herb plant on a kitchen counter, a throw pillow on an existing sofa, a framed artwork or mirror on a blank wall",
       STYLE_PROMPTS[style] ?? "",
       LIGHTING_PROMPTS[lighting] ?? "",
       "professional interior photography, Hasselblad medium format, 8k ultra-detailed",

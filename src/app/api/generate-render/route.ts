@@ -24,11 +24,11 @@ const PROMPTS: Record<string, string> = {
 
   interior: [
     "photorealistic architectural interior render",
-    "preserve all material colors and finishes exactly as shown — floor color and material must stay identical, wall paint color must stay identical, ceiling color must stay identical, cabinet color and finish must stay identical, countertop color and material must stay identical",
-    "do not change any existing colors, materials, or textures from the original image",
-    "keep all existing furniture, appliances, and objects exactly as shown — do not add or remove any furniture, sofas, chairs, tables, rugs, or objects that are not already present",
-    "only add small tasteful surface props that are consistent with the room type shown: if kitchen is visible add only a fruit bowl or herb plant on the counter, if living area is visible add only a throw pillow or folded blanket on existing sofas",
-    "do not invent new rooms, furniture layouts, or seating areas not visible in the original",
+    "do NOT modify walls, ceiling, floor, structural elements, or any architectural surfaces — preserve every color, material, texture, and finish exactly as shown in the original",
+    "do NOT change wall paint color, ceiling color, floor material, cabinet color, countertop material, or any existing finish",
+    "do NOT add, remove, or rearrange any furniture, appliances, or built-in elements",
+    "only enhance realism: improve lighting quality, add subtle shadows and reflections, sharpen material textures",
+    "only add a very small number of tasteful props where surfaces are bare: a fruit bowl or herb plant on a kitchen counter, a throw pillow or folded blanket on an existing sofa, a framed artwork or mirror on a blank wall",
     "warm natural light streaming through windows, soft ambient recessed ceiling lighting",
     "interior design magazine photography quality, perfectly sharp focus throughout",
     "no exterior elements, no sky visible",
