@@ -1,11 +1,16 @@
 /**
  * POST /api/admin/compress-model
- * Downloads the project's GLB from R2, runs gltf-transform optimisation
- * (texture resize/JPEG + Draco geometry compression + dedup/prune),
- * re-uploads the result, and updates the DB.
+ * Parses the GLB binary format directly, compresses every embedded texture
+ * with sharp (JPEG 85%, max 2048px), rebuilds the file, re-uploads to R2,
+ * and updates the project record.
+ *
+ * No ESM packages (gltf-transform/draco) — uses only sharp + standard
+ * Node buffers, so it works reliably in Next.js serverless functions.
+ *
+ * Mesh node names and scene structure are completely untouched.
  *
  * Body: { projectId: string }
- * Returns: { ok, originalSize, compressedSize, model_url }
+ * Returns: { ok, originalSize, compressedSize, model_url, ... }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -26,6 +31,219 @@ function fmt(bytes: number) {
   return `${(bytes / 1_000).toFixed(0)} KB`;
 }
 
+// ── GLB types ─────────────────────────────────────────────────────────────────
+
+interface GltfBufferView {
+  buffer: number;
+  byteOffset: number;
+  byteLength: number;
+  byteStride?: number;
+  target?: number;
+  name?: string;
+  [k: string]: unknown;
+}
+
+interface GltfImage {
+  bufferView?: number;
+  mimeType?: string;
+  name?: string;
+  uri?: string;
+  [k: string]: unknown;
+}
+
+interface GltfTexture {
+  source?: number;
+  sampler?: number;
+  name?: string;
+  [k: string]: unknown;
+}
+
+interface GltfMaterial {
+  pbrMetallicRoughness?: { baseColorTexture?: { index: number }; metallicRoughnessTexture?: { index: number } };
+  normalTexture?:    { index: number };
+  occlusionTexture?: { index: number };
+  emissiveTexture?:  { index: number };
+  [k: string]: unknown;
+}
+
+interface GltfJson {
+  bufferViews?: GltfBufferView[];
+  buffers?: Array<{ byteLength: number; uri?: string }>;
+  images?: GltfImage[];
+  textures?: GltfTexture[];
+  materials?: GltfMaterial[];
+  [k: string]: unknown;
+}
+
+// ── Core GLB parser / packer ──────────────────────────────────────────────────
+
+function readGlb(buf: Buffer): { json: GltfJson; bin: Buffer | null } {
+  if (buf.readUInt32LE(0) !== 0x46546C67) throw new Error("Not a valid GLB file (bad magic)");
+  if (buf.readUInt32LE(4) !== 2) throw new Error("Only GLB version 2 is supported");
+
+  // JSON chunk starts at byte 12
+  const jsonLen  = buf.readUInt32LE(12);
+  const jsonType = buf.readUInt32LE(16);
+  if (jsonType !== 0x4E4F534A) throw new Error("First GLB chunk is not JSON");
+
+  const jsonText = buf.subarray(20, 20 + jsonLen).toString("utf-8");
+  const json     = JSON.parse(jsonText) as GltfJson;
+
+  // BIN chunk (optional) follows immediately after JSON chunk
+  const binOffset = 20 + jsonLen;
+  let bin: Buffer | null = null;
+  if (binOffset + 8 <= buf.byteLength) {
+    const binLen  = buf.readUInt32LE(binOffset);
+    const binType = buf.readUInt32LE(binOffset + 4);
+    if (binType === 0x004E4942) {
+      bin = buf.subarray(binOffset + 8, binOffset + 8 + binLen);
+    }
+  }
+
+  return { json, bin };
+}
+
+function packGlb(json: GltfJson, bin: Buffer): Buffer {
+  // JSON chunk — padded to 4-byte boundary with spaces (0x20)
+  const jsonRaw  = Buffer.from(JSON.stringify(json), "utf-8");
+  const jsonPad  = (4 - (jsonRaw.byteLength % 4)) % 4;
+  const jsonChunk = Buffer.concat([jsonRaw, Buffer.alloc(jsonPad, 0x20)]);
+
+  // BIN chunk — padded to 4-byte boundary with zeros
+  const binPad   = (4 - (bin.byteLength % 4)) % 4;
+  const binChunk = Buffer.concat([bin, Buffer.alloc(binPad, 0x00)]);
+
+  const totalLen = 12 + 8 + jsonChunk.byteLength + 8 + binChunk.byteLength;
+
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546C67, 0); // magic 'glTF'
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(totalLen, 8);
+
+  const jsonHeader = Buffer.alloc(8);
+  jsonHeader.writeUInt32LE(jsonChunk.byteLength, 0);
+  jsonHeader.writeUInt32LE(0x4E4F534A, 4); // 'JSON'
+
+  const binHeader = Buffer.alloc(8);
+  binHeader.writeUInt32LE(binChunk.byteLength, 0);
+  binHeader.writeUInt32LE(0x004E4942, 4); // 'BIN\0'
+
+  return Buffer.concat([header, jsonHeader, jsonChunk, binHeader, binChunk]);
+}
+
+// ── Texture compression ───────────────────────────────────────────────────────
+
+async function compressGlbTextures(input: Buffer): Promise<Buffer> {
+  // sharp is a native CJS-compatible module — safe to import normally
+  const sharp = (await import("sharp")).default;
+
+  const { json, bin } = readGlb(input);
+
+  if (!bin || !json.images?.length || !json.bufferViews?.length) {
+    console.log("[compress-model] no embedded textures found — returning as-is");
+    return input;
+  }
+
+  // Which texture slots should stay as PNG (normal & occlusion maps use all
+  // four channels with specific meaning — JPEG would corrupt them)
+  const keepPngImageIndices = new Set<number>();
+  const textures: GltfTexture[] = json.textures ?? [];
+  for (const mat of json.materials ?? []) {
+    const protect = [mat.normalTexture?.index, mat.occlusionTexture?.index];
+    for (const texIdx of protect) {
+      if (texIdx == null) continue;
+      const src = textures[texIdx]?.source;
+      if (src != null) keepPngImageIndices.add(src);
+    }
+  }
+
+  // Compress each image that lives in a buffer view
+  const compressed = new Map<number, { data: Buffer; mime: string }>();
+  for (let i = 0; i < json.images.length; i++) {
+    const img = json.images[i];
+    if (img.bufferView == null) continue; // external URI image — skip
+
+    const bv = json.bufferViews[img.bufferView];
+    if (!bv) continue;
+
+    const raw = bin.subarray(bv.byteOffset, bv.byteOffset + bv.byteLength);
+    const keepPng = keepPngImageIndices.has(i);
+
+    try {
+      const pipeline = sharp(raw).resize(2048, 2048, { fit: "inside", withoutEnlargement: true });
+      const data = keepPng
+        ? await pipeline.png({ compressionLevel: 9 }).toBuffer()
+        : await pipeline.jpeg({ quality: 85 }).toBuffer();
+      compressed.set(i, { data, mime: keepPng ? "image/png" : "image/jpeg" });
+    } catch (e) {
+      console.warn(`[compress-model] skipping image ${i}:`, (e as Error).message);
+    }
+  }
+
+  if (compressed.size === 0) return input;
+
+  // Which buffer views are used by images
+  const imageBvIndices = new Map<number /* bvIdx */, number /* imgIdx */>();
+  for (let i = 0; i < json.images.length; i++) {
+    const bvIdx = json.images[i].bufferView;
+    if (bvIdx != null) imageBvIndices.set(bvIdx, i);
+  }
+
+  // Rebuild the BIN chunk.
+  // Sort buffer views by their original byteOffset so we process them in order.
+  const sortedBvIndices = [...json.bufferViews.keys()].sort(
+    (a, b) => json.bufferViews![a].byteOffset - json.bufferViews![b].byteOffset,
+  );
+
+  const chunks: Buffer[] = [];
+  const newOffsets: number[] = new Array(json.bufferViews.length);
+  const newLengths: number[] = new Array(json.bufferViews.length);
+  let pos = 0;
+
+  for (const bvIdx of sortedBvIndices) {
+    const bv  = json.bufferViews[bvIdx];
+    const imgIdx = imageBvIndices.get(bvIdx);
+    const comp   = imgIdx != null ? compressed.get(imgIdx) : undefined;
+
+    const data = comp
+      ? comp.data
+      : bin.subarray(bv.byteOffset, bv.byteOffset + bv.byteLength);
+
+    // Align to 4 bytes between chunks
+    const pad = (4 - (pos % 4)) % 4;
+    if (pad > 0) { chunks.push(Buffer.alloc(pad)); pos += pad; }
+
+    newOffsets[bvIdx] = pos;
+    newLengths[bvIdx] = data.byteLength;
+    chunks.push(data);
+    pos += data.byteLength;
+  }
+
+  const newBin = Buffer.concat(chunks);
+
+  // Patch JSON in-place
+  for (let i = 0; i < json.bufferViews.length; i++) {
+    json.bufferViews[i] = {
+      ...json.bufferViews[i],
+      byteOffset: newOffsets[i],
+      byteLength: newLengths[i],
+    };
+  }
+
+  for (let i = 0; i < json.images.length; i++) {
+    const comp = compressed.get(i);
+    if (comp) json.images[i] = { ...json.images[i], mimeType: comp.mime };
+  }
+
+  if (json.buffers?.[0]) {
+    json.buffers[0] = { ...json.buffers[0], byteLength: newBin.byteLength };
+  }
+
+  return packGlb(json, newBin);
+}
+
+// ── Route ─────────────────────────────────────────────────────────────────────
+
 export async function POST(req: NextRequest) {
   const { projectId } = (await req.json()) as { projectId?: string };
   if (!projectId) return NextResponse.json({ error: "projectId required" }, { status: 400 });
@@ -41,125 +259,53 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Project or model not found" }, { status: 404 });
   }
 
-  // ── 1. Download the current GLB ─────────────────────────────────────────────
-  let originalBuffer: ArrayBuffer;
+  // 1. Download
+  console.log("[compress-model] downloading…");
+  let originalBuffer: Buffer;
   try {
     const res = await fetch(project.model_url);
-    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-    originalBuffer = await res.arrayBuffer();
+    if (!res.ok) throw new Error(`fetch ${res.status}`);
+    originalBuffer = Buffer.from(await res.arrayBuffer());
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `Download failed: ${msg}` }, { status: 502 });
+    return NextResponse.json({ error: `Download failed: ${(err as Error).message}` }, { status: 502 });
   }
-
   const originalSize = originalBuffer.byteLength;
+  console.log(`[compress-model] downloaded ${fmt(originalSize)}`);
 
-  // ── 2. Run gltf-transform pipeline ──────────────────────────────────────────
+  // 2. Compress textures
   let compressedBuffer: Buffer;
   try {
-    // Step A — load modules (log each so we can see exactly where it fails)
-    console.log("[compress-model] importing @gltf-transform/core…");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { NodeIO } = await import("@gltf-transform/core") as any;
-
-    console.log("[compress-model] importing @gltf-transform/functions…");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fns = await import("@gltf-transform/functions") as any;
-    const { dedup, prune, textureCompress, draco } = fns;
-
-    console.log("[compress-model] importing @gltf-transform/extensions…");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { DracoMeshCompression } = await import("@gltf-transform/extensions") as any;
-
-    console.log("[compress-model] importing draco3d…");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const draco3dMod = await import("draco3d") as any;
-    const draco3d = draco3dMod.default ?? draco3dMod;
-
-    console.log("[compress-model] importing sharp…");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sharpMod = await import("sharp") as any;
-    const sharp = sharpMod.default ?? sharpMod;
-
-    // Step B — initialise Draco WASM encoder/decoder
-    console.log("[compress-model] initialising Draco WASM…");
-    const [encoderModule, decoderModule] = await Promise.all([
-      draco3d.createEncoderModule({}),
-      draco3d.createDecoderModule({}),
-    ]);
-
-    // Step C — read GLB
-    console.log("[compress-model] reading GLB…");
-    const io = new NodeIO()
-      .registerExtensions([DracoMeshCompression])
-      .registerDependencies({
-        "draco3d.encoder": encoderModule,
-        "draco3d.decoder": decoderModule,
-      });
-    const document = await io.readBinary(new Uint8Array(originalBuffer));
-
-    // Step D — transform pipeline
-    console.log("[compress-model] running transform pipeline…");
-    await document.transform(
-      dedup(),
-      prune(),
-      // Resize textures to max 2048px and convert to JPEG 85%.
-      // Normal/occlusion maps stay as PNG to preserve their data channels.
-      textureCompress({
-        encoder: sharp,
-        targetFormat: "jpeg",
-        resize: [2048, 2048],
-        quality: 85,
-        slots: /^(?!normalTexture|occlusionTexture).*$/,
-      }),
-      // Draco compresses vertex/index buffers only — mesh names unchanged
-      draco({
-        quantizationBits: { POSITION: 14, NORMAL: 10, TEX_COORD: 12, COLOR: 8, GENERIC: 12 },
-      }),
-    );
-
-    // Step E — serialise
-    console.log("[compress-model] serialising…");
-    const out = await io.writeBinary(document);
-    compressedBuffer = Buffer.from(out);
-    console.log("[compress-model] pipeline complete");
+    compressedBuffer = await compressGlbTextures(originalBuffer);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : "";
-    console.error("[compress-model] FAILED:", msg, stack);
+    const msg = (err as Error).message;
+    console.error("[compress-model] compression error:", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-
   const compressedSize = compressedBuffer.byteLength;
+  console.log(`[compress-model] compressed ${fmt(originalSize)} → ${fmt(compressedSize)} (${Math.round((1 - compressedSize / originalSize) * 100)}% reduction)`);
 
-  // ── 3. Re-upload to R2 ───────────────────────────────────────────────────────
+  // 3. Re-upload
   const key = `models/${projectId}/model_v${Date.now()}.glb`;
   let model_url: string;
   try {
     model_url = await uploadToR2(key, compressedBuffer, "model/gltf-binary");
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `Upload failed: ${msg}` }, { status: 500 });
+    return NextResponse.json({ error: `Upload failed: ${(err as Error).message}` }, { status: 500 });
   }
 
-  // ── 4. Update DB ─────────────────────────────────────────────────────────────
+  // 4. Update DB
   const { error: updateErr } = await supabase
     .from("projects")
     .update({ model_url, model_storage_path: key })
     .eq("id", projectId);
-
-  if (updateErr) {
-    return NextResponse.json({ error: updateErr.message }, { status: 500 });
-  }
-
-  console.log(`[compress-model] ${projectId}: ${fmt(originalSize)} → ${fmt(compressedSize)} (${Math.round((1 - compressedSize / originalSize) * 100)}% reduction)`);
+  if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
 
   return NextResponse.json({
     ok: true,
     model_url,
     originalSize,
     compressedSize,
-    originalFormatted: fmt(originalSize),
+    originalFormatted:   fmt(originalSize),
     compressedFormatted: fmt(compressedSize),
     reductionPct: Math.round((1 - compressedSize / originalSize) * 100),
   });
