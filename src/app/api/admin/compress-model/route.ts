@@ -164,7 +164,9 @@ async function compressGlbTextures(input: Buffer): Promise<Buffer> {
     const bv = json.bufferViews[img.bufferView];
     if (!bv) continue;
 
-    const raw = bin.subarray(bv.byteOffset, bv.byteOffset + bv.byteLength);
+    // glTF spec: byteOffset is optional, defaults to 0
+    const offset = bv.byteOffset ?? 0;
+    const raw = bin.subarray(offset, offset + bv.byteLength);
     const keepPng = keepPngImageIndices.has(i);
 
     try {
@@ -188,24 +190,32 @@ async function compressGlbTextures(input: Buffer): Promise<Buffer> {
   }
 
   // Rebuild the BIN chunk.
-  // Sort buffer views by their original byteOffset so we process them in order.
-  const sortedBvIndices = [...json.bufferViews.keys()].sort(
-    (a, b) => json.bufferViews![a].byteOffset - json.bufferViews![b].byteOffset,
-  );
-
+  // Process in JSON index order — do NOT sort by original byteOffset because
+  // byteOffset is optional (defaults to 0 per glTF spec) and undefined values
+  // produce NaN comparisons that corrupt the sort.
   const chunks: Buffer[] = [];
   const newOffsets: number[] = new Array(json.bufferViews.length);
   const newLengths: number[] = new Array(json.bufferViews.length);
   let pos = 0;
 
-  for (const bvIdx of sortedBvIndices) {
-    const bv  = json.bufferViews[bvIdx];
+  for (let bvIdx = 0; bvIdx < json.bufferViews.length; bvIdx++) {
+    const bv = json.bufferViews[bvIdx];
+
+    // Skip buffer views that reference an external buffer (buffer index ≠ 0)
+    if ((bv.buffer ?? 0) !== 0) {
+      newOffsets[bvIdx] = bv.byteOffset ?? 0;
+      newLengths[bvIdx] = bv.byteLength;
+      continue;
+    }
+
     const imgIdx = imageBvIndices.get(bvIdx);
     const comp   = imgIdx != null ? compressed.get(imgIdx) : undefined;
 
+    // glTF spec: byteOffset defaults to 0
+    const origOffset = bv.byteOffset ?? 0;
     const data = comp
       ? comp.data
-      : bin.subarray(bv.byteOffset, bv.byteOffset + bv.byteLength);
+      : bin.subarray(origOffset, origOffset + bv.byteLength);
 
     // Align to 4 bytes between chunks
     const pad = (4 - (pos % 4)) % 4;

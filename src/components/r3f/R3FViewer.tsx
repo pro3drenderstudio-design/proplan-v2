@@ -12,6 +12,9 @@ import { Canvas } from "@react-three/fiber";
 import { ACESFilmicToneMapping, SRGBColorSpace } from "three";
 import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
+
+useGLTF.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.5/");
+
 import { patchPolyhavenLoader } from "@/lib/three/polyhaven-loader";
 import { patchTextureLoader } from "@/lib/three/cap-texture-size";
 

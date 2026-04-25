@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -2962,6 +2962,20 @@ function MaterialsTab({
   );
 }
 
+// ─── Model error boundary ─────────────────────────────────────────────────────
+
+class ModelErrorBoundary extends Component<
+  { onError: (msg: string) => void; children: React.ReactNode },
+  { caught: boolean }
+> {
+  state = { caught: false };
+  static getDerivedStateFromError() { return { caught: true }; }
+  componentDidCatch(err: unknown) {
+    this.props.onError(err instanceof Error ? err.message : String(err));
+  }
+  render() { return this.state.caught ? null : this.props.children; }
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function SceneEditorPage() {
@@ -2976,6 +2990,7 @@ export default function SceneEditorPage() {
   const [materials,  setMaterials]  = useState<MaterialLibraryEntry[]>([]);
   const [sceneTree,  setSceneTree]  = useState<SceneTreeNode[]>([]);
   const [glbMaterials, setGlbMaterials] = useState<GlbMaterialInfo[]>([]);
+  const [modelLoadErr, setModelLoadErr] = useState<string | null>(null);
 
   // ── Transform / scene state ────────────────────────────────────────────────
   const [selectedMeshes,  setSelectedMeshes]  = useState<string[]>([]);
@@ -3758,6 +3773,18 @@ export default function SceneEditorPage() {
     }
   }
 
+  // ── Reset mesh transforms ──────────────────────────────────────────────────
+  async function handleResetTransforms() {
+    if (!project) return;
+    setMeshOverrides({});
+    const merged = { ...cameraDefaults, _phaseSettings: phaseSettings, _meshOverrides: {}, _meshBaseMats: meshBaseMatMap, _glbMatOverrides: glbMatOverrides, _deletedMeshes: [...deletedMeshes], _placedProps: placedProps, _placedShapes: placedShapes, _placedLights: placedLights };
+    await (supabase.from("projects") as any)
+      .update({ camera_defaults: merged })
+      .eq("id", projectId);
+    setCameraDefaults(merged);
+    showToast("Mesh transforms reset ✓");
+  }
+
   // ── Save ───────────────────────────────────────────────────────────────────
   async function handleSave() {
     if (!project) return;
@@ -3833,6 +3860,7 @@ export default function SceneEditorPage() {
       setProject(prev => prev
         ? { ...prev, model_url: data.model_url, model_storage_path: data.model_storage_path }
         : prev);
+      setModelLoadErr(null);
       showToast("GLB uploaded ✓");
       if (autoCompress) await handleCompress();
     } catch (err: any) {
@@ -3867,6 +3895,7 @@ export default function SceneEditorPage() {
           setProject(prev => prev
             ? { ...prev, model_url: data.model_url, model_storage_path: data.model_storage_path }
             : prev);
+          setModelLoadErr(null);
           showToast("GLB uploaded ✓");
           if (autoCompress) {
             // Can't await inside XHR callback — trigger compress via timeout
@@ -4202,6 +4231,11 @@ export default function SceneEditorPage() {
           )}
           {compressErr && <span className="text-red-400 text-[10px] truncate max-w-[140px]" title={compressErr}>Compress failed</span>}
 
+          <button onClick={handleResetTransforms} title="Clear all saved mesh position/rotation/scale overrides"
+            className="px-3 py-1.5 bg-white/5 hover:bg-red-500/20 border border-white/8 hover:border-red-500/30 text-white/40 hover:text-red-400 text-xs font-semibold rounded-lg transition-colors">
+            Reset transforms
+          </button>
+
           <button onClick={handleSave} disabled={saving}
             className="px-3 py-1.5 bg-white/8 hover:bg-white/14 border border-white/12 text-white/75 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40">
             {saving ? "Saving…" : "Save"}
@@ -4350,7 +4384,8 @@ export default function SceneEditorPage() {
         {/* ── CENTER: Viewport + toolbar ── */}
         <div className="flex-1 flex flex-col overflow-hidden p-3 gap-2">
           <div className="flex-1 overflow-hidden" style={{ cursor: (placingPropUrl || placingLightType) ? "crosshair" : undefined }}>
-            {project.model_url ? (
+            {project.model_url && !modelLoadErr ? (
+              <ModelErrorBoundary key={project.model_url} onError={setModelLoadErr}>
               <SceneEditorViewport
                 ref={viewportRef}
                 modelUrl={project.model_url}
@@ -4391,13 +4426,22 @@ export default function SceneEditorPage() {
                 onLightTransformed={handleLightTransformed}
                 onMeshDoubleClick={handleMeshDoubleClick}
               />
+              </ModelErrorBoundary>
             ) : (
               <div className="w-full h-full bg-[#0d0d0d] rounded-xl flex flex-col items-center justify-center gap-3 border border-dashed border-white/10">
                 <div className="text-4xl opacity-20">⬡</div>
-                <p className="text-white/25 text-sm">Upload a GLB to start editing</p>
+                {modelLoadErr ? (
+                  <>
+                    <p className="text-red-400/70 text-sm font-medium">Model failed to load</p>
+                    <p className="text-white/25 text-xs max-w-[240px] text-center">{modelLoadErr}</p>
+                    <p className="text-white/25 text-xs">Re-upload a valid GLB to recover</p>
+                  </>
+                ) : (
+                  <p className="text-white/25 text-sm">Upload a GLB to start editing</p>
+                )}
                 <button onClick={() => fileInputRef.current?.click()}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors">
-                  Upload GLB
+                  {modelLoadErr ? "Re-upload GLB" : "Upload GLB"}
                 </button>
               </div>
             )}

@@ -14,9 +14,20 @@
  */
 
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { useThree } from "@react-three/fiber";
+import { useThree, useLoader } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
+import { GLTFLoader, DRACOLoader } from "three-stdlib";
+import type { GLTF } from "three-stdlib";
 import * as THREE from "three";
+
+const _dracoLoader = new DRACOLoader();
+_dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.5/");
+_dracoLoader.preload();
+function useGLTFDraco(url: string): GLTF {
+  return useLoader(GLTFLoader, url, (loader) => {
+    (loader as GLTFLoader).setDRACOLoader(_dracoLoader);
+  }) as unknown as GLTF;
+}
 import { PhaseId } from "@/constants/phases";
 import { ModelNodeGroups, Option, OptionType } from "@/types/database";
 import {
@@ -171,7 +182,7 @@ export default function HomeModel({
   structuralArrays = {},
   onSceneReady,
 }: HomeModelProps) {
-  const { scene }    = useGLTF(modelUrl);
+  const { scene }    = useGLTFDraco(modelUrl);
   const { invalidate } = useThree();
   const [model, setModel] = useState<THREE.Group | null>(null);
   const reportedRef  = useRef(false);
@@ -335,4 +346,4 @@ export default function HomeModel({
   return <primitive object={model} dispose={null} />;
 }
 
-HomeModel.preload = (url: string) => useGLTF.preload(url);
+HomeModel.preload = (url: string) => useGLTF.preload(url, "/draco/");

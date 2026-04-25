@@ -3,6 +3,8 @@
 import React, { Component, useEffect, useRef, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useGLTF } from "@react-three/drei";
+
+useGLTF.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.5/");
 import SketchfabViewer, { ViewerStatus } from "@/components/SketchfabViewer";
 import R3FViewer from "@/components/r3f/R3FViewer";
 import PhaseController from "@/components/PhaseController";

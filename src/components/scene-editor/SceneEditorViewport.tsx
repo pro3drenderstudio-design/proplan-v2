@@ -11,13 +11,27 @@ class PropErrorBoundary extends Component<{ children: React.ReactNode }, { faile
   componentDidCatch(error: Error) { console.error("[PropErrorBoundary] prop load failed:", error.message); }
   render() { return this.state.failed ? null : this.props.children; }
 }
-import { Canvas, useThree, useFrame } from "@react-three/fiber";
+import { Canvas, useThree, useFrame, useLoader } from "@react-three/fiber";
 import type { ThreeEvent } from "@react-three/fiber";
 import {
   useGLTF, OrbitControls, TransformControls,
   GizmoHelper, GizmoViewport, Environment,
   Grid, Sky, Stars, Cloud, Clouds, Html, useProgress,
 } from "@react-three/drei";
+import { GLTFLoader, DRACOLoader } from "three-stdlib";
+import type { GLTF } from "three-stdlib";
+
+useGLTF.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.5/");
+
+// Explicit DRACOLoader wired directly to GLTFLoader — same pattern as Three.js docs
+const _dracoLoader = new DRACOLoader();
+_dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.5/");
+_dracoLoader.preload();
+function useGLTFDraco(url: string): GLTF {
+  return useLoader(GLTFLoader, url, (loader) => {
+    (loader as GLTFLoader).setDRACOLoader(_dracoLoader);
+  }) as unknown as GLTF;
+}
 import { EffectComposer, Bloom, SMAA, N8AO, BrightnessContrast } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
 import * as THREE from "three";
@@ -345,7 +359,7 @@ function EditorScene({
   onMeshDoubleClick,
   skipEffects = false,
 }: EditorSceneProps) {
-  const { scene } = useGLTF(modelUrl);
+  const { scene } = useGLTFDraco(modelUrl);
   const { camera, gl } = useThree();
   const orbitRef     = useRef<OrbitControlsImpl>(null);
   const reportedRef  = useRef(false);
@@ -1343,7 +1357,7 @@ function PlacedProp({ modelUrl, position, rotation, scale, isSelected, transform
   onSelect?: () => void;
   onTransformed?: (pos: [number,number,number], rot: [number,number,number], sc: [number,number,number]) => void;
 }) {
-  const { scene } = useGLTF(modelUrl);
+  const { scene } = useGLTF(modelUrl, "/draco/");
   const clone = React.useMemo(() => scene.clone(true), [scene]);
   const primitiveRef = useRef<THREE.Group>(null);
 
@@ -1382,7 +1396,7 @@ function PlacedProp({ modelUrl, position, rotation, scale, isSelected, transform
 function GhostProp({ modelUrl, position, scale }: {
   modelUrl: string; position: [number,number,number]; scale: [number,number,number];
 }) {
-  const { scene } = useGLTF(modelUrl);
+  const { scene } = useGLTF(modelUrl, "/draco/");
   const clone = useRef<THREE.Group | null>(null);
   if (!clone.current) {
     clone.current = scene.clone(true);
