@@ -3263,11 +3263,12 @@ export default function SceneEditorPage() {
   const [uploading,     setUploading]     = useState(false);
   const [uploadPct,     setUploadPct]     = useState(0);
   const [uploadErr,     setUploadErr]     = useState("");
-  const [autoCompress,  setAutoCompress]  = useState(true);
-  const [compressing,   setCompressing]   = useState(false);
-  const [compressResult, setCompressResult] = useState<{ originalFormatted: string; compressedFormatted: string; reductionPct: number } | null>(null);
-  const [compressErr,   setCompressErr]   = useState("");
-  const [saving,        setSaving]        = useState(false);
+  const [autoCompress,    setAutoCompress]    = useState(true);
+  const [compressing,     setCompressing]     = useState(false);
+  const [compressResult,  setCompressResult]  = useState<{ originalFormatted: string; compressedFormatted: string; reductionPct: number } | null>(null);
+  const [compressErr,     setCompressErr]     = useState("");
+  const [compressErrModal, setCompressErrModal] = useState("");
+  const [saving,          setSaving]          = useState(false);
   const [toast,         setToast]         = useState("");
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(""), 2500); }
@@ -3900,7 +3901,7 @@ export default function SceneEditorPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setCompressErr(msg);
-      showToast(`Compress failed: ${msg}`);
+      setCompressErrModal(msg);
     } finally {
       setCompressing(false);
     }
@@ -4090,6 +4091,30 @@ export default function SceneEditorPage() {
   return (
     <div className="h-full bg-[#0a0a0a] text-white flex flex-col overflow-hidden">
       <Toast msg={toast} />
+
+      {/* Compress error modal */}
+      {compressErrModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setCompressErrModal("")}>
+          <div className="bg-[#1a1a1a] border border-red-500/30 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-8 h-8 rounded-full bg-red-500/15 border border-red-500/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white mb-1">Compression failed</p>
+                <p className="text-xs text-white/50 leading-relaxed break-words">{compressErrModal}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setCompressErrModal("")}
+              className="w-full py-2 bg-white/8 hover:bg-white/14 border border-white/12 text-white/70 text-xs font-medium rounded-lg transition-colors">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/8 flex-shrink-0 gap-3">
