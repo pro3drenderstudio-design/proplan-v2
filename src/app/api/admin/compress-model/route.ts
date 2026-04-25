@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { uploadToR2 } from "@/lib/r2";
+import sharp from "sharp";
 
 export const maxDuration = 120;
 
@@ -134,9 +135,6 @@ function packGlb(json: GltfJson, bin: Buffer): Buffer {
 // ── Texture compression ───────────────────────────────────────────────────────
 
 async function compressGlbTextures(input: Buffer): Promise<Buffer> {
-  // sharp is a native CJS-compatible module — safe to import normally
-  const sharp = (await import("sharp")).default;
-
   const { json, bin } = readGlb(input);
 
   if (!bin || !json.images?.length || !json.bufferViews?.length) {

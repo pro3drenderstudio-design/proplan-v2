@@ -3900,6 +3900,7 @@ export default function SceneEditorPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setCompressErr(msg);
+      showToast(`Compress failed: ${msg}`);
     } finally {
       setCompressing(false);
     }
