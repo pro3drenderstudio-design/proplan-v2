@@ -294,6 +294,20 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     });
   }, [allCategories]);
 
+  // ── Phase warmup ───────────────────────────────────────────────────────────
+  // Once the viewer is ready, silently switch to interior for ~700ms during the
+  // preloader fade-out so its HDRI/textures get cached. The user never sees it.
+  const phaseWarmupDone = useRef(false);
+  useEffect(() => {
+    if (!isLoaded || phaseWarmupDone.current || !project) return;
+    const isR3FModel = project.viewer_mode === "r3f" || (project.viewer_mode == null && !!project.model_url);
+    if (!isR3FModel) return;
+    phaseWarmupDone.current = true;
+    const t1 = setTimeout(() => setConfig(prev => ({ ...prev, currentPhase: "interior", activeOverride: null })), 120);
+    const t2 = setTimeout(() => setConfig(prev => ({ ...prev, currentPhase: DEFAULT_PHASE, activeOverride: null })), 860);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [isLoaded, project]);
+
   // ── Handlers ───────────────────────────────────────────────────────────────
   function handleStatusChange(status: ViewerStatus) {
     setViewerStatus(status);

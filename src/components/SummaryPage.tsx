@@ -538,7 +538,7 @@ export default function SummaryPage({
   const accent = /^#[0-9a-fA-F]{6}$/.test(builder?.accent_color ?? "") ? builder!.accent_color! : "#C9A96E";
 
   // Build brochure pages: one per phase that has categories or a screenshot
-  const brochurePages: { id: string; label: string; cats: typeof categories; render: string | null | undefined; loading: boolean; aiLabel?: string }[] = [];
+  const brochurePages: { id: string; label: string; cats: typeof categories; render: string | null | undefined; loading: boolean; aiLabel?: string; isAiRender: boolean }[] = [];
   for (const phase of PHASES) {
     const phaseCats = categories.filter(c => c.phase?.toLowerCase() === phase.id);
     const visibleCats = phaseCats.filter(cat => {
@@ -553,6 +553,7 @@ export default function SummaryPage({
         render: aiRenders[phase.id] ?? phaseScreenshots[phase.id],
         loading: !!aiLoading[phase.id],
         aiLabel: phase.id === "exterior" ? "Exterior" : "Interior",
+        isAiRender: !!aiRenders[phase.id as PhaseId],
       });
     }
   }
@@ -569,6 +570,7 @@ export default function SummaryPage({
       render: aiRender2 ?? interior2Screenshot,
       loading: aiLoading2,
       aiLabel: "Interior",
+      isAiRender: !!aiRender2,
     });
   }
 
@@ -767,12 +769,14 @@ export default function SummaryPage({
 
                 {pg.render && !pg.loading && (
                   <>
-                    {/* AI badge */}
-                    <div className="absolute bottom-5 right-5 flex items-center gap-1.5 px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider"
-                      style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.45)", backdropFilter: "blur(6px)" }}>
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: accent }} />
-                      AI Enhanced
-                    </div>
+                    {/* AI badge — only when this view was actually AI-rendered */}
+                    {pg.isAiRender && (
+                      <div className="absolute bottom-5 right-5 flex items-center gap-1.5 px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider"
+                        style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.45)", backdropFilter: "blur(6px)" }}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: accent }} />
+                        AI Visualized
+                      </div>
+                    )}
                     {/* Expand */}
                     <button onClick={() => setLightboxSrc(pg.render!)}
                       className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-xl text-white/50 hover:text-white/90 transition-colors"
@@ -860,12 +864,12 @@ export default function SummaryPage({
 
       {/* ── Bottom bar: price + AI status + CTA ── */}
       <div
-        className="relative z-10 flex-shrink-0 flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 gap-3 sm:gap-4"
-        style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: "rgba(11,12,14,0.97)", backdropFilter: "blur(8px)" }}
+        className="relative z-10 flex-shrink-0 flex items-center justify-between px-3 sm:px-6 gap-3 sm:gap-4"
+        style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: "rgba(11,12,14,0.97)", backdropFilter: "blur(8px)", maxHeight: "20vh", minHeight: 56, paddingTop: 10, paddingBottom: 10 }}
       >
         <div className="flex-shrink-0 min-w-0">
-          <p className="text-[8px] sm:text-[9px] font-semibold text-white/25 uppercase tracking-[0.22em]">Total Estimate</p>
-          <p className="text-lg sm:text-xl font-bold text-white leading-tight" style={{ fontFamily: "var(--font-syne), sans-serif", letterSpacing: "-0.02em" }}>
+          <p className="text-[8px] font-semibold text-white/25 uppercase tracking-[0.22em] leading-none mb-0.5">Total Estimate</p>
+          <p className="text-2xl sm:text-3xl font-bold text-white leading-none" style={{ fontFamily: "var(--font-syne), sans-serif", letterSpacing: "-0.03em" }}>
             {totalPrice.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}
           </p>
           {lotInfo?.priceModifier && lotInfo.priceModifier !== 0 && (
@@ -918,15 +922,15 @@ export default function SummaryPage({
               <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 flex-shrink-0" style={{ color: accent }}>
                 <path d="M7.657 6.247c.11-.33.576-.33.686 0l.645 1.937a2.89 2.89 0 0 0 1.829 1.828l1.936.645c.33.11.33.576 0 .686l-1.937.645a2.89 2.89 0 0 0-1.828 1.829l-.645 1.936a.361.361 0 0 1-.686 0l-.645-1.937a2.89 2.89 0 0 0-1.828-1.828l-1.937-.645a.361.361 0 0 1 0-.686l1.937-.645a2.89 2.89 0 0 0 1.828-1.828l.645-1.937zM3.794 1.148a.217.217 0 0 1 .412 0l.387 1.162c.173.518.579.924 1.097 1.097l1.162.387a.217.217 0 0 1 0 .412l-1.162.387A1.73 1.73 0 0 0 4.593 5.69l-.387 1.162a.217.217 0 0 1-.412 0L3.407 5.69A1.73 1.73 0 0 0 2.31 4.593l-1.162-.387a.217.217 0 0 1 0-.412l1.162-.387A1.73 1.73 0 0 0 3.407 2.31l.387-1.162zM10.863.099a.145.145 0 0 1 .274 0l.258.774c.115.346.386.617.732.732l.774.258a.145.145 0 0 1 0 .274l-.774.258a1.16 1.16 0 0 0-.732.732l-.258.774a.145.145 0 0 1-.274 0l-.258-.774a1.16 1.16 0 0 0-.732-.732L9.1 2.137a.145.145 0 0 1 0-.274l.774-.258c.346-.115.617-.386.732-.732L10.863.1z"/>
               </svg>
-              <span className="hidden sm:inline">AI Render</span>
+              <span className="hidden sm:inline">Visualize with AI</span>
               <span className="sm:hidden">AI</span>
             </button>
           )}
           <button
             onClick={() => setStep("quote")}
             disabled={anyRendering}
-            className="flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-[11px] font-semibold uppercase tracking-widest transition-all disabled:opacity-50"
-            style={{ background: anyRendering ? "rgba(255,255,255,0.06)" : `linear-gradient(135deg, ${accent}ee, ${accent}99)`, boxShadow: anyRendering ? "none" : `0 4px 24px ${accent}28`, border: `1px solid ${anyRendering ? "rgba(255,255,255,0.08)" : accent + "40"}`, color: anyRendering ? "rgba(255,255,255,0.3)" : "#0b0c0e" }}
+            className="flex items-center gap-2 px-4 sm:px-5 py-2 rounded-xl text-[11px] font-semibold uppercase tracking-widest transition-all disabled:opacity-50"
+            style={{ background: anyRendering ? "rgba(255,255,255,0.06)" : `linear-gradient(135deg, ${accent}ee, ${accent}99)`, boxShadow: anyRendering ? "none" : `0 4px 24px ${accent}28`, border: `1px solid ${anyRendering ? "rgba(255,255,255,0.08)" : accent + "40"}`, color: anyRendering ? "rgba(255,255,255,0.3)" : "white" }}
           >
             Get Quote
             <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
