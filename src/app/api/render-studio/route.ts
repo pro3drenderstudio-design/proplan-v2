@@ -6,7 +6,7 @@ export const maxDuration = 120;
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent";
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
 
 // DB-only Supabase client — storage ops have been moved to R2
 const supabase = createClient(
