@@ -104,24 +104,9 @@ export default function SummaryPage({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ imageBase64: base64, phase: apiPhase }),
         });
-        if (!submitRes.ok) throw new Error(`submit ${submitRes.status}`);
-        const { statusUrl, responseUrl } = await submitRes.json() as { statusUrl: string; responseUrl: string };
-
-        for (let i = 0; i < 80; i++) {
-          await new Promise(r => setTimeout(r, 3000));
-          if (abort.signal.aborted) return;
-          const pollRes = await fetch("/api/generate-render/poll", {
-            method: "POST", signal: abort.signal,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ statusUrl, responseUrl }),
-          });
-          if (!pollRes.ok) continue;
-          const result = await pollRes.json() as { done: boolean; imageBase64?: string };
-          if (result.done) {
-            setResult(result.imageBase64 ? `data:image/png;base64,${result.imageBase64}` : null);
-            break;
-          }
-        }
+        if (!submitRes.ok) throw new Error(`generate-render ${submitRes.status}`);
+        const { imageBase64: resultBase64 } = await submitRes.json() as { imageBase64?: string };
+        setResult(resultBase64 ? `data:image/png;base64,${resultBase64}` : null);
       } catch {
         if (!abort.signal.aborted) setResult(null);
       } finally {
