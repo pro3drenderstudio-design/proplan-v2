@@ -69,6 +69,8 @@ export default function SketchfabViewer({
     function initViewer() {
       if (!window.Sketchfab || !iframeRef.current) return;
 
+      const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+
       const client = new window.Sketchfab(iframeRef.current);
       client.init(modelId, {
         success: (instance: SketchfabInstance) => {
@@ -103,9 +105,11 @@ export default function SketchfabViewer({
           updateStatus("error");
         },
         autostart: 1,
+        preload: 1,
         ui_stop: 0,
         ui_infos: 0,
         ui_watermark: 0,
+        max_texture_size: isMobile ? 1024 : 2048,
       });
     }
 
@@ -148,7 +152,8 @@ export default function SketchfabViewer({
       <iframe
         ref={iframeRef}
         title="ProPlan Studio 3D Viewer"
-        className="w-full h-full border-0"
+        className="w-full h-full border-0 transition-opacity duration-500"
+        style={{ opacity: viewerStatus === "ready" ? 1 : 0 }}
         allow="autoplay; fullscreen; xr-spatial-tracking"
         allowFullScreen
       />
