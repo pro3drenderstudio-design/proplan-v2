@@ -43,7 +43,7 @@ import type { CameraCoords } from "@/utils/sketchfab-camera";
 patchPolyhavenLoader();
 import { exportCanvas } from "@/lib/three/canvas-export";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import type { MaterialLibraryEntry, MaterialProperties, PlacedLight, PlacedShapeData, ShapeType } from "@/types/database";
+import type { MaterialLibraryEntry, MaterialProperties, PlacedLight, PlacedShapeData, ShapeType, ProjectAddon, AnnotationPin } from "@/types/database";
 import PathTracerController, { PTStatus } from "@/components/r3f/PathTracerController";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -203,6 +203,9 @@ export interface SceneEditorViewportHandle {
   flyTo(coords: CameraCoords): void;
 }
 
+// Mesh name → triangle count (base model + all addons)
+export type MeshTriangleCounts = Record<string, number>;
+
 export interface GlbMaterialInfo {
   name: string;
   color: string;       // hex
@@ -343,6 +346,19 @@ interface EditorSceneProps {
   onMeshDoubleClick?: (name: string) => void;
   // Suppress postprocessing while path tracer is rendering
   skipEffects?: boolean;
+  // Addon GLBs
+  addons?: ProjectAddon[];
+  selectedAddonId?: string | null;
+  onAddonSelect?: (id: string | null) => void;
+  onAddonTransformed?: (id: string, pos: [number,number,number], rot: [number,number,number], sc: [number,number,number]) => void;
+  addonTransformMode?: "translate" | "rotate" | "scale";
+  onAddonMeshNames?: (addonId: string, names: string[]) => void;
+  // Triangle counts callback (fired after scene clone)
+  onTriangleCounts?: (counts: MeshTriangleCounts) => void;
+  // Annotation pins
+  annotations?: AnnotationPin[];
+  placingAnnotation?: boolean;
+  onAnnotationPlaced?: (pos: [number,number,number]) => void;
 }
 
 function EditorScene({
@@ -358,6 +374,9 @@ function EditorScene({
   selectedLightId, onLightSelect, onLightTransformed,
   onMeshDoubleClick,
   skipEffects = false,
+  addons = [], selectedAddonId, onAddonSelect, onAddonTransformed, addonTransformMode = "translate",
+  onAddonMeshNames, onTriangleCounts,
+  annotations = [], placingAnnotation = false, onAnnotationPlaced,
 }: EditorSceneProps) {
   const { scene } = useGLTFDraco(modelUrl);
   const { camera, gl } = useThree();
@@ -735,6 +754,20 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
     }
     onGlbMats(extracted);
 
+    // Triangle counts per mesh name
+    if (onTriangleCounts) {
+      const counts: MeshTriangleCounts = {};
+      clone.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh) || !obj.name) return;
+        const geo = obj.geometry;
+        if (!geo) return;
+        counts[obj.name] = geo.index
+          ? geo.index.count / 3
+          : (geo.attributes.position?.count ?? 0) / 3;
+      });
+      onTriangleCounts(counts);
+    }
+
     setClonedScene(clone);
     reportedRef.current = false;
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -930,7 +963,7 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
   }, [camera, s.cameraFov]);
 
   function handleCanvasPointerMove(e: ThreeEvent<PointerEvent>) {
-    if (!placingPropUrl && !placingLightType) return;
+    if (!placingPropUrl && !placingLightType && !placingAnnotation) return;
     const hit = new THREE.Vector3();
     raycasterRef.current.setFromCamera(
       new THREE.Vector2(e.pointer.x, e.pointer.y),
@@ -941,6 +974,11 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
   }
 
   function handleCanvasPointerDown(e: ThreeEvent<PointerEvent>) {
+    if (placingAnnotation && ghostPos) {
+      e.stopPropagation();
+      onAnnotationPlaced?.(ghostPos);
+      return;
+    }
     if (placingLightType && ghostPos) {
       e.stopPropagation();
       onLightPlaced?.(ghostPos);
@@ -1140,8 +1178,37 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
         </mesh>
       )}
 
-      {/* Invisible ground plane for prop/light placement raycasting */}
-      {(placingPropUrl || placingLightType) && (
+      {/* Ghost annotation placement cursor */}
+      {placingAnnotation && ghostPos && (
+        <mesh position={ghostPos}>
+          <sphereGeometry args={[0.10, 8, 8]} />
+          <meshBasicMaterial color="#f472b6" toneMapped={false} transparent opacity={0.7} />
+        </mesh>
+      )}
+
+      {/* Addon GLBs */}
+      {addons.map((addon) => addon.visible && (
+        <PropErrorBoundary key={addon.id}>
+          <Suspense fallback={null}>
+            <AddonModel
+              addon={addon}
+              isSelected={selectedAddonId === addon.id}
+              transformMode={addonTransformMode}
+              onSelect={() => { onAddonSelect?.(addon.id); onMeshSelect([]); onPropSelect?.(null); }}
+              onTransformed={(pos, rot, sc) => onAddonTransformed?.(addon.id, pos, rot, sc)}
+              onMeshNames={(names) => onAddonMeshNames?.(addon.id, names)}
+            />
+          </Suspense>
+        </PropErrorBoundary>
+      ))}
+
+      {/* Annotation pins */}
+      {annotations.map((pin) => (
+        <AnnotationPinGizmo key={pin.id} pin={pin} />
+      ))}
+
+      {/* Invisible ground plane for prop/light/annotation placement raycasting */}
+      {(placingPropUrl || placingLightType || placingAnnotation) && (
         <mesh
           rotation={[-Math.PI / 2, 0, 0]}
           position={[0, 0, 0]}
@@ -1344,6 +1411,120 @@ function LightGizmo({ light, isSelected, isDraggingRef, onSelect, onTransform }:
         />
       )}
     </>
+  );
+}
+
+// ─── AddonModel ───────────────────────────────────────────────────────────────
+
+function AddonModel({
+  addon, isSelected, transformMode = "translate", onSelect, onTransformed, onMeshNames,
+}: {
+  addon: ProjectAddon;
+  isSelected?: boolean;
+  transformMode?: "translate" | "rotate" | "scale";
+  onSelect?: () => void;
+  onTransformed?: (pos: [number,number,number], rot: [number,number,number], sc: [number,number,number]) => void;
+  onMeshNames?: (names: string[]) => void;
+}) {
+  const { scene } = useGLTFDraco(addon.modelUrl);
+  const groupRef = useRef<THREE.Group>(null);
+  const [clone] = useState<THREE.Group>(() => {
+    const c = scene.clone(true);
+    c.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+    return c;
+  });
+
+  // Report mesh names up once
+  useEffect(() => {
+    if (!onMeshNames) return;
+    const names: string[] = [];
+    clone.traverse((obj) => { if (obj instanceof THREE.Mesh && obj.name) names.push(obj.name); });
+    onMeshNames(names);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addon.modelUrl]);
+
+  const { position, rotation, scale } = addon.transform;
+
+  function handleTransformChange() {
+    const g = groupRef.current;
+    if (!g) return;
+    onTransformed?.(
+      [g.position.x, g.position.y, g.position.z],
+      [g.rotation.x, g.rotation.y, g.rotation.z],
+      [g.scale.x,    g.scale.y,    g.scale.z],
+    );
+  }
+
+  return (
+    <>
+      <group
+        ref={groupRef}
+        position={position}
+        rotation={rotation}
+        scale={scale}
+        onPointerDown={(e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onSelect?.(); }}
+      >
+        <primitive object={clone} />
+        {isSelected && (
+          <mesh renderOrder={-1}>
+            <boxGeometry args={[0.01, 0.01, 0.01]} />
+            <meshBasicMaterial transparent opacity={0} />
+          </mesh>
+        )}
+      </group>
+      {isSelected && groupRef.current && (
+        <TransformControls
+          object={groupRef.current}
+          mode={transformMode}
+          onChange={handleTransformChange}
+          size={0.85}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── AnnotationPinGizmo ────────────────────────────────────────────────────────
+
+function AnnotationPinGizmo({ pin }: { pin: AnnotationPin }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <group position={pin.position}>
+      <mesh
+        onPointerOver={() => setHovered(true)}
+        onPointerOut={() => setHovered(false)}
+      >
+        <sphereGeometry args={[0.08, 10, 10]} />
+        <meshBasicMaterial color={pin.color} toneMapped={false} />
+      </mesh>
+      {hovered && (
+        <Html
+          center
+          distanceFactor={10}
+          style={{ pointerEvents: "none" }}
+          position={[0, 0.25, 0]}
+        >
+          <div style={{
+            background: "rgba(0,0,0,0.85)",
+            color: "#f9fafb",
+            fontSize: 11,
+            padding: "4px 8px",
+            borderRadius: 6,
+            whiteSpace: "nowrap",
+            maxWidth: 200,
+            backdropFilter: "blur(4px)",
+            border: `1px solid ${pin.color}40`,
+          }}>
+            {pin.text}
+          </div>
+        </Html>
+      )}
+    </group>
   );
 }
 
@@ -1618,6 +1799,18 @@ interface SceneEditorViewportProps {
   onMeshDoubleClick?: (name: string) => void;
   // Increment to trigger path tracer BVH rebuild after geometry changes
   sceneVersion?: number;
+  // Addon GLBs
+  addons?: ProjectAddon[];
+  selectedAddonId?: string | null;
+  onAddonSelect?: (id: string | null) => void;
+  onAddonTransformed?: (id: string, pos: [number,number,number], rot: [number,number,number], sc: [number,number,number]) => void;
+  addonTransformMode?: "translate" | "rotate" | "scale";
+  onAddonMeshNames?: (addonId: string, names: string[]) => void;
+  onTriangleCounts?: (counts: MeshTriangleCounts) => void;
+  // Annotations
+  annotations?: AnnotationPin[];
+  placingAnnotation?: boolean;
+  onAnnotationPlaced?: (pos: [number,number,number]) => void;
 }
 
 function SceneLoadingOverlay() {
@@ -1652,7 +1845,11 @@ const SceneEditorViewport = forwardRef<SceneEditorViewportHandle, SceneEditorVie
      selectedPropId, onPropSelect, onPropTransformed, propTransformMode,
      placedLights = [], placingLightType, onLightPlaced,
      selectedLightId, onLightSelect, onLightTransformed,
-     onMeshDoubleClick, sceneVersion = 0, ...props }, ref) => {
+     onMeshDoubleClick, sceneVersion = 0,
+     addons = [], selectedAddonId, onAddonSelect, onAddonTransformed, addonTransformMode,
+     onAddonMeshNames, onTriangleCounts,
+     annotations = [], placingAnnotation = false, onAnnotationPlaced,
+     ...props }, ref) => {
     const cameraCaptureRef = useRef<(() => CameraCoords | null) | null>(null);
     const screenshotRef    = useRef<(() => string) | null>(null);
     const flyToRef         = useRef<((coords: CameraCoords) => void) | null>(null);
@@ -1740,6 +1937,16 @@ const SceneEditorViewport = forwardRef<SceneEditorViewportHandle, SceneEditorVie
               onShapeTransformed={onShapeTransformed}
               shapeTransformMode={shapeTransformMode}
               shapeMaterials={shapeMaterials}
+              addons={addons}
+              selectedAddonId={selectedAddonId}
+              onAddonSelect={onAddonSelect}
+              onAddonTransformed={onAddonTransformed}
+              addonTransformMode={addonTransformMode}
+              onAddonMeshNames={onAddonMeshNames}
+              onTriangleCounts={onTriangleCounts}
+              annotations={annotations}
+              placingAnnotation={placingAnnotation}
+              onAnnotationPlaced={onAnnotationPlaced}
             />
           </Suspense>
 

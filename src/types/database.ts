@@ -453,6 +453,39 @@ export interface PropCatalogEntry {
 }
 
 // =============================================================================
+// project_addons (stored per-project in camera_defaults._addons)
+// =============================================================================
+export interface ProjectAddon {
+  id: string;
+  name: string;
+  modelUrl: string;
+  storagePath?: string;
+  transform: {
+    position: [number, number, number];
+    rotation: [number, number, number];
+    scale: [number, number, number];
+  };
+  visible: boolean;
+}
+
+// Camera bookmark — named camera position stored in camera_defaults._cameraBookmarks
+export interface CameraBookmark {
+  id: string;
+  name: string;
+  pos: [number, number, number];
+  target: [number, number, number];
+  fov: number;
+}
+
+// Annotation pin — 3D space comment stored in camera_defaults._annotations
+export interface AnnotationPin {
+  id: string;
+  position: [number, number, number];
+  text: string;
+  color: string;
+}
+
+// =============================================================================
 // geometry_rules (project-scoped)
 // =============================================================================
 export interface ProjectGeometryRule {

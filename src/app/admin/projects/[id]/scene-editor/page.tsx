@@ -9,7 +9,9 @@ import { saveCategoryCamera, setDefaultOption as apiSetDefaultOption, updateCate
 import type {
   CategoryWithOptions, MaterialLibraryEntry, Option, OptionType, Project,
   PlacedPropData, PropCatalogEntry, PlacedShapeData, ShapeType, PlacedLight,
+  ProjectAddon, CameraBookmark, AnnotationPin,
 } from "@/types/database";
+import type { MeshTriangleCounts } from "@/components/scene-editor/SceneEditorViewport";
 import type { SceneTreeNode } from "@/lib/three/variant-engine";
 import type {
   SceneEditorViewportHandle, SceneSettings, MeshOverrides, TransformMode, GlbMaterialInfo,
@@ -953,6 +955,7 @@ function vec3Label([x, y, z]: [number, number, number]) {
 function PropertiesPanel({
   selectedMeshes, meshOverrides, selectedMeshMat, selectedMeshGlbMat, glbMatOverrides,
   onEditMat, onEditGlb, onResetTransform, deletedMeshes, onDeleteMesh, onRestoreMesh,
+  triangleCounts, isolationOverride, onClearIsolation,
 }: {
   selectedMeshes: string[];
   meshOverrides: MeshOverrides;
@@ -965,9 +968,22 @@ function PropertiesPanel({
   deletedMeshes?: Set<string>;
   onDeleteMesh?: (name: string) => void;
   onRestoreMesh?: (name: string) => void;
+  triangleCounts?: MeshTriangleCounts;
+  isolationOverride?: string[] | null;
+  onClearIsolation?: () => void;
 }) {
   if (selectedMeshes.length === 0) {
-    return <div className="flex-1 flex items-center justify-center text-white/15 text-[10px] px-4 text-center">Select a mesh or double-click a material to edit</div>;
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-white/15 text-[10px] px-4 text-center gap-2">
+        <span>Select a mesh or double-click a material to edit</span>
+        {isolationOverride && isolationOverride.length > 0 && (
+          <button onClick={onClearIsolation}
+            className="px-2.5 py-1 bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 text-[9px] rounded-lg hover:bg-indigo-600/35 transition-colors">
+            ⊙ {isolationOverride.length} mesh{isolationOverride.length !== 1 ? "es" : ""} isolated — clear (Alt+H)
+          </button>
+        )}
+      </div>
+    );
   }
 
   const meshName = selectedMeshes.length === 1 ? selectedMeshes[0] : null;
@@ -999,8 +1015,18 @@ function PropertiesPanel({
         <p className="text-[10px] text-white/35 py-2">{selectedMeshes.length} meshes selected</p>
       ) : (
         <>
-          {/* Mesh name */}
-          <p className="text-[10px] text-white/40 font-mono truncate mb-3 pb-2 border-b border-white/8">{meshName}</p>
+          {/* Mesh name + triangle count */}
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/8 gap-2 min-w-0">
+            <p className="text-[10px] text-white/40 font-mono truncate flex-1">{meshName}</p>
+            {triangleCounts && meshName && triangleCounts[meshName] !== undefined && (
+              <span className={`text-[9px] font-mono flex-shrink-0 px-1.5 py-0.5 rounded-md ${
+                triangleCounts[meshName] > 50000 ? "text-amber-400/70 bg-amber-500/10" :
+                triangleCounts[meshName] > 10000 ? "text-yellow-400/60 bg-yellow-500/8" : "text-white/25 bg-white/5"
+              }`}>
+                {(triangleCounts[meshName] / 1000).toFixed(1)}k △
+              </span>
+            )}
+          </div>
 
           {/* Material card — double-click to edit */}
           {matName ? (
@@ -2466,6 +2492,134 @@ function SettingsPanel({
   );
 }
 
+// ─── Mesh Health Check Panel ─────────────────────────────────────────────────
+
+function MeshHealthPanel({
+  categories, glbMeshNames, addonMeshNames, swapDiff, onClearDiff,
+  triangleCounts, onRemoveMesh, onSelectMesh,
+}: {
+  categories: CategoryWithOptions[];
+  glbMeshNames: Set<string>;
+  addonMeshNames: Record<string, string[]>;
+  swapDiff: { missing: string[]; found: string[] } | null;
+  onClearDiff: () => void;
+  triangleCounts: MeshTriangleCounts;
+  onRemoveMesh: (optionId: string, meshName: string) => Promise<void>;
+  onSelectMesh: (name: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+
+  // Build a flat map: nodeName → [optionId, optionName]
+  const nodeOptMap: Record<string, { optId: string; optName: string; catName: string }> = {};
+  for (const cat of categories)
+    for (const opt of cat.options)
+      for (const n of (opt.node_list ?? []))
+        if (!nodeOptMap[n]) nodeOptMap[n] = { optId: opt.id, optName: opt.friendly_name, catName: cat.name };
+
+  const allNodes = Object.keys(nodeOptMap);
+  const allKnown = new Set([...glbMeshNames, ...Object.values(addonMeshNames).flat()]);
+  const stale    = allNodes.filter(n => !allKnown.has(n));
+  const healthy  = allNodes.filter(n => allKnown.has(n));
+  const filtered = search
+    ? allNodes.filter(n => n.toLowerCase().includes(search.toLowerCase()))
+    : allNodes;
+
+  const totalTris = Object.values(triangleCounts).reduce((s, v) => s + v, 0);
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Summary */}
+      <div className="flex gap-2">
+        <div className="flex-1 px-3 py-2 bg-green-500/8 border border-green-500/15 rounded-xl text-center">
+          <p className="text-base font-bold text-green-400">{healthy.length}</p>
+          <p className="text-[8px] text-green-400/60 uppercase tracking-wider">Healthy</p>
+        </div>
+        <div className={`flex-1 px-3 py-2 rounded-xl text-center border ${stale.length > 0 ? "bg-amber-500/8 border-amber-500/15" : "bg-white/3 border-white/8"}`}>
+          <p className={`text-base font-bold ${stale.length > 0 ? "text-amber-400" : "text-white/20"}`}>{stale.length}</p>
+          <p className={`text-[8px] uppercase tracking-wider ${stale.length > 0 ? "text-amber-400/60" : "text-white/20"}`}>Stale</p>
+        </div>
+        {totalTris > 0 && (
+          <div className="flex-1 px-3 py-2 bg-white/3 border border-white/8 rounded-xl text-center">
+            <p className="text-base font-bold text-white/40">{(totalTris / 1000).toFixed(0)}k</p>
+            <p className="text-[8px] text-white/25 uppercase tracking-wider">Tris</p>
+          </div>
+        )}
+      </div>
+
+      {/* Swap diff banner */}
+      {swapDiff && (
+        <div className="flex items-start gap-2 px-2.5 py-2 bg-amber-500/8 border border-amber-500/20 rounded-xl">
+          <span className="text-amber-400 text-xs flex-shrink-0">⚠</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[9px] text-amber-400/80 font-semibold">Model swap detected</p>
+            <p className="text-[8px] text-amber-400/50">{swapDiff.missing.length} nodes missing in new GLB</p>
+          </div>
+          <button onClick={onClearDiff} className="text-white/25 hover:text-white text-[10px]">✕</button>
+        </div>
+      )}
+
+      {/* Triangle budget per mesh */}
+      {Object.keys(triangleCounts).length > 0 && (
+        <div>
+          <p className="text-[8px] uppercase tracking-wider text-white/20 mb-1.5">Poly budget (top 10)</p>
+          <div className="flex flex-col gap-0.5">
+            {Object.entries(triangleCounts)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 10)
+              .map(([name, tris]) => {
+                const pct = Math.min(100, (tris / Math.max(...Object.values(triangleCounts))) * 100);
+                return (
+                  <div key={name} className="flex items-center gap-1.5 group cursor-pointer" onClick={() => onSelectMesh(name)}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[8px] font-mono text-white/35 truncate max-w-[120px]">{name}</span>
+                        <span className={`text-[8px] font-mono flex-shrink-0 ${tris > 50000 ? "text-amber-400/70" : "text-white/25"}`}>
+                          {(tris / 1000).toFixed(1)}k
+                        </span>
+                      </div>
+                      <div className="h-px bg-white/8 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${tris > 50000 ? "bg-amber-400/50" : "bg-blue-500/50"}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
+      {/* Search + node list */}
+      <div>
+        <input
+          value={search} onChange={e => setSearch(e.target.value)}
+          placeholder={`Search ${allNodes.length} mapped nodes…`}
+          className="w-full px-2 py-1 bg-white/5 border border-white/[0.08] rounded-lg text-[10px] text-white placeholder-white/20 outline-none focus:border-blue-500/40 mb-1.5"
+        />
+        <div className="flex flex-col gap-0.5 max-h-[200px] overflow-y-auto" style={{ scrollbarWidth: "none" }}>
+          {filtered.map(n => {
+            const inScene = allKnown.has(n);
+            const { optId, optName, catName } = nodeOptMap[n];
+            return (
+              <div key={n} className="flex items-center gap-1.5 px-1.5 py-1 rounded-md group hover:bg-white/4 cursor-pointer" onClick={() => inScene && onSelectMesh(n)}>
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${inScene ? "bg-green-400" : "bg-amber-400"}`} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[9px] font-mono text-white/50 truncate">{n}</p>
+                  <p className="text-[7px] text-white/20 truncate">{catName} › {optName}</p>
+                </div>
+                {!inScene && (
+                  <button
+                    onClick={async e => { e.stopPropagation(); await onRemoveMesh(optId, n); }}
+                    className="opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 text-[9px] transition-opacity">✕</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Structural Visibility Panel ─────────────────────────────────────────────
 
 function StructuralVisibilityPanel({
@@ -3019,6 +3173,7 @@ export default function SceneEditorPage() {
   const categoriesRef      = useRef(categories);      categoriesRef.current      = categories;
   const materialsRef       = useRef(materials);       materialsRef.current       = materials;
   const phaseSettingsRef   = useRef(phaseSettings);   phaseSettingsRef.current   = phaseSettings;
+  const selectedMeshesRef  = useRef(selectedMeshes);  selectedMeshesRef.current  = selectedMeshes;
   const undoStackRef = useRef<EditorSnapshot[]>([]);
   const redoStackRef = useRef<EditorSnapshot[]>([]);
   const [undoLen, setUndoLen] = useState(0);
@@ -3142,8 +3297,37 @@ export default function SceneEditorPage() {
   const [deletedMeshes,    setDeletedMeshes]     = useState<Set<string>>(new Set());
   const deletedMeshesRef   = useRef(deletedMeshes);   deletedMeshesRef.current   = deletedMeshes;
 
+  // ── Addon GLBs ─────────────────────────────────────────────────────────────
+  const [addons,            setAddons]            = useState<ProjectAddon[]>([]);
+  const [selectedAddonId,   setSelectedAddonId]   = useState<string | null>(null);
+  const [addonTransformMode, setAddonTransformMode] = useState<"translate" | "rotate" | "scale">("translate");
+  const [addonMeshNames,    setAddonMeshNames]    = useState<Record<string, string[]>>({});
+  const [addonUploading,    setAddonUploading]    = useState(false);
+  const [addonUploadPct,    setAddonUploadPct]    = useState(0);
+  const [addonUploadErr,    setAddonUploadErr]    = useState("");
+  const [baking,            setBaking]            = useState(false);
+  const addonFileRef = useRef<HTMLInputElement>(null);
+
+  // ── Camera Bookmarks ───────────────────────────────────────────────────────
+  const [cameraBookmarks, setCameraBookmarks] = useState<CameraBookmark[]>([]);
+  const [bookmarkName,    setBookmarkName]    = useState("");
+
+  // ── Annotation Pins ────────────────────────────────────────────────────────
+  const [annotations,      setAnnotations]      = useState<AnnotationPin[]>([]);
+  const [placingAnnotation, setPlacingAnnotation] = useState(false);
+  const [editingAnnotId,   setEditingAnnotId]   = useState<string | null>(null);
+
+  // ── Isolation override (H key) ─────────────────────────────────────────────
+  const [isolationOverride, setIsolationOverride] = useState<string[] | null>(null);
+
+  // ── Mesh triangle counts ───────────────────────────────────────────────────
+  const [triangleCounts, setTriangleCounts] = useState<MeshTriangleCounts>({});
+
+  // ── Smart model swap diff ──────────────────────────────────────────────────
+  const [swapDiff, setSwapDiff] = useState<{ missing: string[]; found: string[] } | null>(null);
+
   // ── Left / right panel tabs ────────────────────────────────────────────────
-  const [leftTab,  setLeftTab]  = useState<"options" | "layers">("options");
+  const [leftTab,  setLeftTab]  = useState<"options" | "layers" | "health">("options");
   const [rightTab, setRightTab] = useState<"scene" | "material" | "props" | "shapes" | "lights" | "settings">("scene");
 
   // ── Placed props ───────────────────────────────────────────────────────────
@@ -3302,11 +3486,21 @@ export default function SceneEditorPage() {
         case "w": setTransformMode("translate"); break;
         case "r": setTransformMode("scale");     break;
         case "d": setTransformMode("rotate");    break;
+        case "h":
+          // Alt+H clears isolation; H with selection isolates to selection
+          if (e.altKey) {
+            setIsolationOverride(null);
+          } else if (selectedMeshesRef.current.length > 0) {
+            setIsolationOverride([...selectedMeshesRef.current]);
+          }
+          break;
         case "escape":
           setSelectedMeshes([]);
           setTransformMode("none");
           setPaintMatId(null);
           setActiveOptionId(null);
+          setIsolationOverride(null);
+          setPlacingAnnotation(false);
           break;
       }
     }
@@ -3361,6 +3555,9 @@ export default function SceneEditorPage() {
         if ((cd as any)._placedProps)      setPlacedProps((cd as any)._placedProps as PlacedPropData[]);
         if ((cd as any)._placedShapes)    setPlacedShapes((cd as any)._placedShapes as PlacedShapeData[]);
         if ((cd as any)._placedLights)    setPlacedLights((cd as any)._placedLights as PlacedLight[]);
+        if ((cd as any)._addons)          setAddons((cd as any)._addons as ProjectAddon[]);
+        if ((cd as any)._cameraBookmarks) setCameraBookmarks((cd as any)._cameraBookmarks as CameraBookmark[]);
+        if ((cd as any)._annotations)     setAnnotations((cd as any)._annotations as AnnotationPin[]);
       }
       if (cRes.data)          setCategories(cRes.data as CategoryWithOptions[]);
       if (Array.isArray(mRes)) setMaterials(mRes as MaterialLibraryEntry[]);
@@ -3401,7 +3598,15 @@ export default function SceneEditorPage() {
     );
   }, []);
 
-  const handleSceneLoaded = useCallback((tree: SceneTreeNode[]) => setSceneTree(tree), []);
+  const handleSceneLoaded = useCallback((tree: SceneTreeNode[]) => {
+    setSceneTree(tree);
+    // Check for broken mappings after any model load
+    const names = new Set<string>();
+    function walk(nodes: SceneTreeNode[]) { for (const n of nodes) { if (n.name) names.add(n.name); if (n.children?.length) walk(n.children); } }
+    walk(tree);
+    checkMappingHealthAfterUpload(names);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categories]);
 
   const handleMeshTransformStart = useCallback(() => {
     pushUndo();
@@ -3458,8 +3663,8 @@ export default function SceneEditorPage() {
   }, [activeOptionId, categories]);
 
   const isolationMeshes = useMemo(
-    () => activeOption?.node_list?.length ? activeOption.node_list : undefined,
-    [activeOption]
+    () => isolationOverride ?? (activeOption?.node_list?.length ? activeOption.node_list : undefined),
+    [isolationOverride, activeOption]
   );
 
   async function handleAssignMeshes(optionId: string, meshNames: string[]) {
@@ -3774,13 +3979,28 @@ export default function SceneEditorPage() {
   }
 
   // ── Reset mesh transforms ──────────────────────────────────────────────────
+  function buildMerged(overrides: Partial<{ _meshOverrides: MeshOverrides }> = {}) {
+    return {
+      ...cameraDefaults,
+      _phaseSettings: phaseSettings,
+      _meshOverrides: overrides._meshOverrides ?? meshOverrides,
+      _meshBaseMats: meshBaseMatMap,
+      _glbMatOverrides: glbMatOverrides,
+      _deletedMeshes: [...deletedMeshes],
+      _placedProps: placedProps,
+      _placedShapes: placedShapes,
+      _placedLights: placedLights,
+      _addons: addons,
+      _cameraBookmarks: cameraBookmarks,
+      _annotations: annotations,
+    };
+  }
+
   async function handleResetTransforms() {
     if (!project) return;
     setMeshOverrides({});
-    const merged = { ...cameraDefaults, _phaseSettings: phaseSettings, _meshOverrides: {}, _meshBaseMats: meshBaseMatMap, _glbMatOverrides: glbMatOverrides, _deletedMeshes: [...deletedMeshes], _placedProps: placedProps, _placedShapes: placedShapes, _placedLights: placedLights };
-    await (supabase.from("projects") as any)
-      .update({ camera_defaults: merged })
-      .eq("id", projectId);
+    const merged = buildMerged({ _meshOverrides: {} });
+    await (supabase.from("projects") as any).update({ camera_defaults: merged }).eq("id", projectId);
     setCameraDefaults(merged);
     showToast("Mesh transforms reset ✓");
   }
@@ -3789,7 +4009,7 @@ export default function SceneEditorPage() {
   async function handleSave() {
     if (!project) return;
     setSaving(true);
-    const merged = { ...cameraDefaults, _phaseSettings: phaseSettings, _meshOverrides: meshOverrides, _meshBaseMats: meshBaseMatMap, _glbMatOverrides: glbMatOverrides, _deletedMeshes: [...deletedMeshes], _placedProps: placedProps, _placedShapes: placedShapes, _placedLights: placedLights };
+    const merged = buildMerged();
     const { error } = await (supabase.from("projects") as any)
       .update({ camera_defaults: merged, env_preset: activeSettings.envLightPreset })
       .eq("id", projectId);
@@ -3934,6 +4154,142 @@ export default function SceneEditorPage() {
     } finally {
       setCompressing(false);
     }
+  }
+
+  // ── Addon handlers ─────────────────────────────────────────────────────────
+  function handleAddonUpload(file: File) {
+    const addonId = Math.random().toString(36).slice(2);
+    setAddonUploading(true); setAddonUploadErr(""); setAddonUploadPct(0);
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("addonId", addonId);
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener("progress", ev => {
+      if (ev.lengthComputable) setAddonUploadPct(Math.round((ev.loaded / ev.total) * 100));
+    });
+    xhr.addEventListener("load", () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const newAddon: ProjectAddon = {
+            id: addonId,
+            name: file.name.replace(/\.glb$/i, ""),
+            modelUrl: data.modelUrl,
+            storagePath: data.storagePath,
+            transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+            visible: true,
+          };
+          setAddons(prev => [...prev, newAddon]);
+          setSelectedAddonId(addonId);
+          showToast(`Addon "${newAddon.name}" imported ✓`);
+        } else { setAddonUploadErr(data.error ?? "Upload failed"); }
+      } catch { setAddonUploadErr("Upload failed"); }
+      setAddonUploading(false); setAddonUploadPct(0);
+      if (addonFileRef.current) addonFileRef.current.value = "";
+    });
+    xhr.addEventListener("error", () => { setAddonUploadErr("Network error"); setAddonUploading(false); });
+    xhr.open("POST", `/api/admin/projects/${projectId}/addons/upload`);
+    xhr.send(fd);
+  }
+
+  function handleAddonTransformed(id: string, pos: [number,number,number], rot: [number,number,number], sc: [number,number,number]) {
+    setAddons(prev => prev.map(a => a.id === id ? { ...a, transform: { position: pos, rotation: rot, scale: sc } } : a));
+  }
+
+  function handleAddonDelete(id: string) {
+    setAddons(prev => prev.filter(a => a.id !== id));
+    if (selectedAddonId === id) setSelectedAddonId(null);
+    setAddonMeshNames(prev => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  function handleAddonToggleVisible(id: string) {
+    setAddons(prev => prev.map(a => a.id === id ? { ...a, visible: !a.visible } : a));
+  }
+
+  function handleAddonRename(id: string, name: string) {
+    setAddons(prev => prev.map(a => a.id === id ? { ...a, name } : a));
+  }
+
+  async function handleBakeAddons() {
+    if (!project || addons.length === 0 || baking) return;
+    if (!window.confirm(`Bake ${addons.length} addon(s) into the base model? This replaces the base model permanently and clears all addons.`)) return;
+    setBaking(true);
+    try {
+      const res = await fetch(`/api/admin/projects/${projectId}/addons/bake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addons: addons.map(a => ({ modelUrl: a.modelUrl, name: a.name, transform: a.transform })) }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Bake failed");
+      setProject(prev => prev ? { ...prev, model_url: data.modelUrl, model_storage_path: data.storagePath } : prev);
+      setAddons([]);
+      setAddonMeshNames({});
+      showToast("Addons baked into base model ✓");
+    } catch (err: unknown) {
+      showToast(`Bake failed: ${(err as Error).message}`);
+    } finally {
+      setBaking(false);
+    }
+  }
+
+  // ── Camera bookmark handlers ────────────────────────────────────────────────
+  function handleCaptureBookmark() {
+    const coords = viewportRef.current?.getCameraCoords();
+    if (!coords) { showToast("No camera coords available"); return; }
+    const name = bookmarkName.trim() || `View ${cameraBookmarks.length + 1}`;
+    const bookmark: CameraBookmark = {
+      id: Math.random().toString(36).slice(2),
+      name,
+      pos: coords.pos as [number, number, number],
+      target: coords.target as [number, number, number],
+      fov: coords.fov ?? 60,
+    };
+    setCameraBookmarks(prev => [...prev, bookmark]);
+    setBookmarkName("");
+    showToast(`Bookmark "${name}" saved`);
+  }
+
+  function handleDeleteBookmark(id: string) {
+    setCameraBookmarks(prev => prev.filter(b => b.id !== id));
+  }
+
+  function handleFlyToBookmark(b: CameraBookmark) {
+    viewportRef.current?.flyTo({ pos: b.pos, target: b.target, fov: b.fov });
+  }
+
+  // ── Annotation handlers ─────────────────────────────────────────────────────
+  function handleAnnotationPlaced(pos: [number,number,number]) {
+    const pin: AnnotationPin = {
+      id: Math.random().toString(36).slice(2),
+      position: pos,
+      text: "New note",
+      color: "#f472b6",
+    };
+    setAnnotations(prev => [...prev, pin]);
+    setPlacingAnnotation(false);
+    setEditingAnnotId(pin.id);
+  }
+
+  function handleAnnotationUpdate(id: string, text: string) {
+    setAnnotations(prev => prev.map(a => a.id === id ? { ...a, text } : a));
+  }
+
+  function handleAnnotationDelete(id: string) {
+    setAnnotations(prev => prev.filter(a => a.id !== id));
+    if (editingAnnotId === id) setEditingAnnotId(null);
+  }
+
+  // ── Smart model swap ────────────────────────────────────────────────────────
+  function checkMappingHealthAfterUpload(newMeshNames: Set<string>) {
+    const allMapped = new Set<string>();
+    for (const cat of categories)
+      for (const opt of cat.options)
+        for (const n of (opt.node_list ?? [])) allMapped.add(n);
+    if (allMapped.size === 0) return;
+    const missing = [...allMapped].filter(n => !newMeshNames.has(n));
+    const found   = [...allMapped].filter(n => newMeshNames.has(n));
+    if (missing.length > 0) setSwapDiff({ missing, found });
   }
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -4121,6 +4477,53 @@ export default function SceneEditorPage() {
     <div className="h-full bg-[#0a0a0a] text-white flex flex-col overflow-hidden">
       <Toast msg={toast} />
 
+      {/* Smart Model Swap diff modal */}
+      {swapDiff && swapDiff.missing.length > 0 && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setSwapDiff(null)}>
+          <div className="bg-[#1a1a1a] border border-amber-500/30 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-8 h-8 rounded-full bg-amber-500/15 border border-amber-500/25 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white mb-1">Model swap — mapping review</p>
+                <p className="text-xs text-white/50">New model loaded. {swapDiff.found.length} mapped mesh{swapDiff.found.length !== 1 ? "es" : ""} found, {swapDiff.missing.length} missing from new GLB.</p>
+              </div>
+            </div>
+            {swapDiff.missing.length > 0 && (
+              <div className="mb-4">
+                <p className="text-[9px] uppercase tracking-wider text-amber-400/70 font-semibold mb-1.5">Missing ({swapDiff.missing.length})</p>
+                <div className="max-h-32 overflow-y-auto flex flex-col gap-0.5" style={{ scrollbarWidth: "none" }}>
+                  {swapDiff.missing.slice(0, 20).map(n => (
+                    <div key={n} className="flex items-center gap-2 px-2 py-1 bg-amber-500/8 rounded-md">
+                      <span className="text-[9px] font-mono text-amber-400/70 flex-1 truncate">{n}</span>
+                      <button
+                        onClick={async () => {
+                          const opt = categories.flatMap(c => c.options).find(o => o.node_list?.includes(n));
+                          if (opt) await handleRemoveMesh(opt.id, n);
+                          setSwapDiff(prev => prev ? { ...prev, missing: prev.missing.filter(x => x !== n) } : null);
+                        }}
+                        className="text-[8px] text-amber-500/60 hover:text-red-400 transition-colors">remove</button>
+                    </div>
+                  ))}
+                  {swapDiff.missing.length > 20 && <p className="text-[8px] text-white/20 px-2">+{swapDiff.missing.length - 20} more — use Health tab</p>}
+                </div>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={() => setLeftTab("health")} className="flex-1 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 text-amber-300 text-xs font-medium rounded-lg transition-colors">
+                Open Health tab
+              </button>
+              <button onClick={() => setSwapDiff(null)} className="flex-1 py-2 bg-white/8 hover:bg-white/14 border border-white/12 text-white/70 text-xs font-medium rounded-lg transition-colors">
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Compress error modal */}
       {compressErrModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setCompressErrModal("")}>
@@ -4177,6 +4580,7 @@ export default function SceneEditorPage() {
           }
 
           <input ref={fileInputRef} type="file" accept=".glb" onChange={handleUpload} className="hidden" />
+          <input ref={addonFileRef} type="file" accept=".glb" onChange={e => { const f = e.target.files?.[0]; if (f) handleAddonUpload(f); }} className="hidden" />
           {uploading ? (
             <div className="flex items-center gap-1.5">
               <div className="w-24 h-1 bg-white/10 rounded-full overflow-hidden">
@@ -4258,26 +4662,107 @@ export default function SceneEditorPage() {
 
           {/* Tab bar */}
           <div className="flex flex-shrink-0 border-b border-white/8">
-            {(["options", "layers"] as const).map(tab => (
-              <button key={tab} onClick={() => setLeftTab(tab)}
-                className={`flex-1 py-2 text-[10px] font-medium capitalize transition-colors ${
-                  leftTab === tab
-                    ? "text-white border-b border-blue-500 bg-blue-500/5"
-                    : "text-white/30 hover:text-white/60 hover:bg-white/4"
-                }`}>
-                {tab === "layers" ? "Layers" : "Options"}
-              </button>
-            ))}
+            {(["options", "layers", "health"] as const).map(tab => {
+              const label = tab === "layers" ? "Layers" : tab === "health" ? "Health" : "Options";
+              const hasBrokenMappings = tab === "health" && swapDiff && swapDiff.missing.length > 0;
+              return (
+                <button key={tab} onClick={() => setLeftTab(tab)}
+                  className={`flex-1 py-2 text-[10px] font-medium capitalize transition-colors relative ${
+                    leftTab === tab
+                      ? "text-white border-b border-blue-500 bg-blue-500/5"
+                      : "text-white/30 hover:text-white/60 hover:bg-white/4"
+                  }`}>
+                  {label}
+                  {hasBrokenMappings && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Layers tab — full height structural visibility */}
+          {/* Layers tab — structural visibility + addons */}
           {leftTab === "layers" && (
-            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col overflow-y-auto" style={{ scrollbarWidth: "none" }}>
               <StructuralVisibilityPanel
                 settings={activeSettings}
                 onSettings={handleGlobalSettings}
                 selectedMeshes={selectedMeshes}
                 onToast={showToast}
+              />
+              {/* Addons section */}
+              <div className="border-t border-white/8 flex-shrink-0">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+                  <span className="text-[9px] uppercase tracking-widest text-white/25 font-bold">Addon GLBs</span>
+                  <div className="flex items-center gap-1">
+                    {addons.length > 0 && (
+                      <button
+                        onClick={handleBakeAddons}
+                        disabled={baking}
+                        title="Bake all addons into the base model (permanent merge)"
+                        className="text-[9px] text-amber-400/60 hover:text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/20 hover:border-amber-500/40 transition-colors disabled:opacity-40">
+                        {baking ? "Baking…" : "⊕ Bake"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => addonFileRef.current?.click()}
+                      disabled={addonUploading}
+                      className="text-[9px] text-blue-400/70 hover:text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/20 hover:border-blue-400/40 transition-colors disabled:opacity-40">
+                      {addonUploading ? `${addonUploadPct}%` : "+ Import"}
+                    </button>
+                  </div>
+                </div>
+                {addonUploadErr && <p className="text-[9px] text-red-400 px-3 py-1">{addonUploadErr}</p>}
+                {addons.length === 0 ? (
+                  <p className="text-[9px] text-white/20 px-3 py-3 text-center">No addons yet — import a GLB to extend the scene</p>
+                ) : (
+                  <div className="flex flex-col gap-px px-1.5 py-1.5">
+                    {addons.map(addon => (
+                      <div key={addon.id}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer group transition-colors ${
+                          selectedAddonId === addon.id ? "bg-blue-600/15 border border-blue-500/25" : "hover:bg-white/5 border border-transparent"
+                        }`}
+                        onClick={() => setSelectedAddonId(selectedAddonId === addon.id ? null : addon.id)}>
+                        <button
+                          onClick={e => { e.stopPropagation(); handleAddonToggleVisible(addon.id); }}
+                          className={`flex-shrink-0 transition-colors ${addon.visible ? "text-white/50 hover:text-white" : "text-white/15 hover:text-white/40"}`}>
+                          <EyeIcon hidden={!addon.visible} />
+                        </button>
+                        <span className={`flex-1 text-[10px] truncate ${selectedAddonId === addon.id ? "text-blue-300" : "text-white/60"}`}>
+                          {addon.name}
+                        </span>
+                        {selectedAddonId === addon.id && (
+                          <div className="flex items-center gap-0.5">
+                            {(["translate","rotate","scale"] as const).map(m => (
+                              <button key={m}
+                                onClick={e => { e.stopPropagation(); setAddonTransformMode(m); }}
+                                title={`${m[0].toUpperCase()}${m.slice(1)}`}
+                                className={`w-5 h-5 rounded text-[9px] font-bold transition-colors ${addonTransformMode === m ? "bg-blue-500 text-white" : "bg-white/8 text-white/30 hover:text-white"}`}>
+                                {m[0].toUpperCase()}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <button onClick={e => { e.stopPropagation(); handleAddonDelete(addon.id); }}
+                          className="opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 text-[10px] transition-opacity">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Health tab — mesh mapping health check */}
+          {leftTab === "health" && (
+            <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2" style={{ scrollbarWidth: "none" }}>
+              <MeshHealthPanel
+                categories={categories}
+                glbMeshNames={glbMeshNames}
+                addonMeshNames={addonMeshNames}
+                swapDiff={swapDiff}
+                onClearDiff={() => setSwapDiff(null)}
+                triangleCounts={triangleCounts}
+                onRemoveMesh={handleRemoveMesh}
+                onSelectMesh={name => handleMeshSelect([name])}
               />
             </div>
           )}
@@ -4383,7 +4868,7 @@ export default function SceneEditorPage() {
 
         {/* ── CENTER: Viewport + toolbar ── */}
         <div className="flex-1 flex flex-col overflow-hidden p-3 gap-2">
-          <div className="flex-1 overflow-hidden" style={{ cursor: (placingPropUrl || placingLightType) ? "crosshair" : undefined }}>
+          <div className="flex-1 overflow-hidden" style={{ cursor: (placingPropUrl || placingLightType || placingAnnotation) ? "crosshair" : undefined }}>
             {project.model_url && !modelLoadErr ? (
               <ModelErrorBoundary key={project.model_url} onError={setModelLoadErr}>
               <SceneEditorViewport
@@ -4425,6 +4910,16 @@ export default function SceneEditorPage() {
                 onLightSelect={setSelectedLightId}
                 onLightTransformed={handleLightTransformed}
                 onMeshDoubleClick={handleMeshDoubleClick}
+                addons={addons}
+                selectedAddonId={selectedAddonId}
+                onAddonSelect={(id) => { setSelectedAddonId(id); setSelectedMeshes([]); setSelectedPropId(null); }}
+                onAddonTransformed={handleAddonTransformed}
+                addonTransformMode={addonTransformMode}
+                onAddonMeshNames={(addonId, names) => setAddonMeshNames(prev => ({ ...prev, [addonId]: names }))}
+                onTriangleCounts={setTriangleCounts}
+                annotations={annotations}
+                placingAnnotation={placingAnnotation}
+                onAnnotationPlaced={handleAnnotationPlaced}
               />
               </ModelErrorBoundary>
             ) : (
@@ -4687,6 +5182,85 @@ export default function SceneEditorPage() {
                         lightingPhase={lightingPhase}
                         onLightingPhase={setLightingPhase}
                       />
+
+                      {/* ── Camera Bookmarks ───────────────────────────── */}
+                      <div className="mt-5 border-t border-white/8 pt-4">
+                        <p className="text-[9px] uppercase tracking-widest text-white/25 font-bold mb-3">Camera Views</p>
+                        <div className="flex gap-1 mb-2">
+                          <input
+                            value={bookmarkName}
+                            onChange={e => setBookmarkName(e.target.value)}
+                            placeholder="View name…"
+                            className="flex-1 px-2 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] text-white placeholder-white/20 outline-none focus:border-blue-500/40"
+                          />
+                          <button onClick={handleCaptureBookmark}
+                            className="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/30 text-blue-300 text-[10px] rounded-lg transition-colors">
+                            + Save
+                          </button>
+                        </div>
+                        {cameraBookmarks.length === 0 ? (
+                          <p className="text-[9px] text-white/20 text-center py-2">No bookmarks — position camera and save</p>
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            {cameraBookmarks.map(b => (
+                              <div key={b.id} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-white/5 group transition-colors">
+                                <button onClick={() => handleFlyToBookmark(b)}
+                                  className="flex-1 text-left text-[10px] text-white/60 hover:text-white transition-colors truncate">
+                                  ▶ {b.name}
+                                </button>
+                                <button onClick={() => handleDeleteBookmark(b.id)}
+                                  className="opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 text-[10px] transition-opacity">✕</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── Annotation Pins ────────────────────────────── */}
+                      <div className="mt-5 border-t border-white/8 pt-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-[9px] uppercase tracking-widest text-white/25 font-bold">Annotations</p>
+                          <button
+                            onClick={() => setPlacingAnnotation(v => !v)}
+                            className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${
+                              placingAnnotation
+                                ? "bg-pink-600/20 border-pink-500/40 text-pink-300"
+                                : "bg-white/5 border-white/10 text-white/40 hover:text-pink-300 hover:border-pink-500/30"
+                            }`}>
+                            {placingAnnotation ? "Click scene…" : "+ Place pin"}
+                          </button>
+                        </div>
+                        {annotations.length === 0 ? (
+                          <p className="text-[9px] text-white/20 text-center py-2">No annotations yet</p>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            {annotations.map(pin => (
+                              <div key={pin.id} className="flex flex-col gap-1 px-2 py-1.5 rounded-lg bg-white/3 border border-white/8 group">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-white/20" style={{ background: pin.color }} />
+                                  {editingAnnotId === pin.id ? (
+                                    <input
+                                      autoFocus
+                                      value={pin.text}
+                                      onChange={e => handleAnnotationUpdate(pin.id, e.target.value)}
+                                      onBlur={() => setEditingAnnotId(null)}
+                                      onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") setEditingAnnotId(null); }}
+                                      className="flex-1 bg-transparent text-[10px] text-white outline-none border-b border-white/20"
+                                    />
+                                  ) : (
+                                    <button onClick={() => setEditingAnnotId(pin.id)}
+                                      className="flex-1 text-left text-[10px] text-white/60 hover:text-white transition-colors truncate">
+                                      {pin.text}
+                                    </button>
+                                  )}
+                                  <button onClick={() => handleAnnotationDelete(pin.id)}
+                                    className="opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 text-[10px] transition-opacity">✕</button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -4731,6 +5305,9 @@ export default function SceneEditorPage() {
                     deletedMeshes={deletedMeshes}
                     onDeleteMesh={handleDeleteMesh}
                     onRestoreMesh={handleRestoreMesh}
+                    triangleCounts={triangleCounts}
+                    isolationOverride={isolationOverride}
+                    onClearIsolation={() => setIsolationOverride(null)}
                   />
                 )}
               </div>
