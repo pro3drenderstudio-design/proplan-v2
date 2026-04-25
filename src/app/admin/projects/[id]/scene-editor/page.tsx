@@ -3260,11 +3260,15 @@ export default function SceneEditorPage() {
   }
 
   // ── UI state ───────────────────────────────────────────────────────────────
-  const [uploading, setUploading] = useState(false);
-  const [uploadPct, setUploadPct] = useState(0);
-  const [uploadErr, setUploadErr] = useState("");
-  const [saving,    setSaving]    = useState(false);
-  const [toast,     setToast]     = useState("");
+  const [uploading,     setUploading]     = useState(false);
+  const [uploadPct,     setUploadPct]     = useState(0);
+  const [uploadErr,     setUploadErr]     = useState("");
+  const [autoCompress,  setAutoCompress]  = useState(true);
+  const [compressing,   setCompressing]   = useState(false);
+  const [compressResult, setCompressResult] = useState<{ originalFormatted: string; compressedFormatted: string; reductionPct: number } | null>(null);
+  const [compressErr,   setCompressErr]   = useState("");
+  const [saving,        setSaving]        = useState(false);
+  const [toast,         setToast]         = useState("");
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(""), 2500); }
 
@@ -3829,6 +3833,7 @@ export default function SceneEditorPage() {
         ? { ...prev, model_url: data.model_url, model_storage_path: data.model_storage_path }
         : prev);
       showToast("GLB uploaded ✓");
+      if (autoCompress) await handleCompress();
     } catch (err: any) {
       setUploadErr(err.message ?? "Upload failed");
     } finally {
@@ -3862,6 +3867,10 @@ export default function SceneEditorPage() {
             ? { ...prev, model_url: data.model_url, model_storage_path: data.model_storage_path }
             : prev);
           showToast("GLB uploaded ✓");
+          if (autoCompress) {
+            // Can't await inside XHR callback — trigger compress via timeout
+            setTimeout(() => handleCompress(), 100);
+          }
         } else setUploadErr(data.error ?? "Upload failed");
       } catch { setUploadErr("Upload failed"); }
       setUploading(false); setUploadPct(0);
@@ -3870,6 +3879,30 @@ export default function SceneEditorPage() {
     xhr.addEventListener("error", () => { setUploadErr("Network error"); setUploading(false); });
     xhr.open("POST", "/api/models/upload");
     xhr.send(fd);
+  }
+
+  async function handleCompress() {
+    if (!project?.id || compressing) return;
+    setCompressing(true);
+    setCompressErr("");
+    setCompressResult(null);
+    try {
+      const res = await fetch("/api/admin/compress-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: project.id }),
+      });
+      const data = await res.json() as { ok?: boolean; error?: string; model_url?: string; originalFormatted?: string; compressedFormatted?: string; reductionPct?: number };
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Compression failed");
+      setProject(prev => prev ? { ...prev, model_url: data.model_url! } : prev);
+      setCompressResult({ originalFormatted: data.originalFormatted!, compressedFormatted: data.compressedFormatted!, reductionPct: data.reductionPct! });
+      showToast(`Compressed ✓ ${data.reductionPct}% smaller`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCompressErr(msg);
+    } finally {
+      setCompressing(false);
+    }
   }
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -4097,12 +4130,51 @@ export default function SceneEditorPage() {
               <span className="text-white/40 text-[10px] w-8 tabular-nums">{uploadPct}%</span>
             </div>
           ) : (
-            <button onClick={() => fileInputRef.current?.click()}
-              className="px-2.5 py-1.5 bg-white/7 hover:bg-white/12 border border-white/8 text-white/60 text-xs rounded-lg transition-colors">
-              {project.model_url ? "Replace GLB" : "Upload GLB"}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => fileInputRef.current?.click()}
+                className="px-2.5 py-1.5 bg-white/7 hover:bg-white/12 border border-white/8 text-white/60 text-xs rounded-lg transition-colors">
+                {project.model_url ? "Replace GLB" : "Upload GLB"}
+              </button>
+              {/* Auto-compress toggle */}
+              <label className="flex items-center gap-1 cursor-pointer select-none" title="Automatically compress textures + geometry after upload">
+                <span
+                  className={`w-6 h-3.5 rounded-full border transition-colors relative flex-shrink-0 ${autoCompress ? "bg-green-600/60 border-green-500/40" : "bg-white/8 border-white/15"}`}
+                  onClick={() => setAutoCompress(v => !v)}
+                >
+                  <span className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all ${autoCompress ? "left-[11px]" : "left-0.5"}`} />
+                </span>
+                <span className="text-[10px] text-white/35">Auto compress</span>
+              </label>
+            </div>
           )}
           {uploadErr && <span className="text-red-400 text-[10px] truncate max-w-[120px]">{uploadErr}</span>}
+
+          {/* Compress Textures button — always visible when model exists */}
+          {project.model_url && !uploading && (
+            compressing ? (
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 border border-green-400/40 border-t-green-400 rounded-full animate-spin flex-shrink-0" />
+                <span className="text-[10px] text-green-400/70">Compressing…</span>
+              </div>
+            ) : (
+              <button
+                onClick={handleCompress}
+                title="Download model, compress textures to JPEG 2048px + Draco geometry, re-upload"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-green-500/10 hover:bg-green-500/18 border border-green-500/20 text-green-400/80 text-xs rounded-lg transition-colors">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 22V12h6v10"/>
+                </svg>
+                Compress
+              </button>
+            )
+          )}
+          {compressResult && !compressing && (
+            <span className="text-[10px] text-green-400/60 whitespace-nowrap">
+              {compressResult.originalFormatted} → {compressResult.compressedFormatted} ({compressResult.reductionPct}% ↓)
+            </span>
+          )}
+          {compressErr && <span className="text-red-400 text-[10px] truncate max-w-[140px]" title={compressErr}>Compress failed</span>}
 
           <button onClick={handleSave} disabled={saving}
             className="px-3 py-1.5 bg-white/8 hover:bg-white/14 border border-white/12 text-white/75 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40">
