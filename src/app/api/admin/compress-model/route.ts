@@ -54,37 +54,57 @@ export async function POST(req: NextRequest) {
 
   const originalSize = originalBuffer.byteLength;
 
-  // ── 2. Run gltf-transform pipeline (dynamic imports — ESM packages) ─────────
+  // ── 2. Run gltf-transform pipeline ──────────────────────────────────────────
   let compressedBuffer: Buffer;
   try {
-    // @gltf-transform/core is ESM-only — use dynamic import()
-    const { NodeIO } = await import("@gltf-transform/core" as string);
-    const { dedup, prune, textureCompress } = await import("@gltf-transform/functions" as string);
-    const { DracoMeshCompression } = await import("@gltf-transform/extensions" as string);
-    const draco3d = (await import("draco3d" as string)).default ?? (await import("draco3d" as string));
-    const sharp = (await import("sharp" as string)).default ?? (await import("sharp" as string));
+    // Step A — load modules (log each so we can see exactly where it fails)
+    console.log("[compress-model] importing @gltf-transform/core…");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { NodeIO } = await import("@gltf-transform/core") as any;
 
+    console.log("[compress-model] importing @gltf-transform/functions…");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fns = await import("@gltf-transform/functions") as any;
+    const { dedup, prune, textureCompress, draco } = fns;
+
+    console.log("[compress-model] importing @gltf-transform/extensions…");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { DracoMeshCompression } = await import("@gltf-transform/extensions") as any;
+
+    console.log("[compress-model] importing draco3d…");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const draco3dMod = await import("draco3d") as any;
+    const draco3d = draco3dMod.default ?? draco3dMod;
+
+    console.log("[compress-model] importing sharp…");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sharpMod = await import("sharp") as any;
+    const sharp = sharpMod.default ?? sharpMod;
+
+    // Step B — initialise Draco WASM encoder/decoder
+    console.log("[compress-model] initialising Draco WASM…");
     const [encoderModule, decoderModule] = await Promise.all([
       draco3d.createEncoderModule({}),
       draco3d.createDecoderModule({}),
     ]);
 
+    // Step C — read GLB
+    console.log("[compress-model] reading GLB…");
     const io = new NodeIO()
       .registerExtensions([DracoMeshCompression])
       .registerDependencies({
         "draco3d.encoder": encoderModule,
         "draco3d.decoder": decoderModule,
       });
-
     const document = await io.readBinary(new Uint8Array(originalBuffer));
 
+    // Step D — transform pipeline
+    console.log("[compress-model] running transform pipeline…");
     await document.transform(
-      // dedup: removes identical accessor/texture data — safe, never changes node names
       dedup(),
-      // prune: removes unreferenced nodes/materials/textures — safe
       prune(),
-      // Resize + re-encode textures to JPEG 2048px max.
-      // Textures with alpha (e.g. opacity maps) are kept as PNG to avoid artefacts.
+      // Resize textures to max 2048px and convert to JPEG 85%.
+      // Normal/occlusion maps stay as PNG to preserve their data channels.
       textureCompress({
         encoder: sharp,
         targetFormat: "jpeg",
@@ -92,20 +112,22 @@ export async function POST(req: NextRequest) {
         quality: 85,
         slots: /^(?!normalTexture|occlusionTexture).*$/,
       }),
-      // Draco: compresses geometry data only — mesh names and node structure are preserved
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (await import("@gltf-transform/functions" as string)).draco({ quantizationBits: { POSITION: 14, NORMAL: 10, TEX_COORD: 12, COLOR: 8, GENERIC: 12 } } as any),
-      // NOTE: flatten() and join() are intentionally excluded.
-      // join() merges meshes by material, which would destroy the named node
-      // structure that scene-editor option mappings depend on.
+      // Draco compresses vertex/index buffers only — mesh names unchanged
+      draco({
+        quantizationBits: { POSITION: 14, NORMAL: 10, TEX_COORD: 12, COLOR: 8, GENERIC: 12 },
+      }),
     );
 
+    // Step E — serialise
+    console.log("[compress-model] serialising…");
     const out = await io.writeBinary(document);
     compressedBuffer = Buffer.from(out);
+    console.log("[compress-model] pipeline complete");
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[compress-model] transform error:", msg);
-    return NextResponse.json({ error: `Compression failed: ${msg}` }, { status: 500 });
+    const stack = err instanceof Error ? err.stack : "";
+    console.error("[compress-model] FAILED:", msg, stack);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 
   const compressedSize = compressedBuffer.byteLength;
