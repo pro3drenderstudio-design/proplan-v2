@@ -42,10 +42,12 @@ export async function POST(req: NextRequest) {
   }
 
   let imageBase64: string;
+  let mimeType = "image/jpeg";
   let phase = "exterior";
   try {
-    const body = (await req.json()) as { imageBase64: string; phase?: string };
+    const body = (await req.json()) as { imageBase64: string; mimeType?: string; phase?: string };
     imageBase64 = body.imageBase64;
+    if (body.mimeType) mimeType = body.mimeType;
     if (body.phase) phase = body.phase;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
@@ -60,7 +62,7 @@ export async function POST(req: NextRequest) {
       contents: [{
         parts: [
           { text: prompt },
-          { inline_data: { mime_type: "image/png", data: imageBase64 } },
+          { inline_data: { mime_type: mimeType, data: imageBase64 } },
         ],
       }],
       generationConfig: { responseModalities: ["IMAGE", "TEXT"] },

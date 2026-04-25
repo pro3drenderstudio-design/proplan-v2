@@ -92,7 +92,15 @@ export default function SummaryPage({
       if (isExtra) setAiLoading2(true);
       else setAiLoading(prev => ({ ...prev, [phaseId]: true }));
 
-      const base64 = screenshot.includes(",") ? screenshot.split(",")[1] : screenshot;
+      // Extract MIME type and base64 data from the screenshot data URL
+      let base64 = screenshot;
+      let mimeType = "image/jpeg";
+      if (screenshot.includes(",")) {
+        const [header, data] = screenshot.split(",");
+        base64 = data;
+        const mimeMatch = header.match(/data:([^;]+);/);
+        if (mimeMatch) mimeType = mimeMatch[1];
+      }
       const setResult = (url: string | null) => {
         if (isExtra) setAiRender2(url ?? screenshot);
         else setAiRenders(prev => ({ ...prev, [phaseId]: url ?? screenshot }));
@@ -102,12 +110,21 @@ export default function SummaryPage({
         const submitRes = await fetch("/api/generate-render", {
           method: "POST", signal: abort.signal,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageBase64: base64, phase: apiPhase }),
+          body: JSON.stringify({ imageBase64: base64, mimeType, phase: apiPhase }),
         });
-        if (!submitRes.ok) throw new Error(`generate-render ${submitRes.status}`);
-        const { imageBase64: resultBase64 } = await submitRes.json() as { imageBase64?: string };
-        setResult(resultBase64 ? `data:image/png;base64,${resultBase64}` : null);
-      } catch {
+        if (!submitRes.ok) {
+          const errText = await submitRes.text().catch(() => submitRes.statusText);
+          console.error("[generate-render] HTTP error", submitRes.status, errText);
+          throw new Error(`generate-render ${submitRes.status}: ${errText}`);
+        }
+        const json = await submitRes.json() as { imageBase64?: string; error?: string };
+        if (json.error) {
+          console.error("[generate-render] API error:", json.error);
+          throw new Error(json.error);
+        }
+        setResult(json.imageBase64 ? `data:image/png;base64,${json.imageBase64}` : null);
+      } catch (err) {
+        console.error("[generate-render] failed for", phaseId, err);
         if (!abort.signal.aborted) setResult(null);
       } finally {
         if (!abort.signal.aborted) {
