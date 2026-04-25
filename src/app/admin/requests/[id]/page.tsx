@@ -2,7 +2,7 @@
 // admin project request detail
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { getAllProjects, updateProjectStatus, updateProject, getBuilderByCompanySlug, getCategoriesWithOptions, getAllBuilders, updateViewerMode, createCategory, updateCategory, deleteCategory, createOption, updateOption, deleteOption } from "@/lib/admin-api";
 import { getProjectFiles, deleteProjectFile } from "@/lib/builder-api";
 import { supabase } from "@/lib/supabase";
@@ -59,6 +59,7 @@ function buildTimeline(project: Project) {
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [project,     setProject]     = useState<Project | null>(null);
   const [builder,     setBuilder]     = useState<Builder | null>(null);
   const [allBuilders, setAllBuilders] = useState<Builder[]>([]);
@@ -72,6 +73,7 @@ export default function ProjectDetailPage() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [toast,       setToast]       = useState("");
   const [qrOpen,      setQrOpen]      = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [editing,     setEditing]     = useState(false);
   const [editForm,    setEditForm]    = useState<{
     name: string; slug: string; sketchfab_uid: string; home_type: string;
@@ -113,6 +115,21 @@ export default function ProjectDetailPage() {
   const chatFileRef   = useRef<HTMLInputElement>(null);
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(""), 3000); }
+
+  async function handleDuplicate() {
+    if (!project || duplicating) return;
+    setDuplicating(true);
+    try {
+      const res = await fetch(`/api/admin/projects/${project.id}/duplicate`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const { id: newId } = await res.json() as { id: string };
+      router.push(`/admin/requests/${newId}`);
+    } catch (err) {
+      console.error("duplicate failed:", err);
+      showToast("Duplicate failed");
+      setDuplicating(false);
+    }
+  }
 
   async function handleSwitchMode(mode: "sketchfab" | "r3f") {
     if (!project || switching) return;
@@ -479,6 +496,22 @@ export default function ProjectDetailPage() {
                 onClose={() => setQrOpen(false)}
               />
             )}
+
+            {/* Duplicate */}
+            <button
+              onClick={handleDuplicate}
+              disabled={duplicating}
+              title="Duplicate this project — copies all categories and options"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/12 border border-amber-400/25 text-xs text-amber-400 font-medium rounded-lg hover:bg-amber-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              {duplicating ? (
+                <span className="w-3 h-3 border border-amber-400/40 border-t-amber-400 rounded-full animate-spin" />
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              )}
+              {duplicating ? "Duplicating…" : "Duplicate"}
+            </button>
 
             {/* Viewer mode toggle */}
             {(() => {

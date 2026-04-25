@@ -26,18 +26,20 @@ export async function POST(
   // ── 2. Insert duplicate project ──────────────────────────────────────────
   const now = new Date().toISOString();
   const slugSuffix = Date.now().toString(36);
-  const { id: _id, created_at: _c, updated_at: _u, slug, name, views_count, ...projectRest } = source as Record<string, unknown>;
+  // Strip fields that must be unique or are auto-generated
+  const { id: _id, created_at: _c, updated_at: _u, slug, name, views_count, sketchfab_uid: _sfuid, ...projectRest } = source as Record<string, unknown>;
 
   const { data: newProject, error: projErr } = await supabase
     .from("projects")
     .insert({
       ...projectRest,
-      name:        `Copy of ${name}`,
-      slug:        slug ? `${slug}-${slugSuffix}` : `project-${slugSuffix}`,
-      views_count: 0,
-      status:      "in_development",
-      created_at:  now,
-      updated_at:  now,
+      name:          `Copy of ${name}`,
+      slug:          slug ? `${slug}-${slugSuffix}` : `project-${slugSuffix}`,
+      sketchfab_uid: null,
+      views_count:   0,
+      status:        "in_development",
+      created_at:    now,
+      updated_at:    now,
     })
     .select("id")
     .single();

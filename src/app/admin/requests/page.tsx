@@ -74,6 +74,7 @@ export default function ProductionQueuePage() {
   const [projects,       setProjects]       = useState<Project[]>([]);
   const [unpaidRequests, setUnpaidRequests] = useState<ProjectRequest[]>([]);
   const [deletingId,     setDeletingId]     = useState<string | null>(null);
+  const [duplicatingId,  setDuplicatingId]  = useState<string | null>(null);
   const [builders,       setBuilders]       = useState<Record<string, Builder>>({});
   const [loading,        setLoading]        = useState(true);
   const [search,        setSearch]        = useState("");
@@ -100,6 +101,23 @@ export default function ProductionQueuePage() {
     await deleteProjectRequest(id);
     setUnpaidRequests(prev => prev.filter(r => r.id !== id));
     setDeletingId(null);
+  }
+
+  async function handleDuplicate(projectId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (duplicatingId) return;
+    setDuplicatingId(projectId);
+    try {
+      const res = await fetch(`/api/admin/projects/${projectId}/duplicate`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const { id: newId } = await res.json() as { id: string };
+      router.push(`/admin/requests/${newId}`);
+    } catch (err) {
+      console.error("duplicate failed:", err);
+      alert("Duplicate failed. See console.");
+    } finally {
+      setDuplicatingId(null);
+    }
   }
 
   // Close dropdowns on outside click
@@ -443,7 +461,21 @@ export default function ProductionQueuePage() {
                     </div>
 
                     {/* Action */}
-                    <div className="col-span-1 flex justify-end">
+                    <div className="col-span-1 flex justify-end items-center gap-1.5">
+                      {/* Duplicate icon button */}
+                      <button
+                        onClick={e => handleDuplicate(project.id, e)}
+                        disabled={duplicatingId === project.id}
+                        title="Duplicate project"
+                        className="p-1.5 rounded-lg border border-white/10 text-white/30 hover:text-amber-400 hover:border-amber-400/30 hover:bg-amber-400/8 transition-colors disabled:opacity-30">
+                        {duplicatingId === project.id ? (
+                          <span className="block w-3 h-3 border border-amber-400/40 border-t-amber-400 rounded-full animate-spin" />
+                        ) : (
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        )}
+                      </button>
                       {project.status === "pending_review" && (
                         <button
                           onClick={e => { e.preventDefault(); router.push(`/admin/requests/${project.id}`); }}
