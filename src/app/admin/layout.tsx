@@ -26,9 +26,10 @@ const NAV_CONFIG_ALL = [
 ];
 
 const TOOLS_ALL = [
-  { href: "/admin/node-bridge",  label: "Node Bridge",    icon: CpuIcon,    roles: ["super_admin","manager","editor","artist"] },
-  { href: "/admin/renders",      label: "Renders",        icon: ImageIcon,  roles: ["super_admin","manager","editor"] },
-  { href: "/admin/outreach",     label: "Cold Outreach",  icon: MailIcon,   roles: ["super_admin","manager"] },
+  { href: "/admin/node-bridge",  label: "Node Bridge",    icon: CpuIcon,      roles: ["super_admin","manager","editor","artist"] },
+  { href: "/admin/renders",      label: "Renders",        icon: ImageIcon,    roles: ["super_admin","manager","editor"] },
+  { href: "/admin/materials",    label: "Materials",      icon: PaletteIcon,  roles: ["super_admin","manager","editor"] },
+  { href: "/admin/outreach",     label: "Cold Outreach",  icon: MailIcon,     roles: ["super_admin","manager"] },
 ];
 
 interface Notif {
@@ -507,6 +508,13 @@ function PlansIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z"/>
+    </svg>
+  );
+}
+function PaletteIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c1.1 0 2-.9 2-2v-.5c0-.28-.11-.53-.29-.71a.996.996 0 01-.29-.71c0-.55.45-1 1-1h1.5c2.76 0 5-2.24 5-5 0-4.97-4.03-9-9-9zm-5.5 11c-.83 0-1.5-.67-1.5-1.5S5.67 10 6.5 10s1.5.67 1.5 1.5S7.33 13 6.5 13zm3-4C8.67 9 8 8.33 8 7.5S8.67 6 9.5 6s1.5.67 1.5 1.5S10.33 9 9.5 9zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 6 14.5 6s1.5.67 1.5 1.5S15.33 9 14.5 9zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 10 17.5 10s1.5.67 1.5 1.5S18.33 13 17.5 13z"/>
     </svg>
   );
 }

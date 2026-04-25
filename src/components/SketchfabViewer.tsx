@@ -152,8 +152,8 @@ export default function SketchfabViewer({
       <iframe
         ref={iframeRef}
         title="ProPlan Studio 3D Viewer"
-        className="w-full h-full border-0 transition-opacity duration-500"
-        style={{ opacity: viewerStatus === "ready" ? 1 : 0 }}
+        className="w-full h-full border-0"
+        style={{}}
         allow="autoplay; fullscreen; xr-spatial-tracking"
         allowFullScreen
       />

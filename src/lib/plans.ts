@@ -50,18 +50,25 @@ export function buildPlanFeatures(plan: Plan): string[] {
       ? "Unlimited home model configurators"
       : `Up to ${plan.max_projects} home model configurator${plan.max_projects !== 1 ? "s" : ""}`;
 
+  const communities =
+    !plan.max_communities || plan.max_communities === -1
+      ? "Unlimited communities & site maps"
+      : `Up to ${plan.max_communities} communit${plan.max_communities !== 1 ? "ies" : "y"} & site map${plan.max_communities !== 1 ? "s" : ""}`;
+
   const renders =
     plan.rendering_credits_monthly === -1
       ? "Unlimited traditional 3D renders / mo"
-      : `${plan.rendering_credits_monthly.toLocaleString()} traditional 3D renders / mo`;
+      : plan.rendering_credits_monthly === 0
+        ? null
+        : `${plan.rendering_credits_monthly} studio renders / mo`;
 
   const ai = `${plan.ai_credits_monthly.toLocaleString()} AI concept renders / mo`;
 
   return [
     models,
-    renders,
+    communities,
+    ...(renders ? [renders] : []),
     ai,
-    ...(plan.includes_sitemaps ? ["Unlimited interactive site maps"] : []),
     "Lead CRM + analytics + exports",
     "Brand customization (logo + colors)",
     "Priority support",

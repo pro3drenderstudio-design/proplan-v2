@@ -302,6 +302,22 @@ export function applyMaterialOverride(
   }
 }
 
+/**
+ * Pre-populate materialCache and start texture downloads for every entry,
+ * without touching any scene mesh.  Call this right after the model loads so
+ * textures are already in-flight by the time the user switches phases.
+ */
+export function warmUpMaterialCache(entries: MaterialLibraryEntry[]): void {
+  for (const entry of entries) {
+    const propsKey = entry.properties ? JSON.stringify(entry.properties) : "";
+    const cacheKey = `${entry.id}:${entry.base_color}:${entry.roughness}:${entry.metalness}:${propsKey}`;
+    if (materialCache.has(cacheKey)) continue;
+    // Empty meshNames → creates + caches the material, starts texture loads, assigns nothing.
+    applyMaterialOverride(_dummyScene, [], entry);
+  }
+}
+const _dummyScene = new THREE.Object3D();
+
 /** Restore original materials for meshes (stored before override). */
 const originalMaterials = new Map<string, THREE.Material | THREE.Material[]>();
 

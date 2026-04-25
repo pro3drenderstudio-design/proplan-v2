@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import ConfiguratorClient from "./ConfiguratorClient";
 
 export default async function Page({
@@ -6,5 +7,9 @@ export default async function Page({
   params: Promise<{ companySlug: string; projectSlug: string }>;
 }) {
   const { companySlug, projectSlug } = await params;
-  return <ConfiguratorClient companySlug={companySlug} projectSlug={projectSlug} />;
+  return (
+    <Suspense>
+      <ConfiguratorClient companySlug={companySlug} projectSlug={projectSlug} />
+    </Suspense>
+  );
 }

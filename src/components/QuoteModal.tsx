@@ -51,6 +51,7 @@ interface LeadForm {
 
 type Step = "rendering" | "preview" | "form" | "generating" | "done" | "error";
 
+
 export default function QuoteModal({
   project,
   categories,
@@ -65,6 +66,8 @@ export default function QuoteModal({
   const [aiRender, setAiRender] = useState<string | null>(null); // base64 PNG
   const [form, setForm]       = useState<LeadForm>({ firstName: "", lastName: "", email: "", phone: "" });
   const [errorMsg, setErrorMsg] = useState("");
+  const [portalToken, setPortalToken] = useState<string | null>(null);
+  const [portalCopied, setPortalCopied] = useState(false);
 
   // ── 1. Generate AI render on mount ────────────────────────────────────────
   useEffect(() => {
@@ -183,8 +186,12 @@ export default function QuoteModal({
         }),
       }).catch(err => console.warn("Email send failed:", err));
 
+      const configMap = Object.fromEntries(
+        Object.entries(selectedOptions).map(([catId, opt]) => [catId, opt.id])
+      );
+
       // Save lead + trigger builder notification
-      await fetch("/api/leads", {
+      const leadRes = await fetch("/api/leads", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -193,15 +200,33 @@ export default function QuoteModal({
           last_name:      form.lastName,
           email:          form.email,
           phone:          form.phone || null,
-          configuration:  Object.fromEntries(
-            Object.entries(selectedOptions).map(([catId, opt]) => [catId, opt.id])
-          ),
+          configuration:  configMap,
           total_value:    totalPrice,
           lot_number:     lotInfo?.lotNumber     ?? null,
           community_slug: lotInfo?.communitySlug ?? null,
           community_name: lotInfo?.communityName ?? null,
         }),
       });
+      const leadData = leadRes.ok ? await leadRes.json() : null;
+
+      // Save configuration for shareable portal link
+      const portalRes = await fetch("/api/portal/save", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id:     project.id,
+          lead_id:        leadData?.id ?? null,
+          configuration:  configMap,
+          total_price:    totalPrice,
+          phase_snapshot: "exterior",
+          lot_id:         lotInfo?.lotId ?? null,
+          thumbnail_url:  aiRender ?? screenshot ?? null,
+        }),
+      });
+      if (portalRes.ok) {
+        const { token } = await portalRes.json();
+        setPortalToken(token ?? null);
+      }
 
       setStep("done");
     } catch (err) {
@@ -312,6 +337,36 @@ export default function QuoteModal({
                 )}
               </div>
             )}
+
+            {/* Selected options preview with thumbnails */}
+            {categories.length > 0 && (
+              <div className="mb-5 max-h-44 overflow-y-auto space-y-1" style={{ scrollbarWidth: "none" }}>
+                {categories.map(cat => {
+                  const opt = selectedOptions[cat.id];
+                  if (!opt) return null;
+                  return (
+                    <div key={cat.id} className="flex items-center gap-2.5 px-3 py-2 rounded-xl" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                      {opt.thumbnail_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={opt.thumbnail_url} alt={opt.friendly_name} className="w-8 h-8 rounded-lg object-cover flex-shrink-0" style={{ border: "1px solid rgba(255,255,255,0.1)" }} />
+                      ) : (
+                        <div className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-white/20" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-white/30 font-semibold uppercase tracking-wide truncate">{cat.name}</p>
+                        <p className="text-xs text-white/65 font-medium truncate">{opt.friendly_name}</p>
+                      </div>
+                      <span className="text-[10px] font-semibold flex-shrink-0" style={{ color: (opt.price_impact ?? 0) > 0 ? "#93c5fd" : "rgba(255,255,255,0.2)" }}>
+                        {(opt.price_impact ?? 0) === 0 ? "incl." : `+${opt.price_impact!.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {lotInfo?.lotNumber && (
               <div
                 className="flex items-center gap-2 px-3 py-2 rounded-xl mb-5 text-sm"
@@ -391,15 +446,36 @@ export default function QuoteModal({
 
         {/* ── Step: done ── */}
         {step === "done" && (
-          <div className="flex flex-col items-center gap-4 py-14 px-8 text-center">
+          <div className="flex flex-col items-center gap-4 py-12 px-8 text-center">
             <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center text-2xl text-green-400">✓</div>
             <div>
               <p className="text-white font-semibold">Quote sent!</p>
               <p className="text-sm text-white/50 mt-1">Check your inbox at {form.email}</p>
             </div>
+            {portalToken && (
+              <div className="w-full mt-1 rounded-xl p-4 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <p className="text-white/50 text-xs mb-2 font-semibold uppercase tracking-wide">Your shareable link</p>
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 text-xs text-white/60 font-mono truncate">
+                    {typeof window !== "undefined" ? `${window.location.origin}/portal/${portalToken}` : `/portal/${portalToken}`}
+                  </span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/portal/${portalToken}`);
+                      setPortalCopied(true);
+                      setTimeout(() => setPortalCopied(false), 2000);
+                    }}
+                    className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                    style={{ background: "rgba(255,255,255,0.1)", color: portalCopied ? "#4ade80" : "rgba(255,255,255,0.7)" }}
+                  >
+                    {portalCopied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
+            )}
             <button
               onClick={onClose}
-              className="mt-2 px-6 py-2 rounded-xl text-sm text-white transition-colors" style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.09)" }}
+              className="mt-1 px-6 py-2 rounded-xl text-sm text-white transition-colors" style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.09)" }}
             >
               Close
             </button>

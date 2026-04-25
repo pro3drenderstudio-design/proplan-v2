@@ -23,6 +23,7 @@ async function applyPlanLimits(builderId: string, planId: string) {
     ai_credits_remaining:     plan.ai_credits_monthly,
     ai_credits_total:         plan.ai_credits_monthly,
     max_projects:             plan.max_projects === -1 ? 9999 : plan.max_projects,
+    max_communities:          plan.max_communities ?? -1,
     seats_included:           plan.seats_included,
     max_storage_gb:           plan.max_storage_gb,
   }).eq("id", builderId);

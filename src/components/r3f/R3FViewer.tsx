@@ -13,8 +13,10 @@ import { ACESFilmicToneMapping, SRGBColorSpace } from "three";
 import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
 import { patchPolyhavenLoader } from "@/lib/three/polyhaven-loader";
+import { patchTextureLoader } from "@/lib/three/cap-texture-size";
 
 patchPolyhavenLoader();
+patchTextureLoader();
 import { PhaseId } from "@/constants/phases";
 import { MaterialLibraryEntry, ModelNodeGroups, Option, SceneRenderSettings, PlacedLight, PlacedShapeData, ShapeType } from "@/types/database";
 import type { SketchfabCameraApi, CameraCoords } from "@/utils/sketchfab-camera";
@@ -307,14 +309,17 @@ export default function R3FViewer({
   }
 
   return (
-    <div className="relative w-full h-full bg-slate-950">
+    <div className="relative w-full h-full" style={{ background: "#0d0d0d" }}>
+      {/* Solid cover that sits above the Canvas in the same stacking context.
+          This prevents the Canvas's first WebGL frame (which can composite
+          above fixed overlays via GPU layers) from creating a visible flash.
+          Uses will-change: transform so it gets its own GPU layer, ensuring
+          proper z-ordering with the Canvas layer. */}
       {!ready && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-8 h-8 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
-            <p className="text-white/30 text-xs tracking-widest uppercase">Loading model…</p>
-          </div>
-        </div>
+        <div
+          className="absolute inset-0 z-20"
+          style={{ background: "#0d0d0d", willChange: "transform", transform: "translateZ(0)" }}
+        />
       )}
 
       {/* Path tracing status indicator */}
@@ -330,6 +335,7 @@ export default function R3FViewer({
 
       <CanvasErrorBoundary onError={handleCanvasError}>
       <Canvas
+        style={{ background: "#0d0d0d" }}
         shadows={(sceneSettings?.shadows ?? true) && !lowPerf ? "soft" : false}
         dpr={lowPerf ? 1 : [1, 2]}
         camera={{ position: [8, 6, 12], fov: sceneSettings?.cameraFov ?? 45 }}
@@ -339,7 +345,8 @@ export default function R3FViewer({
           toneMapping: ACESFilmicToneMapping,
           toneMappingExposure: 1.1,
           outputColorSpace: SRGBColorSpace,
-          powerPreference: "high-performance",
+          powerPreference: lowPerf ? "default" : "high-performance",
+          failIfMajorPerformanceCaveat: false,
         }}
         onCreated={({ gl }) => {
           gl.setClearColor("#0d0d0d", 1);

@@ -70,6 +70,115 @@ function timeAgo(ts: string | null | undefined): string {
   return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+// ─── Analytics panel ─────────────────────────────────────────────────────────
+
+function AnalyticsPanel({ threads, loading }: { threads: CrmThread[]; loading: boolean }) {
+  const total = threads.length;
+  const replied = threads.filter((t) => t.latest_reply).length;
+  const replyRate = total > 0 ? Math.round((replied / total) * 100) : 0;
+
+  const statusCounts = CRM_STATUSES.map((s) => ({
+    ...s,
+    count: threads.filter((t) => (t.crm_status ?? "neutral") === s.value).length,
+  })).filter((s) => s.count > 0);
+
+  const maxCount = Math.max(...statusCounts.map((s) => s.count), 1);
+
+  // Reply activity over last 7 days
+  const now = Date.now();
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(now - (6 - i) * 86400_000);
+    return {
+      label: d.toLocaleDateString("en-US", { weekday: "short" }),
+      date: d.toISOString().slice(0, 10),
+      count: 0,
+    };
+  });
+  for (const t of threads) {
+    if (!t.replied_at) continue;
+    const day = t.replied_at.slice(0, 10);
+    const slot = days.find((d) => d.date === day);
+    if (slot) slot.count++;
+  }
+  const maxDay = Math.max(...days.map((d) => d.count), 1);
+
+  if (loading) {
+    return (
+      <div className="flex-1 p-6 space-y-4">
+        {[1, 2, 3].map((i) => <div key={i} className="h-24 bg-white/4 rounded-xl animate-pulse" />)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      {/* Summary stats */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-white/4 border border-white/8 rounded-xl p-4">
+          <p className="text-white/40 text-xs font-semibold uppercase tracking-wider mb-1">Total Threads</p>
+          <p className="text-white text-3xl font-bold">{total}</p>
+        </div>
+        <div className="bg-white/4 border border-white/8 rounded-xl p-4">
+          <p className="text-white/40 text-xs font-semibold uppercase tracking-wider mb-1">Replied</p>
+          <p className="text-emerald-400 text-3xl font-bold">{replied}</p>
+        </div>
+        <div className="bg-white/4 border border-white/8 rounded-xl p-4">
+          <p className="text-white/40 text-xs font-semibold uppercase tracking-wider mb-1">Reply Rate</p>
+          <p className="text-blue-400 text-3xl font-bold">{replyRate}%</p>
+        </div>
+      </div>
+
+      {/* Reply activity chart */}
+      <div className="bg-white/4 border border-white/8 rounded-xl p-5">
+        <p className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-4">Reply Activity — Last 7 Days</p>
+        <div className="flex items-end gap-2 h-24">
+          {days.map((d) => (
+            <div key={d.date} className="flex-1 flex flex-col items-center gap-1">
+              <span className="text-white/40 text-[10px]">{d.count > 0 ? d.count : ""}</span>
+              <div
+                className="w-full bg-blue-500/40 rounded-sm transition-all"
+                style={{ height: `${Math.max(4, (d.count / maxDay) * 80)}px` }}
+              />
+              <span className="text-white/30 text-[10px]">{d.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Status breakdown */}
+      {statusCounts.length > 0 && (
+        <div className="bg-white/4 border border-white/8 rounded-xl p-5">
+          <p className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-4">Status Breakdown</p>
+          <div className="space-y-3">
+            {statusCounts.map((s) => (
+              <div key={s.value} className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${s.color}`}>{s.label}</span>
+                  <span className="text-white/50 text-xs">{s.count}</span>
+                </div>
+                <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-white/25 rounded-full transition-all"
+                    style={{ width: `${(s.count / maxCount) * 100}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {total === 0 && (
+        <div className="text-center py-16 text-white/25">
+          <div className="text-5xl mb-4">📬</div>
+          <p className="text-sm font-medium">No replies yet</p>
+          <p className="text-xs mt-1">Analytics will appear once leads start replying</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function CrmClient() {
@@ -337,8 +446,177 @@ export default function CrmClient() {
       {mainTab === "inbox" && (
         <div className="flex flex-1 overflow-hidden" onClick={() => setStatusDropdown(false)}>
 
-          {/* Thread list */}
-          <div className="w-80 flex-shrink-0 border-r border-white/8 flex flex-col overflow-hidden">
+          {/* Left column — analytics (no selection) or detail panel (selection) */}
+          <div className="flex-1 flex flex-col overflow-hidden border-r border-white/8">
+            {selected ? (
+              /* ── Detail panel ──────────────────────────────────────────────── */
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Contact header */}
+                <div className="flex-shrink-0 px-6 py-4 border-b border-white/8 bg-white/2">
+                  <div className="flex items-start gap-4">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center flex-shrink-0">
+                      <span className="text-xs font-bold text-white uppercase">{(selected.lead.first_name?.[0] ?? selected.lead.email[0]).toUpperCase()}</span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-white font-semibold text-base">{[selected.lead.first_name, selected.lead.last_name].filter(Boolean).join(" ") || selected.lead.email}</h2>
+                      <p className="text-white/40 text-xs">{selected.lead.email}</p>
+                      {(selected.lead.company || selected.lead.title) && (
+                        <p className="text-white/30 text-xs mt-0.5">{[selected.lead.title, selected.lead.company].filter(Boolean).join(" at ")}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <button onClick={() => { setSelected(null); setSuggestion(null); }} className="text-white/30 hover:text-white/60 text-xs px-2 py-1 rounded-lg hover:bg-white/6 transition-colors">✕ Close</button>
+                      <div className="relative">
+                        <div onClick={(e) => { e.stopPropagation(); setStatusDropdown((v) => !v); }} className="cursor-pointer flex items-center gap-1.5">
+                          <StatusBadge status={selected.crm_status ?? "neutral"} onClick={() => {}} />
+                          {updatingStatus && <span className="text-white/30 text-xs">…</span>}
+                          {selected.latest_reply?.ai_category && selected.latest_reply.ai_category !== "neutral" && (selected.latest_reply.ai_confidence ?? 0) >= 0.7 && (
+                            <span className="text-white/30 text-[9px]" title={`AI confidence: ${Math.round((selected.latest_reply.ai_confidence ?? 0) * 100)}%`}>AI ✓</span>
+                          )}
+                        </div>
+                        {statusDropdown && (
+                          <div className="absolute right-0 top-8 z-30 bg-[#1e1e1e] border border-white/10 rounded-xl shadow-2xl py-1 min-w-44" onClick={(e) => e.stopPropagation()}>
+                            {CRM_STATUSES.map((s) => (
+                              <button key={s.value} onClick={() => handleStatusChange(s.value)} className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 hover:bg-white/6 transition-colors ${selected.crm_status === s.value ? "opacity-60" : ""}`}>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${s.color}`}>{s.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-white/50 text-xs font-medium">{selected.campaign.name}</p>
+                        <p className="text-white/25 text-[10px] mt-0.5">Replied {timeAgo(selected.replied_at)}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Email thread */}
+                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                  {selected.latest_send && (
+                    <div className="flex flex-col items-end">
+                      <div className="max-w-[85%] w-full">
+                        <div className="flex items-center justify-end gap-2 mb-1.5">
+                          <span className="text-white/30 text-[10px]">{selected.latest_send.sent_at ? new Date(selected.latest_send.sent_at).toLocaleString() : ""}</span>
+                          {selected.latest_send.opened_at && <span className="text-emerald-400/60 text-[10px]">Opened</span>}
+                          <span className="text-blue-300/50 text-[10px] font-medium">You</span>
+                        </div>
+                        <button className="w-full text-left" onClick={() => setSentCollapsed((v) => !v)}>
+                          <div className="bg-blue-600/15 border border-blue-500/25 rounded-2xl rounded-tr-sm overflow-hidden">
+                            <div className="px-4 py-2.5 border-b border-blue-500/15 flex items-center justify-between gap-2">
+                              <p className="text-blue-200/80 text-xs font-medium truncate">{selected.latest_send.subject}</p>
+                              <span className="text-blue-300/30 text-[10px] flex-shrink-0">{sentCollapsed ? "▸" : "▾"}</span>
+                            </div>
+                            {!sentCollapsed && (
+                              <div className="p-4">
+                                {selected.latest_send.body?.trim().startsWith("<") ? (
+                                  <iframe srcDoc={`<html><head><style>body{margin:0;font-family:sans-serif;font-size:13px;color:#ccc;background:transparent;line-height:1.6}a{color:#7dd3fc}*{max-width:100%}</style></head><body>${selected.latest_send.body}</body></html>`} sandbox="allow-same-origin" className="w-full border-0 min-h-[80px]" style={{ height: "auto" }} onLoad={(e) => { const iframe = e.currentTarget; if (iframe.contentDocument?.body) { iframe.style.height = iframe.contentDocument.body.scrollHeight + "px"; } }} />
+                                ) : (
+                                  <pre className="text-blue-100/60 text-xs whitespace-pre-wrap font-sans leading-relaxed">{selected.latest_send.body}</pre>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {selected.latest_reply && (
+                    <div className="flex flex-col items-start">
+                      <div className="max-w-[85%] w-full">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="text-emerald-300/60 text-[10px] font-medium">{selected.latest_reply.from_name || selected.latest_reply.from_email}</span>
+                          {selected.latest_reply.from_email !== selected.lead.email && (<span className="text-amber-400/50 text-[10px]">({selected.latest_reply.from_email})</span>)}
+                          <span className="text-white/30 text-[10px]">{new Date(selected.latest_reply.received_at).toLocaleString()}</span>
+                          {selected.latest_reply.ai_category && selected.latest_reply.ai_category !== "neutral" && (selected.latest_reply.ai_confidence ?? 0) >= 0.7 && (
+                            <span className="text-emerald-400/50 text-[10px]">AI: {selected.latest_reply.ai_category.replace(/_/g, " ")} {Math.round((selected.latest_reply.ai_confidence ?? 0) * 100)}%</span>
+                          )}
+                        </div>
+                        <button className="w-full text-left" onClick={() => setReplyCollapsed((v) => !v)}>
+                          <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl rounded-tl-sm overflow-hidden">
+                            <div className="px-4 py-2.5 border-b border-emerald-500/15 flex items-center justify-between gap-2">
+                              <p className="text-emerald-200/70 text-xs font-medium truncate">{selected.latest_reply.subject ?? `Re: ${selected.latest_send?.subject ?? ""}`}</p>
+                              <span className="text-emerald-300/30 text-[10px] flex-shrink-0">{replyCollapsed ? "▸" : "▾"}</span>
+                            </div>
+                            {!replyCollapsed && (
+                              <div className="p-4">
+                                <pre className="text-emerald-100/75 text-sm whitespace-pre-wrap font-sans leading-relaxed">{selected.latest_reply.body_text ?? "(No body captured — reply detected via header matching)"}</pre>
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="pt-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider">AI Suggestion</h3>
+                      <button onClick={handleSuggestReply} disabled={suggesting} className="px-3 py-1 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/30 text-violet-300 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5">
+                        {suggesting ? <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating…</> : <>✦ Suggest</>}
+                      </button>
+                    </div>
+                    {suggestion && (
+                      <div className={`border rounded-xl p-4 space-y-3 ${suggestion.startsWith("Error") ? "border-red-500/20 bg-red-500/8" : "border-violet-500/20 bg-violet-500/8"}`}>
+                        <p className={`text-sm whitespace-pre-wrap ${suggestion.startsWith("Error") ? "text-red-400" : "text-white/70"}`}>{suggestion}</p>
+                        {!suggestion.startsWith("Error") && (
+                          <div className="flex gap-2">
+                            <button onClick={() => { setComposeBody(suggestion); setSuggestion(null); }} className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold rounded-lg transition-colors">Use as Reply</button>
+                            <button onClick={() => { setNoteBody(suggestion); setSuggestion(null); noteRef.current?.focus(); }} className="px-3 py-1.5 bg-white/6 hover:bg-white/10 text-white/50 text-xs rounded-lg transition-colors">Use as Note</button>
+                            <button onClick={() => setSuggestion(null)} className="px-3 py-1.5 bg-white/6 hover:bg-white/10 text-white/50 text-xs rounded-lg transition-colors">Dismiss</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-1">
+                    <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider mb-3">Notes</h3>
+                    {(selected.notes?.length ?? 0) > 0 && (
+                      <div className="space-y-2 mb-3">
+                        {selected.notes.map((n) => (
+                          <div key={n.id} className="bg-amber-500/8 border border-amber-500/15 rounded-xl p-4">
+                            <p className="text-white/80 text-sm whitespace-pre-wrap">{n.body}</p>
+                            <p className="text-white/25 text-[10px] mt-2">{new Date(n.created_at).toLocaleString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="bg-white/3 border border-white/8 rounded-xl p-3 space-y-2">
+                      <textarea ref={noteRef} value={noteBody} onChange={(e) => setNoteBody(e.target.value)} placeholder="Add a note…" rows={2} className="w-full bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none resize-none" />
+                      <div className="flex justify-end">
+                        <button onClick={handleAddNote} disabled={savingNote || !noteBody.trim()} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors">{savingNote ? "Saving…" : "Save Note"}</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Compose reply */}
+                <div className="flex-shrink-0 border-t border-white/8 bg-white/2 p-4">
+                  <div className="bg-white/4 border border-white/10 rounded-xl overflow-hidden focus-within:border-blue-500/40 transition-colors">
+                    <textarea value={composeBody} onChange={(e) => { setComposeBody(e.target.value); setSendError(null); setSendSuccess(false); }} placeholder={`Reply to ${selected.lead.first_name || selected.lead.email}…`} rows={4} className="w-full bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none resize-none px-4 pt-3 pb-1" />
+                    <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+                      <div className="text-xs">
+                        {sendError && <span className="text-red-400">⚠ {sendError}</span>}
+                        {sendSuccess && <span className="text-emerald-400">✓ Sent successfully</span>}
+                      </div>
+                      <button onClick={handleSendReply} disabled={sending || !composeBody.trim()} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5">
+                        {sending ? (<><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Sending…</>) : (<>↗ Send Reply</>)}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* ── Analytics panel ───────────────────────────────────────────── */
+              <AnalyticsPanel threads={threads} loading={loading} />
+            )}
+          </div>
+
+          {/* Right column — thread list (always visible) */}
+          <div className="w-72 flex-shrink-0 flex flex-col overflow-hidden">
             <div className="px-3 py-2.5 border-b border-white/8 space-y-2 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <input
@@ -405,225 +683,6 @@ export default function CrmClient() {
             </div>
           </div>
 
-          {/* Detail panel */}
-          {selected ? (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Contact header */}
-              <div className="flex-shrink-0 px-6 py-4 border-b border-white/8 bg-white/2">
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center flex-shrink-0">
-                    <span className="text-xs font-bold text-white uppercase">{(selected.lead.first_name?.[0] ?? selected.lead.email[0]).toUpperCase()}</span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="text-white font-semibold text-base">{[selected.lead.first_name, selected.lead.last_name].filter(Boolean).join(" ") || selected.lead.email}</h2>
-                    <p className="text-white/40 text-xs">{selected.lead.email}</p>
-                    {(selected.lead.company || selected.lead.title) && (
-                      <p className="text-white/30 text-xs mt-0.5">{[selected.lead.title, selected.lead.company].filter(Boolean).join(" at ")}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <div className="relative">
-                      <div onClick={(e) => { e.stopPropagation(); setStatusDropdown((v) => !v); }} className="cursor-pointer flex items-center gap-1.5">
-                        <StatusBadge status={selected.crm_status ?? "neutral"} onClick={() => {}} />
-                        {updatingStatus && <span className="text-white/30 text-xs">…</span>}
-                        {selected.latest_reply?.ai_category && selected.latest_reply.ai_category !== "neutral" && (selected.latest_reply.ai_confidence ?? 0) >= 0.7 && (
-                          <span className="text-white/30 text-[9px]" title={`AI confidence: ${Math.round((selected.latest_reply.ai_confidence ?? 0) * 100)}%`}>AI ✓</span>
-                        )}
-                      </div>
-                      {statusDropdown && (
-                        <div className="absolute right-0 top-8 z-30 bg-[#1e1e1e] border border-white/10 rounded-xl shadow-2xl py-1 min-w-44" onClick={(e) => e.stopPropagation()}>
-                          {CRM_STATUSES.map((s) => (
-                            <button key={s.value} onClick={() => handleStatusChange(s.value)} className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 hover:bg-white/6 transition-colors ${selected.crm_status === s.value ? "opacity-60" : ""}`}>
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${s.color}`}>{s.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-right">
-                      <p className="text-white/50 text-xs font-medium">{selected.campaign.name}</p>
-                      <p className="text-white/25 text-[10px] mt-0.5">Replied {timeAgo(selected.replied_at)}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Email thread */}
-              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-
-                {/* Sent email bubble — right aligned */}
-                {selected.latest_send && (
-                  <div className="flex flex-col items-end">
-                    <div className="max-w-[85%] w-full">
-                      <div className="flex items-center justify-end gap-2 mb-1.5">
-                        <span className="text-white/30 text-[10px]">
-                          {selected.latest_send.sent_at ? new Date(selected.latest_send.sent_at).toLocaleString() : ""}
-                        </span>
-                        {selected.latest_send.opened_at && <span className="text-emerald-400/60 text-[10px]">Opened</span>}
-                        <span className="text-blue-300/50 text-[10px] font-medium">You</span>
-                      </div>
-                      <button
-                        className="w-full text-left"
-                        onClick={() => setSentCollapsed((v) => !v)}
-                      >
-                        <div className="bg-blue-600/15 border border-blue-500/25 rounded-2xl rounded-tr-sm overflow-hidden">
-                          <div className="px-4 py-2.5 border-b border-blue-500/15 flex items-center justify-between gap-2">
-                            <p className="text-blue-200/80 text-xs font-medium truncate">{selected.latest_send.subject}</p>
-                            <span className="text-blue-300/30 text-[10px] flex-shrink-0">{sentCollapsed ? "▸" : "▾"}</span>
-                          </div>
-                          {!sentCollapsed && (
-                            <div className="p-4">
-                              {selected.latest_send.body?.trim().startsWith("<") ? (
-                                <iframe
-                                  srcDoc={`<html><head><style>body{margin:0;font-family:sans-serif;font-size:13px;color:#ccc;background:transparent;line-height:1.6}a{color:#7dd3fc}*{max-width:100%}</style></head><body>${selected.latest_send.body}</body></html>`}
-                                  sandbox="allow-same-origin"
-                                  className="w-full border-0 min-h-[80px]"
-                                  style={{ height: "auto" }}
-                                  onLoad={(e) => {
-                                    const iframe = e.currentTarget;
-                                    if (iframe.contentDocument?.body) {
-                                      iframe.style.height = iframe.contentDocument.body.scrollHeight + "px";
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <pre className="text-blue-100/60 text-xs whitespace-pre-wrap font-sans leading-relaxed">{selected.latest_send.body}</pre>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Their reply bubble — left aligned */}
-                {selected.latest_reply && (
-                  <div className="flex flex-col items-start">
-                    <div className="max-w-[85%] w-full">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-emerald-300/60 text-[10px] font-medium">
-                          {selected.latest_reply.from_name || selected.latest_reply.from_email}
-                        </span>
-                        {selected.latest_reply.from_email !== selected.lead.email && (
-                          <span className="text-amber-400/50 text-[10px]">({selected.latest_reply.from_email})</span>
-                        )}
-                        <span className="text-white/30 text-[10px]">
-                          {new Date(selected.latest_reply.received_at).toLocaleString()}
-                        </span>
-                        {selected.latest_reply.ai_category && selected.latest_reply.ai_category !== "neutral" && (selected.latest_reply.ai_confidence ?? 0) >= 0.7 && (
-                          <span className="text-emerald-400/50 text-[10px]">
-                            AI: {selected.latest_reply.ai_category.replace(/_/g, " ")} {Math.round((selected.latest_reply.ai_confidence ?? 0) * 100)}%
-                          </span>
-                        )}
-                      </div>
-                      <button className="w-full text-left" onClick={() => setReplyCollapsed((v) => !v)}>
-                        <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl rounded-tl-sm overflow-hidden">
-                          <div className="px-4 py-2.5 border-b border-emerald-500/15 flex items-center justify-between gap-2">
-                            <p className="text-emerald-200/70 text-xs font-medium truncate">
-                              {selected.latest_reply.subject ?? `Re: ${selected.latest_send?.subject ?? ""}`}
-                            </p>
-                            <span className="text-emerald-300/30 text-[10px] flex-shrink-0">{replyCollapsed ? "▸" : "▾"}</span>
-                          </div>
-                          {!replyCollapsed && (
-                            <div className="p-4">
-                              <pre className="text-emerald-100/75 text-sm whitespace-pre-wrap font-sans leading-relaxed">
-                                {selected.latest_reply.body_text ?? "(No body captured — reply detected via header matching)"}
-                              </pre>
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* AI Reply Suggestion */}
-                <div className="pt-2">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider">AI Suggestion</h3>
-                    <button onClick={handleSuggestReply} disabled={suggesting} className="px-3 py-1 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/30 text-violet-300 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5">
-                      {suggesting ? <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating…</> : <>✦ Suggest</>}
-                    </button>
-                  </div>
-                  {suggestion && (
-                    <div className={`border rounded-xl p-4 space-y-3 ${suggestion.startsWith("Error") ? "border-red-500/20 bg-red-500/8" : "border-violet-500/20 bg-violet-500/8"}`}>
-                      <p className={`text-sm whitespace-pre-wrap ${suggestion.startsWith("Error") ? "text-red-400" : "text-white/70"}`}>{suggestion}</p>
-                      {!suggestion.startsWith("Error") && (
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => { setComposeBody(suggestion); setSuggestion(null); }}
-                            className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold rounded-lg transition-colors"
-                          >
-                            Use as Reply
-                          </button>
-                          <button onClick={() => { setNoteBody(suggestion); setSuggestion(null); noteRef.current?.focus(); }} className="px-3 py-1.5 bg-white/6 hover:bg-white/10 text-white/50 text-xs rounded-lg transition-colors">Use as Note</button>
-                          <button onClick={() => setSuggestion(null)} className="px-3 py-1.5 bg-white/6 hover:bg-white/10 text-white/50 text-xs rounded-lg transition-colors">Dismiss</button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Notes */}
-                <div className="pt-1">
-                  <h3 className="text-xs font-semibold text-white/30 uppercase tracking-wider mb-3">Notes</h3>
-                  {(selected.notes?.length ?? 0) > 0 && (
-                    <div className="space-y-2 mb-3">
-                      {selected.notes.map((n) => (
-                        <div key={n.id} className="bg-amber-500/8 border border-amber-500/15 rounded-xl p-4">
-                          <p className="text-white/80 text-sm whitespace-pre-wrap">{n.body}</p>
-                          <p className="text-white/25 text-[10px] mt-2">{new Date(n.created_at).toLocaleString()}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="bg-white/3 border border-white/8 rounded-xl p-3 space-y-2">
-                    <textarea ref={noteRef} value={noteBody} onChange={(e) => setNoteBody(e.target.value)} placeholder="Add a note…" rows={2} className="w-full bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none resize-none" />
-                    <div className="flex justify-end">
-                      <button onClick={handleAddNote} disabled={savingNote || !noteBody.trim()} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors">
-                        {savingNote ? "Saving…" : "Save Note"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Compose reply — pinned to bottom */}
-              <div className="flex-shrink-0 border-t border-white/8 bg-white/2 p-4">
-                <div className="bg-white/4 border border-white/10 rounded-xl overflow-hidden focus-within:border-blue-500/40 transition-colors">
-                  <textarea
-                    value={composeBody}
-                    onChange={(e) => { setComposeBody(e.target.value); setSendError(null); setSendSuccess(false); }}
-                    placeholder={`Reply to ${selected.lead.first_name || selected.lead.email}…`}
-                    rows={4}
-                    className="w-full bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none resize-none px-4 pt-3 pb-1"
-                  />
-                  <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
-                    <div className="text-xs">
-                      {sendError && <span className="text-red-400">⚠ {sendError}</span>}
-                      {sendSuccess && <span className="text-emerald-400">✓ Sent successfully</span>}
-                    </div>
-                    <button
-                      onClick={handleSendReply}
-                      disabled={sending || !composeBody.trim()}
-                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5"
-                    >
-                      {sending ? (
-                        <><svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Sending…</>
-                      ) : (
-                        <>↗ Send Reply</>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-white/20">
-              <div className="text-center"><div className="text-5xl mb-4">←</div><p className="text-sm">Select a conversation</p></div>
-            </div>
-          )}
         </div>
       )}
 

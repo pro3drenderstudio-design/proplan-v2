@@ -256,6 +256,7 @@ export default function HomeModel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, currentPhase, currentLevel, nodeGroups, selectedOptions, allOptionNodes, structuralArrays, optionsSeeded]);
 
+
   // ── Base material assignments ──────────────────────────────────────────────
   useLayoutEffect(() => {
     if (!model) return;

@@ -12,13 +12,13 @@ export interface Phase {
 
 export const PHASES: Phase[] = [
   {
-    id: "blueprint",
-    label: "Blueprint",
-    description: "Top-down floor plan view for room layout and dimensions.",
+    id: "exterior",
+    label: "Exterior",
+    description: "Outside view of the home facade, roofing, and landscaping.",
     camera: {
-      position: [0, 20, 0],
-      target: [0, 0, 0],
-      fov: 60,
+      position: [10, 5, 15],
+      target: [0, 2, 0],
+      fov: 65,
     },
   },
   {
@@ -31,16 +31,6 @@ export const PHASES: Phase[] = [
       fov: 75,
     },
   },
-  {
-    id: "exterior",
-    label: "Exterior",
-    description: "Outside view of the home facade, roofing, and landscaping.",
-    camera: {
-      position: [10, 5, 15],
-      target: [0, 2, 0],
-      fov: 65,
-    },
-  },
 ];
 
-export const DEFAULT_PHASE: PhaseId = "blueprint";
+export const DEFAULT_PHASE: PhaseId = "exterior";

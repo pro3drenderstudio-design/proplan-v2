@@ -140,21 +140,31 @@ export function computeNextSendAt(waitDays: number, campaign: OutreachCampaign):
 
 /**
  * Returns how many emails this inbox can still send today.
+ * Counts both sequence sends (outreach_sends) and warmup sends
+ * (outreach_warmup_sends) against the same daily_send_limit cap.
  */
 export async function checkDailyLimits(inboxId: string, dailyLimit: number): Promise<number> {
   const supabase = adminClient();
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
+  const todayStartIso = todayStart.toISOString();
 
-  const { count } = await supabase
-    .from("outreach_sends")
-    .select("id", { count: "exact", head: true })
-    .eq("inbox_id", inboxId)
-    .in("status", ["sent", "queued"])
-    .gte("created_at", todayStart.toISOString());
+  const [{ count: sequenceCount }, { count: warmupCount }] = await Promise.all([
+    supabase
+      .from("outreach_sends")
+      .select("id", { count: "exact", head: true })
+      .eq("inbox_id", inboxId)
+      .in("status", ["sent", "queued"])
+      .gte("created_at", todayStartIso),
+    supabase
+      .from("outreach_warmup_sends")
+      .select("id", { count: "exact", head: true })
+      .eq("from_inbox_id", inboxId)
+      .gte("sent_at", todayStartIso),
+  ]);
 
-  const sent = count ?? 0;
-  return Math.max(0, dailyLimit - sent);
+  const totalSent = (sequenceCount ?? 0) + (warmupCount ?? 0);
+  return Math.max(0, dailyLimit - totalSent);
 }
 
 // ─── markReplied ──────────────────────────────────────────────────────────────

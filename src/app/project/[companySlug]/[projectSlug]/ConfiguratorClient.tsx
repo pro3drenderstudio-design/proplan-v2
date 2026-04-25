@@ -2,6 +2,7 @@
 
 import React, { Component, useEffect, useRef, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
+import { useGLTF } from "@react-three/drei";
 import SketchfabViewer, { ViewerStatus } from "@/components/SketchfabViewer";
 import R3FViewer from "@/components/r3f/R3FViewer";
 import PhaseController from "@/components/PhaseController";
@@ -15,7 +16,6 @@ import { setPhaseCamera, SketchfabCameraApi, CameraCoords } from "@/utils/sketch
 import { LevelId } from "@/logic/visibilityController";
 import { getProjectBySlugs, getCategoriesWithOptions } from "@/lib/supabase";
 import { CategoryWithOptions, MaterialLibraryEntry, Option, PhaseColumn, Project, SceneRenderSettings, PlacedShapeData } from "@/types/database";
-import * as THREE from "three";
 
 // Catches any render-time errors that escape R3FViewer's CanvasErrorBoundary
 // (after 3 retries or from Suspense-related failures), preventing them from
@@ -43,23 +43,6 @@ class ViewerErrorBoundary extends Component<
   }
 }
 
-function preloadTextureUrls(urls: (string | null | undefined)[]) {
-  // Skip on mobile — preloading all textures upfront competes with the model download.
-  if (typeof navigator !== "undefined" && /Mobi|Android/i.test(navigator.userAgent)) return;
-  const loader = new THREE.TextureLoader();
-  const seen = new Set<string>();
-  for (const url of urls) {
-    if (url && !seen.has(url)) {
-      seen.add(url);
-      loader.load(url, undefined, undefined, () => {});
-    }
-  }
-}
-
-function texUrlsFromProperties(p: MaterialLibraryEntry["properties"]): (string | null | undefined)[] {
-  if (!p) return [];
-  return [p.albedoMapUrl, p.normalMapUrl, p.roughnessMapUrl, p.metalnessMapUrl, p.aoMapUrl, p.bumpMapUrl];
-}
 
 interface ConfigState {
   currentPhase: PhaseId;
@@ -75,6 +58,9 @@ interface Props {
 export default function ConfiguratorClient({ companySlug, projectSlug }: Props) {
   const [isLoaded, setIsLoaded]         = useState(false);
   const [viewerStatus, setViewerStatus] = useState<ViewerStatus>("loading");
+  const [everReady, setEverReady]       = useState(false);
+  const [phaseOverlay, setPhaseOverlay] = useState<string | null>(null);
+  const phaseOverlayTimer               = useRef<ReturnType<typeof setTimeout> | null>(null);
   const apiRef = useRef<SketchfabCameraApi | null>(null);
 
   const [config, setConfig] = useState<ConfigState>({
@@ -250,40 +236,34 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
       if (!p) { setNotFound(true); return; }
       setProject(p);
       if (p.model_url) {
-        // Preload glbMatOverride textures immediately — these appear as soon as the
-        // model loads and would flash black without this.
-        const glbOverrides = (p.camera_defaults as any)?._glbMatOverrides ?? {};
-        const glbTexUrls = Object.values(glbOverrides as Record<string, { properties?: MaterialLibraryEntry["properties"] }>)
-          .flatMap(ov => texUrlsFromProperties(ov.properties));
-        if (glbTexUrls.length) preloadTextureUrls(glbTexUrls);
+        // Start GLB download immediately — before the Canvas even mounts.
+        // useGLTF caches by URL so HomeModel will reuse this in-flight request.
+        useGLTF.preload(p.model_url);
 
         Promise.all([
           fetch("/api/admin/materials", { signal }).then(r => r.ok ? r.json() : []),
           getCategoriesWithOptions(p.id),
         ]).then(([mats, flat]: [MaterialLibraryEntry[], any[]]) => {
           if (signal.aborted) return;
-          setMaterialLibrary(mats);
+
+          // Only keep materials referenced by this project's options + base mat map.
+          // Reduces in-memory footprint — any other material in the library is irrelevant here.
+          const referencedIds = new Set<string>();
+          for (const cat of flat) {
+            for (const opt of (cat.options ?? [])) {
+              if (opt.material_id) referencedIds.add(opt.material_id);
+              for (const a of (opt.material_assignments ?? [])) referencedIds.add(a.material_id);
+            }
+          }
+          const meshBaseMats = (p.camera_defaults as any)?._meshBaseMats ?? {};
+          for (const id of Object.values(meshBaseMats as Record<string, string>)) referencedIds.add(id);
+          setMaterialLibrary(referencedIds.size > 0 ? (mats as MaterialLibraryEntry[]).filter(m => referencedIds.has(m.id)) : mats);
 
           const grouped: Record<PhaseColumn, CategoryWithOptions[]> = {
             blueprint: [], interior: [], exterior: [],
           };
           for (const cat of flat) grouped[cat.phase as PhaseColumn]?.push(cat);
           setCategoriesByPhase(grouped);
-
-          // Only preload textures for materials actually referenced by this project's options
-          const referencedMatIds = new Set<string>();
-          for (const cat of flat) {
-            for (const opt of (cat.options ?? [])) {
-              if (opt.material_id) referencedMatIds.add(opt.material_id);
-              for (const a of (opt.material_assignments ?? [])) referencedMatIds.add(a.material_id);
-            }
-          }
-          const meshBaseMats = (p.camera_defaults as any)?._meshBaseMats ?? {};
-          for (const id of Object.values(meshBaseMats as Record<string, string>)) referencedMatIds.add(id);
-
-          const referencedEntries = mats.filter(m => referencedMatIds.has(m.id));
-          const matTexUrls = referencedEntries.flatMap(m => texUrlsFromProperties(m.properties));
-          if (matTexUrls.length) preloadTextureUrls(matTexUrls);
         }).catch(() => {});
       } else {
         getCategoriesWithOptions(p.id).then(flat => {
@@ -319,6 +299,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     setViewerStatus(status);
     if (status === "ready") {
       setIsLoaded(true);
+      setEverReady(true);
       if (!landingShownRef.current) {
         landingShownRef.current = true;
         setShowLanding(true);
@@ -326,10 +307,27 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     }
   }
 
+  const PHASE_OVERLAY_LABELS: Record<PhaseId, string> = {
+    exterior:  "Loading exterior view",
+    interior:  "Loading your interior",
+    blueprint: "Loading floor plan",
+  };
+
   function handlePhaseChange(phase: PhaseId) {
     setConfig(prev => ({ ...prev, currentPhase: phase, activeOverride: null }));
     setNudgeDismissed(false);
     setIntNudgeDismissed(false);
+
+    // Show a smooth overlay while materials/textures for the new phase load.
+    // Only show after the initial load is complete (isLoaded) so it doesn't
+    // conflict with the Preloader.
+    if (isLoaded) {
+      if (phaseOverlayTimer.current) clearTimeout(phaseOverlayTimer.current);
+      setPhaseOverlay(PHASE_OVERLAY_LABELS[phase] ?? "Loading…");
+      // Keep it up for 1.1 s then fade out — covers most texture download times
+      // on a reasonable connection without feeling sluggish.
+      phaseOverlayTimer.current = setTimeout(() => setPhaseOverlay(null), 1100);
+    }
   }
 
   function handlePrevStep() {
@@ -445,7 +443,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
 
   return (
     // Mobile: flex column (viewer top, options bottom). Desktop: block with absolute overlays.
-    <div className="relative w-screen h-screen bg-black overflow-hidden flex flex-col md:relative md:block">
+    <div className="relative w-screen h-screen overflow-hidden flex flex-col md:relative md:block" style={{ background: "#0d0d0d" }}>
 
       {/* ── Viewer wrapper ──────────────────────────────────────────────────────
           Mobile : w-full fixed 45vh strip at the top
@@ -490,11 +488,30 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
 
         <Preloader
           visible={!isLoaded}
-          viewerReady={viewerStatus === "ready"}
+          viewerReady={everReady}
           accentColor={builder?.accent_color}
           builderName={builder?.company_name}
           builderLogo={builder?.logo_url}
         />
+
+        {/* Phase transition overlay — hides the 1-second black while new-phase
+            textures download. Fades in immediately, fades out after 1.1 s. */}
+        <div
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none transition-opacity duration-300"
+          style={{
+            background: "#0d0d0d",
+            opacity: phaseOverlay ? 1 : 0,
+          }}
+        >
+          {phaseOverlay && (
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-7 h-7 rounded-full border-2 border-white/15 border-t-white/60 animate-spin" />
+              <span className="text-[11px] text-white/40 tracking-[0.2em] uppercase select-none">
+                {phaseOverlay}
+              </span>
+            </div>
+          )}
+        </div>
 
         {isLoaded && (
           <>

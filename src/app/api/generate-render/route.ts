@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { uploadToR2 } from "@/lib/r2";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
-const FAL_KEY = process.env.FAL_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent";
 
 const PROMPTS: Record<string, string> = {
   exterior: [
@@ -35,10 +36,9 @@ const PROMPTS: Record<string, string> = {
   ].join(", "),
 };
 
-// ── Submit job — returns {statusUrl, responseUrl} immediately ─────────────────
 export async function POST(req: NextRequest) {
-  if (!FAL_KEY) {
-    return NextResponse.json({ error: "FAL_KEY not configured" }, { status: 503 });
+  if (!GEMINI_API_KEY) {
+    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 503 });
   }
 
   let imageBase64: string;
@@ -53,38 +53,40 @@ export async function POST(req: NextRequest) {
 
   const prompt = PROMPTS[phase] ?? PROMPTS.exterior;
 
-  // Upload input image to R2 so fal.ai can fetch it via a public URL
-  const imageBuffer = Buffer.from(imageBase64, "base64");
-  const inputKey    = `configurator-inputs/${Date.now()}.png`;
-  let inputImageUrl: string;
-  try {
-    inputImageUrl = await uploadToR2(inputKey, imageBuffer, "image/png");
-  } catch (err: any) {
-    console.error("R2 input upload error:", err.message);
-    return NextResponse.json({ error: `Upload failed: ${err.message}` }, { status: 500 });
-  }
-
-  // Submit to fal.ai queue — do NOT poll; return URLs for client-side polling
-  const submitRes = await fetch("https://queue.fal.run/fal-ai/nano-banana-2/edit", {
+  const geminiRes = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
     method: "POST",
-    headers: {
-      Authorization:  `Key ${FAL_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ image_urls: [inputImageUrl], prompt }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: "image/png", data: imageBase64 } },
+        ],
+      }],
+      generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+    }),
   });
 
-  if (!submitRes.ok) {
-    const text = await submitRes.text();
-    console.error("fal.ai submit error:", submitRes.status, text);
-    return NextResponse.json({ error: text }, { status: submitRes.status });
+  if (!geminiRes.ok) {
+    const text = await geminiRes.text();
+    console.error("Gemini error:", geminiRes.status, text);
+    return NextResponse.json({ error: text }, { status: geminiRes.status });
   }
 
-  const { status_url, response_url } = (await submitRes.json()) as {
-    request_id:   string;
-    status_url:   string;
-    response_url: string;
+  type GeminiResponse = {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{ inlineData?: { mimeType: string; data: string } }>
+      }
+    }>
   };
+  const json = (await geminiRes.json()) as GeminiResponse;
+  const imagePart = json.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
 
-  return NextResponse.json({ statusUrl: status_url, responseUrl: response_url });
+  if (!imagePart?.inlineData) {
+    console.error("Gemini returned no image:", JSON.stringify(json).slice(0, 300));
+    return NextResponse.json({ error: "No image returned from Gemini" }, { status: 502 });
+  }
+
+  return NextResponse.json({ imageBase64: imagePart.inlineData.data });
 }

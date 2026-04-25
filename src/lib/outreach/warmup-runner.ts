@@ -12,6 +12,7 @@ import { sendGmailMessage, rescueFromSpam } from "@/lib/outreach/gmail";
 import { sendMicrosoftMessage, rescueMicrosoftWarmupFromSpam } from "@/lib/outreach/microsoft";
 import { sendSmtpMessage } from "@/lib/outreach/smtp";
 import { selectSendTemplate, selectReplyTemplate } from "@/lib/outreach/warmup-templates";
+import { checkDailyLimits } from "@/lib/outreach/scheduler";
 import type { OutreachInbox } from "@/types/outreach";
 
 const AUTH_ERROR_PATTERN =
@@ -47,31 +48,19 @@ export async function runWarmupBatch(): Promise<WarmupRunResult> {
     return result;
   }
 
-  // Count sends already done today per inbox
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
-
-  const { data: todayCounts } = await db
-    .from("outreach_warmup_sends")
-    .select("from_inbox_id")
-    .gte("sent_at", todayStart.toISOString());
-
-  const sentToday = new Map<string, number>();
-  for (const row of todayCounts ?? []) {
-    sentToday.set(row.from_inbox_id, (sentToday.get(row.from_inbox_id) ?? 0) + 1);
-  }
-
   for (const sender of pool) {
     // If warmup_current_daily hasn't been set yet (0), seed it from the ramp value
     // so new inboxes start sending immediately rather than waiting for the Monday ramp.
-    const effectiveDaily = sender.warmup_current_daily || sender.warmup_ramp_per_week || 1;
+    const warmupTarget = sender.warmup_current_daily || sender.warmup_ramp_per_week || 1;
+
+    // checkDailyLimits counts both outreach_sends + outreach_warmup_sends against
+    // daily_send_limit — this is the unified inbox cap shared with the sequence runner.
+    const totalRemaining = await checkDailyLimits(sender.id, sender.daily_send_limit ?? warmupTarget);
+
     // Spread sends evenly across the day. perRun = 1 so each cron run sends at most
     // one email per inbox, and the daily cap prevents over-sending regardless of
     // how frequently the cron fires.
-    const perRun      = 1;
-    const alreadySent = sentToday.get(sender.id) ?? 0;
-    const remaining   = Math.max(0, effectiveDaily - alreadySent);
-    const toSend      = Math.min(perRun, remaining);
+    const toSend = Math.min(1, warmupTarget, totalRemaining);
 
     if (toSend === 0) {
       result.skipped++;

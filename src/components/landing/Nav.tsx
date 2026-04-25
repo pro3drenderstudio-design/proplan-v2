@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import CalendlyButton from "@/components/CalendlyButton";
 
 const PRODUCTS = [
   {
@@ -138,13 +139,12 @@ export default function Nav() {
             className="hidden sm:flex px-4 py-2 text-sm text-white/50 hover:text-white rounded-lg hover:bg-white/5 transition-all">
             Sign in
           </Link>
-          <Link href="/auth/signup"
-            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors shadow-lg shadow-blue-600/20">
-            Get started
+          <CalendlyButton className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors shadow-lg shadow-blue-600/20">
+            Book a Demo
             <svg className="w-3.5 h-3.5 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
-          </Link>
+          </CalendlyButton>
           {/* Mobile hamburger */}
           <button
             className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg hover:bg-white/8 transition-colors text-white/60 hover:text-white"
@@ -190,6 +190,9 @@ export default function Nav() {
               className="block px-2 py-2.5 text-sm text-white/70 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
               Sign in
             </Link>
+            <CalendlyButton className="block w-full text-left px-2 py-2.5 text-sm font-semibold text-blue-400 hover:text-blue-300 rounded-xl hover:bg-white/5 transition-colors">
+              Book a Demo
+            </CalendlyButton>
           </div>
         </div>
       )}

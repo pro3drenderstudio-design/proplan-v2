@@ -78,6 +78,44 @@ function EditableNumber({
   );
 }
 
+function EditableText({ value, onChange, label, placeholder }: { value: string; onChange: (v: string) => void; label: string; placeholder?: string }) {
+  const [editing, setEditing] = useState(false);
+  const [raw,     setRaw]     = useState(value);
+
+  function commit() {
+    setEditing(false);
+    const trimmed = raw.trim();
+    if (trimmed) onChange(trimmed);
+    else setRaw(value);
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[9px] font-bold uppercase tracking-widest text-white/25">{label}</span>
+      {editing ? (
+        <input
+          autoFocus
+          type="text"
+          value={raw}
+          onChange={e => setRaw(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setEditing(false); setRaw(value); } }}
+          placeholder={placeholder}
+          className="w-full bg-[#1a1a1a] border border-blue-500/40 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500/40"
+        />
+      ) : (
+        <button
+          onClick={() => { setEditing(true); setRaw(value); }}
+          className="text-left px-2 py-1.5 rounded-lg bg-white/4 hover:bg-white/8 border border-transparent hover:border-white/10 transition-all group"
+        >
+          <span className="text-sm font-bold text-white">{value || <span className="text-white/20">Not set</span>}</span>
+          <span className="ml-2 text-[10px] text-white/20 group-hover:text-white/40 transition-colors">edit</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function EditableToggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div className="flex items-center justify-between">
@@ -204,11 +242,13 @@ function PlanCard({ plan, index, onSave }: { plan: Plan; index: number; onSave: 
     setSaving(true);
     setSaveErr(null);
     const result = await onSave(draft.id, {
+      display_name:               draft.display_name,
       price_monthly:              draft.price_monthly,
       price_annually:             draft.price_annually,
       rendering_credits_monthly:  draft.rendering_credits_monthly,
       ai_credits_monthly:         draft.ai_credits_monthly,
       max_projects:               draft.max_projects,
+      max_communities:            (draft as any).max_communities ?? -1,
       seats_included:             draft.seats_included,
       max_storage_gb:             draft.max_storage_gb,
       includes_sitemaps:          draft.includes_sitemaps,
@@ -244,16 +284,21 @@ function PlanCard({ plan, index, onSave }: { plan: Plan; index: number; onSave: 
 
       {/* Header */}
       <div className="px-6 py-5 border-b border-white/8">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <h2 className={`text-lg font-extrabold ${planAccent(plan.name, index)}`}>{plan.display_name}</h2>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2">
               {!draft.is_active && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 font-semibold">Inactive</span>
               )}
             </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-white">{fmtPrice(draft.price_monthly)}</span>
+            <EditableText
+              value={draft.display_name}
+              onChange={v => update("display_name", v)}
+              label="Plan Name"
+              placeholder="e.g. Starter"
+            />
+            <div className="flex items-baseline gap-1 mt-2">
+              <span className="text-xl font-bold text-white">{fmtPrice(draft.price_monthly)}</span>
               <span className="text-white/30 text-xs">/mo</span>
               <span className="text-white/20 text-xs ml-2">· {fmtPrice(draft.price_annually)}/yr</span>
             </div>
@@ -305,6 +350,13 @@ function PlanCard({ plan, index, onSave }: { plan: Plan; index: number; onSave: 
             onChange={v => update("max_projects", v)}
             label="Max Models"
             suffix="models"
+            allowInfinite
+          />
+          <EditableNumber
+            value={draft.max_communities ?? -1}
+            onChange={v => update("max_communities" as keyof Plan, v as any)}
+            label="Max Communities"
+            suffix="communities"
             allowInfinite
           />
           <EditableNumber

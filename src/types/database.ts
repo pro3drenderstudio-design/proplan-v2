@@ -573,6 +573,13 @@ export interface SupportTicket {
 // =============================================================================
 // communities + lots
 // =============================================================================
+export interface MapSettings {
+  default_label_color?: string;  // hex, fallback when lot.text_color is null
+  default_label_size?: number;   // pt, fallback when lot.label_font_size is null
+  show_labels?: boolean;         // hide all lot labels when false
+  stroke_width?: number;         // 1–5
+}
+
 export interface Community {
   id: string;
   company_slug: string | null;
@@ -580,6 +587,7 @@ export interface Community {
   slug: string;
   description: string | null;
   site_map_url: string | null;
+  map_settings: MapSettings | null;
   created_at: string;
   updated_at: string;
 }

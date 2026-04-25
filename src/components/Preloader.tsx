@@ -121,7 +121,7 @@ export default function Preloader({
         "transition-opacity duration-700",
         visible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
       ].join(" ")}
-      style={{ background: "#070b12", transform: "translateZ(0)", willChange: "opacity" }}
+      style={{ background: "#0d0d0d", transform: "translateZ(0)", willChange: "opacity" }}
     >
       {/* Ambient glow — positioned at 40% height where content lives */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">

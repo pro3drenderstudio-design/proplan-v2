@@ -640,6 +640,175 @@ export default function BuilderDetailPage() {
             <h2 className="text-sm font-bold text-white">Builder Account Settings</h2>
             <p className="text-xs text-white/35 -mt-3">Manage account details, billing, notification preferences, and system integrations for this builder profile.</p>
 
+            {/* Account Details */}
+            <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
+              <h3 className="text-xs font-bold text-white mb-4">Account Details</h3>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Company Name</p>
+                    {editing ? (
+                      <input value={editForm.company_name ?? ""} onChange={e => setEditForm(f => ({ ...f, company_name: e.target.value }))}
+                        className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                    ) : (
+                      <p className="text-xs text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2">{builder.company_name || "—"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Website</p>
+                    {editing ? (
+                      <input value={editForm.website_url ?? ""} onChange={e => setEditForm(f => ({ ...f, website_url: e.target.value }))}
+                        placeholder="https://"
+                        className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                    ) : (
+                      <p className="text-xs text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2 truncate">{builder.website_url || "—"}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Primary Contact</p>
+                    {editing ? (
+                      <input value={editForm.primary_contact_name ?? ""} onChange={e => setEditForm(f => ({ ...f, primary_contact_name: e.target.value }))}
+                        className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                    ) : (
+                      <p className="text-xs text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2">{builder.primary_contact_name || "—"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Contact Email</p>
+                    {editing ? (
+                      <input type="email" value={editForm.contact_email ?? ""} onChange={e => setEditForm(f => ({ ...f, contact_email: e.target.value }))}
+                        className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                    ) : (
+                      <p className="text-xs text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2 truncate">{builder.contact_email || "—"}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Phone</p>
+                    {editing ? (
+                      <input value={editForm.phone ?? ""} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))}
+                        className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                    ) : (
+                      <p className="text-xs text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2">{builder.phone || "—"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Location</p>
+                    {editing ? (
+                      <input value={editForm.location ?? ""} onChange={e => setEditForm(f => ({ ...f, location: e.target.value }))}
+                        placeholder="City, State"
+                        className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                    ) : (
+                      <p className="text-xs text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2">{builder.location || "—"}</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Account Status</p>
+                  {editing ? (
+                    <select value={editForm.status ?? builder.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value as Builder["status"] }))}
+                      className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60">
+                      <option value="active">Active</option>
+                      <option value="trial">Trial</option>
+                      <option value="inactive">Inactive</option>
+                      <option value="suspended">Suspended</option>
+                    </select>
+                  ) : (
+                    <span className={`text-[10px] font-bold px-2 py-1 rounded border uppercase tracking-wide ${STATUS_STYLE[builder.status]}`}>
+                      {builder.status}
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Internal Notes</p>
+                  {editing ? (
+                    <textarea value={editForm.notes ?? ""} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
+                      rows={3} placeholder="Internal notes visible only to admins…"
+                      className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60 resize-none" />
+                  ) : (
+                    <p className="text-xs text-white/60 bg-[#111] border border-white/8 rounded-lg px-3 py-2 min-h-[3rem]">{builder.notes || <span className="text-white/20 italic">No notes</span>}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Plan & Limits Override */}
+            <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <h3 className="text-xs font-bold text-white">Plan & Limits Override</h3>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-400/10 border border-amber-400/20 text-amber-400 uppercase tracking-widest font-bold">Admin</span>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Plan Tier</p>
+                  {editing ? (
+                    <select value={editForm.plan_tier ?? builder.plan_tier} onChange={e => setEditForm(f => ({ ...f, plan_tier: e.target.value as Builder["plan_tier"] }))}
+                      className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60">
+                      <option value="launch">Launch — $699/mo</option>
+                      <option value="studio">Studio — $1,499/mo</option>
+                      <option value="scale">Scale — $2,499/mo</option>
+                    </select>
+                  ) : (
+                    <span className={`text-[10px] font-bold px-2 py-1 rounded border uppercase tracking-wide ${PLAN_STYLE[builder.plan_tier]}`}>
+                      {PLAN_LABEL[builder.plan_tier]} — {PLAN_PRICE[builder.plan_tier]}
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  {[
+                    { key: "max_projects" as keyof Builder, label: "Max Projects", val: builder.max_projects },
+                    { key: "max_communities" as keyof Builder, label: "Max Communities", val: builder.max_communities },
+                    { key: "max_monthly_quotes" as keyof Builder, label: "Monthly Quotes", val: builder.max_monthly_quotes },
+                  ].map(({ key, label, val }) => (
+                    <div key={key}>
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">{label}</p>
+                      {editing ? (
+                        <input type="number" min={0} value={(editForm[key] as number) ?? val}
+                          onChange={e => setEditForm(f => ({ ...f, [key]: Number(e.target.value) }))}
+                          className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                      ) : (
+                        <p className="text-xs font-medium text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2">{val}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  {[
+                    { key: "rendering_credits_total" as keyof Builder, label: "Render Credits", val: builder.rendering_credits_total, hint: "-1 = unlimited" },
+                    { key: "ai_credits_total" as keyof Builder, label: "AI Credits", val: builder.ai_credits_total, hint: "-1 = unlimited" },
+                    { key: "max_storage_gb" as keyof Builder, label: "Storage (GB)", val: builder.max_storage_gb, hint: "" },
+                  ].map(({ key, label, val, hint }) => (
+                    <div key={key}>
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">{label}</p>
+                      {editing ? (
+                        <input type="number" min={-1} value={(editForm[key] as number) ?? val}
+                          onChange={e => setEditForm(f => ({ ...f, [key]: Number(e.target.value) }))}
+                          className="w-full bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                      ) : (
+                        <p className="text-xs font-medium text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2">
+                          {val === -1 || val >= 9999 ? "∞" : val}
+                        </p>
+                      )}
+                      {hint && <p className="text-[9px] text-white/20 mt-0.5">{hint}</p>}
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Seats Included</p>
+                  {editing ? (
+                    <input type="number" min={1} value={editForm.seats_included ?? builder.seats_included}
+                      onChange={e => setEditForm(f => ({ ...f, seats_included: Number(e.target.value) }))}
+                      className="w-32 bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60" />
+                  ) : (
+                    <p className="text-xs font-medium text-white/70 bg-[#111] border border-white/8 rounded-lg px-3 py-2 w-32">{builder.seats_included} ({builder.seats_used} used)</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Branding */}
             <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
               <h3 className="text-xs font-bold text-white mb-4">Branding</h3>
