@@ -58,8 +58,8 @@ export async function POST(req: NextRequest) {
   let compressedBuffer: Buffer;
   try {
     // @gltf-transform/core is ESM-only — use dynamic import()
-    const { NodeIO, TextureChannel } = await import("@gltf-transform/core" as string);
-    const { dedup, flatten, join, prune, resample, textureCompress } = await import("@gltf-transform/functions" as string);
+    const { NodeIO } = await import("@gltf-transform/core" as string);
+    const { dedup, prune, textureCompress } = await import("@gltf-transform/functions" as string);
     const { DracoMeshCompression } = await import("@gltf-transform/extensions" as string);
     const draco3d = (await import("draco3d" as string)).default ?? (await import("draco3d" as string));
     const sharp = (await import("sharp" as string)).default ?? (await import("sharp" as string));
@@ -79,23 +79,25 @@ export async function POST(req: NextRequest) {
     const document = await io.readBinary(new Uint8Array(originalBuffer));
 
     await document.transform(
-      // Structural optimizations
+      // dedup: removes identical accessor/texture data — safe, never changes node names
       dedup(),
-      flatten({ cleanup: true }),
-      join({ cleanup: true }),
-      prune({ keepAttributes: false }),
-      // Resize + re-encode textures to JPEG 2048px max
+      // prune: removes unreferenced nodes/materials/textures — safe
+      prune(),
+      // Resize + re-encode textures to JPEG 2048px max.
+      // Textures with alpha (e.g. opacity maps) are kept as PNG to avoid artefacts.
       textureCompress({
         encoder: sharp,
         targetFormat: "jpeg",
         resize: [2048, 2048],
         quality: 85,
-        // Don't compress alpha channels — keep as PNG
         slots: /^(?!normalTexture|occlusionTexture).*$/,
       }),
-      // Draco geometry compression
+      // Draco: compresses geometry data only — mesh names and node structure are preserved
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (await import("@gltf-transform/functions" as string)).draco({ quantizationBits: { POSITION: 14, NORMAL: 10, TEX_COORD: 12, COLOR: 8, GENERIC: 12 } } as any),
+      // NOTE: flatten() and join() are intentionally excluded.
+      // join() merges meshes by material, which would destroy the named node
+      // structure that scene-editor option mappings depend on.
     );
 
     const out = await io.writeBinary(document);
