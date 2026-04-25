@@ -345,16 +345,21 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     }
     setIsCapturing(true);
     const api = apiRef.current;
+    const originalPhase = config.currentPhase;
     const screenshots: Partial<Record<PhaseId, string | null>> = {};
 
     for (const phase of PHASES) {
-      const saved   = project.camera_defaults?.[phase.id as "exterior" | "interior"];
-      const pos     = (saved?.pos    ?? phase.camera.position) as [number, number, number];
-      const target  = (saved?.target ?? phase.camera.target)   as [number, number, number];
-      const fov     = saved?.fov ?? phase.camera.fov ?? 45;
+      // Switch to the phase so its lighting/environment is active in the render
+      setConfig(prev => ({ ...prev, currentPhase: phase.id, activeOverride: null }));
+
+      const saved  = project.camera_defaults?.[phase.id as "exterior" | "interior"];
+      const pos    = (saved?.pos    ?? phase.camera.position) as [number, number, number];
+      const target = (saved?.target ?? phase.camera.target)   as [number, number, number];
+      const fov    = saved?.fov ?? phase.camera.fov ?? 45;
       api.setFov(fov);
       api.setCameraLookAt(pos, target, 0.6);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Wait for phase lighting + camera transition to settle
+      await new Promise(resolve => setTimeout(resolve, 2000));
       screenshots[phase.id] = await new Promise<string | null>(resolve => {
         try {
           api.getScreenShot(1280, 720, (err: unknown, result: string) => resolve(err ? null : result));
@@ -362,19 +367,22 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
       });
     }
 
-    // Capture Interior Camera 2 if the admin configured one
+    // Capture Interior Camera 2 using interior phase lighting
     let int2Shot: string | null = null;
     const int2Cam = (project.camera_defaults as any)?.interior2 as { pos: [number,number,number]; target: [number,number,number]; fov?: number } | undefined;
     if (int2Cam) {
       api.setFov(int2Cam.fov ?? 45);
       api.setCameraLookAt(int2Cam.pos, int2Cam.target, 0.6);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       int2Shot = await new Promise<string | null>(resolve => {
         try {
           api.getScreenShot(1280, 720, (err: unknown, result: string) => resolve(err ? null : result));
         } catch { resolve(null); }
       });
     }
+
+    // Restore original phase
+    setConfig(prev => ({ ...prev, currentPhase: originalPhase, activeOverride: null }));
 
     setPhaseScreenshots(screenshots);
     setInterior2Screenshot(int2Shot);
