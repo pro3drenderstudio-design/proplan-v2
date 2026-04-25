@@ -72,6 +72,7 @@ export default function SummaryPage({
   const [aiLoading, setAiLoading]     = useState<Partial<Record<PhaseId, boolean>>>({});
   const [aiRender2, setAiRender2]     = useState<string | null | undefined>(undefined);
   const [aiLoading2, setAiLoading2]   = useState(false);
+  const [rendersTriggered, setRendersTriggered] = useState(false);
   const [form, setForm]       = useState<LeadForm>({ firstName: "", lastName: "", email: "", phone: "" });
   const [errorMsg, setErrorMsg]       = useState("");
   const [portalToken, setPortalToken] = useState<string | null>(null);
@@ -79,76 +80,74 @@ export default function SummaryPage({
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [activePage, setActivePage]   = useState(0);
 
-  // Kick off AI renders sequentially on mount to avoid service-side hallucination
-  // from concurrent requests. Order: exterior → interior → interior2.
-  useEffect(() => {
-    const abort = new AbortController();
+  async function renderOne(
+    phaseId: PhaseId | "interior2",
+    screenshot: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (signal.aborted) return;
+    const isExtra = phaseId === "interior2";
+    const apiPhase = isExtra ? "interior" : phaseId;
 
-    async function renderOne(phaseId: PhaseId | "interior2", screenshot: string): Promise<void> {
-      if (abort.signal.aborted) return;
-      const isExtra = phaseId === "interior2";
-      const apiPhase = isExtra ? "interior" : phaseId;
+    if (isExtra) setAiLoading2(true);
+    else setAiLoading(prev => ({ ...prev, [phaseId]: true }));
 
-      if (isExtra) setAiLoading2(true);
-      else setAiLoading(prev => ({ ...prev, [phaseId]: true }));
+    let base64 = screenshot;
+    let mimeType = "image/jpeg";
+    if (screenshot.includes(",")) {
+      const [header, data] = screenshot.split(",");
+      base64 = data;
+      const mimeMatch = header.match(/data:([^;]+);/);
+      if (mimeMatch) mimeType = mimeMatch[1];
+    }
+    const setResult = (url: string | null) => {
+      if (isExtra) setAiRender2(url ?? screenshot);
+      else setAiRenders(prev => ({ ...prev, [phaseId]: url ?? screenshot }));
+    };
 
-      // Extract MIME type and base64 data from the screenshot data URL
-      let base64 = screenshot;
-      let mimeType = "image/jpeg";
-      if (screenshot.includes(",")) {
-        const [header, data] = screenshot.split(",");
-        base64 = data;
-        const mimeMatch = header.match(/data:([^;]+);/);
-        if (mimeMatch) mimeType = mimeMatch[1];
+    try {
+      const submitRes = await fetch("/api/generate-render", {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: base64, mimeType, phase: apiPhase }),
+      });
+      if (!submitRes.ok) {
+        const errText = await submitRes.text().catch(() => submitRes.statusText);
+        console.error("[generate-render] HTTP error", submitRes.status, errText);
+        throw new Error(`generate-render ${submitRes.status}: ${errText}`);
       }
-      const setResult = (url: string | null) => {
-        if (isExtra) setAiRender2(url ?? screenshot);
-        else setAiRenders(prev => ({ ...prev, [phaseId]: url ?? screenshot }));
-      };
-
-      try {
-        const submitRes = await fetch("/api/generate-render", {
-          method: "POST", signal: abort.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageBase64: base64, mimeType, phase: apiPhase }),
-        });
-        if (!submitRes.ok) {
-          const errText = await submitRes.text().catch(() => submitRes.statusText);
-          console.error("[generate-render] HTTP error", submitRes.status, errText);
-          throw new Error(`generate-render ${submitRes.status}: ${errText}`);
-        }
-        const json = await submitRes.json() as { imageBase64?: string; error?: string };
-        if (json.error) {
-          console.error("[generate-render] API error:", json.error);
-          throw new Error(json.error);
-        }
-        setResult(json.imageBase64 ? `data:image/png;base64,${json.imageBase64}` : null);
-      } catch (err) {
-        console.error("[generate-render] failed for", phaseId, err);
-        if (!abort.signal.aborted) setResult(null);
-      } finally {
-        if (!abort.signal.aborted) {
-          if (isExtra) setAiLoading2(false);
-          else setAiLoading(prev => ({ ...prev, [phaseId]: false }));
-        }
+      const json = await submitRes.json() as { imageBase64?: string; error?: string };
+      if (json.error) {
+        console.error("[generate-render] API error:", json.error);
+        throw new Error(json.error);
+      }
+      setResult(json.imageBase64 ? `data:image/png;base64,${json.imageBase64}` : null);
+    } catch (err) {
+      console.error("[generate-render] failed for", phaseId, err);
+      if (!signal.aborted) setResult(null);
+    } finally {
+      if (!signal.aborted) {
+        if (isExtra) setAiLoading2(false);
+        else setAiLoading(prev => ({ ...prev, [phaseId]: false }));
       }
     }
+  }
 
+  function startRenders() {
+    if (rendersTriggered) return;
+    setRendersTriggered(true);
+    const abort = new AbortController();
     (async () => {
-      // Sequential: exterior first, then interior, then interior2
       for (const phase of PHASES) {
         const shot = phaseScreenshots[phase.id];
-        if (shot) await renderOne(phase.id, shot);
+        if (shot) await renderOne(phase.id, shot, abort.signal);
         if (abort.signal.aborted) return;
       }
       if (interior2Screenshot && !abort.signal.aborted) {
-        await renderOne("interior2", interior2Screenshot);
+        await renderOne("interior2", interior2Screenshot, abort.signal);
       }
     })();
-
-    return () => abort.abort();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }
 
   // Auto-advance the active tab to whichever page is currently rendering.
   // Must live before any early returns (Rules of Hooks).
@@ -632,12 +631,24 @@ export default function SummaryPage({
               )}
             </div>
           )}
-          {anyRendering && (
+          {anyRendering ? (
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full border border-white/20 border-t-white/60 animate-spin" />
-              <span className="hidden sm:inline text-[10px] text-white/30 tracking-wide">Your home is coming to life…</span>
+              <span className="hidden sm:inline text-[10px] text-white/30 tracking-wide">Enhancing your renders…</span>
             </div>
-          )}
+          ) : !rendersTriggered && (PHASES.some(p => !!phaseScreenshots[p.id]) || !!interior2Screenshot) ? (
+            <button
+              onClick={startRenders}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all hover:scale-105 active:scale-95"
+              style={{ background: `${accent}22`, border: `1px solid ${accent}40`, color: accent }}
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 flex-shrink-0">
+                <path d="M7.657 6.247c.11-.33.576-.33.686 0l.645 1.937a2.89 2.89 0 0 0 1.829 1.828l1.936.645c.33.11.33.576 0 .686l-1.937.645a2.89 2.89 0 0 0-1.828 1.829l-.645 1.936a.361.361 0 0 1-.686 0l-.645-1.937a2.89 2.89 0 0 0-1.828-1.828l-1.937-.645a.361.361 0 0 1 0-.686l1.937-.645a2.89 2.89 0 0 0 1.828-1.828l.645-1.937zM3.794 1.148a.217.217 0 0 1 .412 0l.387 1.162c.173.518.579.924 1.097 1.097l1.162.387a.217.217 0 0 1 0 .412l-1.162.387A1.73 1.73 0 0 0 4.593 5.69l-.387 1.162a.217.217 0 0 1-.412 0L3.407 5.69A1.73 1.73 0 0 0 2.31 4.593l-1.162-.387a.217.217 0 0 1 0-.412l1.162-.387A1.73 1.73 0 0 0 3.407 2.31l.387-1.162zM10.863.099a.145.145 0 0 1 .274 0l.258.774c.115.346.386.617.732.732l.774.258a.145.145 0 0 1 0 .274l-.774.258a1.16 1.16 0 0 0-.732.732l-.258.774a.145.145 0 0 1-.274 0l-.258-.774a1.16 1.16 0 0 0-.732-.732L9.1 2.137a.145.145 0 0 1 0-.274l.774-.258c.346-.115.617-.386.732-.732L10.863.1z"/>
+              </svg>
+              <span className="hidden sm:inline">AI Renders</span>
+              <span className="sm:hidden">AI</span>
+            </button>
+          ) : null}
           <button
             onClick={onClose}
             className="w-7 h-7 flex items-center justify-center rounded-full text-white/30 hover:text-white/70 hover:bg-white/8 transition-colors"
