@@ -346,13 +346,12 @@ interface EditorSceneProps {
   onMeshDoubleClick?: (name: string) => void;
   // Suppress postprocessing while path tracer is rendering
   skipEffects?: boolean;
-  // Addon GLBs
+  // Addon GLBs — injected directly into clonedScene
   addons?: ProjectAddon[];
-  selectedAddonId?: string | null;
-  onAddonSelect?: (id: string | null) => void;
   onAddonTransformed?: (id: string, pos: [number,number,number], rot: [number,number,number], sc: [number,number,number]) => void;
-  addonTransformMode?: "translate" | "rotate" | "scale";
   onAddonMeshNames?: (addonId: string, names: string[]) => void;
+  // Scene tree update (fired when addons load/unload — no camera fit or health check)
+  onSceneTreeUpdate?: (tree: SceneTreeNode[]) => void;
   // Triangle counts callback (fired after scene clone)
   onTriangleCounts?: (counts: MeshTriangleCounts) => void;
   // Annotation pins
@@ -374,8 +373,7 @@ function EditorScene({
   selectedLightId, onLightSelect, onLightTransformed,
   onMeshDoubleClick,
   skipEffects = false,
-  addons = [], selectedAddonId, onAddonSelect, onAddonTransformed, addonTransformMode = "translate",
-  onAddonMeshNames, onTriangleCounts,
+  addons = [], onAddonTransformed, onAddonMeshNames, onSceneTreeUpdate, onTriangleCounts,
   annotations = [], placingAnnotation = false, onAnnotationPlaced,
 }: EditorSceneProps) {
   const { scene } = useGLTFDraco(modelUrl);
@@ -404,6 +402,7 @@ function EditorScene({
   } | null>(null);
 
   const [clonedScene, setClonedScene] = useState<THREE.Group | null>(null);
+  const [sceneVersion, setSceneVersion] = useState(0);
 
   useFrame(({ gl: frameGl }) => {
     frameGl.toneMappingExposure = s.bgType === "sky" ? (s.skyBrightness ?? 1) : 1.15;
@@ -773,6 +772,13 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelUrl]);
 
+  // Rebuild scene tree when addons inject/remove (no camera fit, no health check)
+  useEffect(() => {
+    if (!clonedScene || sceneVersion === 0) return;
+    onSceneTreeUpdate?.(buildSceneTree(clonedScene).children);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneVersion]);
+
   // Report scene tree + fit camera once after clone is ready
   useEffect(() => {
     if (!clonedScene || reportedRef.current) return;
@@ -1028,11 +1034,16 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
   }
 
   function handleTransformChange() {
-    if (!selectedObj?.name) return;
+    if (!selectedObj) return;
     const p = selectedObj.position;
     const r = selectedObj.rotation;
     const sc = selectedObj.scale;
-    onMeshTransformed(selectedObj.name, [p.x, p.y, p.z], [r.x, r.y, r.z], [sc.x, sc.y, sc.z]);
+    if (selectedObj.userData?.addonId) {
+      onAddonTransformed?.(selectedObj.userData.addonId, [p.x, p.y, p.z], [r.x, r.y, r.z], [sc.x, sc.y, sc.z]);
+    } else {
+      if (!selectedObj.name) return;
+      onMeshTransformed(selectedObj.name, [p.x, p.y, p.z], [r.x, r.y, r.z], [sc.x, sc.y, sc.z]);
+    }
   }
 
   const skyRotRad = ((s.skyRotation ?? 0) * Math.PI) / 180;
@@ -1186,16 +1197,14 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
         </mesh>
       )}
 
-      {/* Addon GLBs */}
-      {addons.map((addon) => addon.visible && (
+      {/* Addon GLBs — injected directly into clonedScene so they appear in the scene tree */}
+      {clonedScene && addons.map((addon) => (
         <PropErrorBoundary key={addon.id}>
           <Suspense fallback={null}>
-            <AddonModel
+            <AddonInjector
               addon={addon}
-              isSelected={selectedAddonId === addon.id}
-              transformMode={addonTransformMode}
-              onSelect={() => { onAddonSelect?.(addon.id); onMeshSelect([]); onPropSelect?.(null); }}
-              onTransformed={(pos, rot, sc) => onAddonTransformed?.(addon.id, pos, rot, sc)}
+              clonedScene={clonedScene}
+              onSceneChanged={() => setSceneVersion(v => v + 1)}
               onMeshNames={(names) => onAddonMeshNames?.(addon.id, names)}
             />
           </Suspense>
@@ -1414,79 +1423,74 @@ function LightGizmo({ light, isSelected, isDraggingRef, onSelect, onTransform }:
   );
 }
 
-// ─── AddonModel ───────────────────────────────────────────────────────────────
+// ─── AddonInjector ────────────────────────────────────────────────────────────
+// Null-rendering component: loads the addon GLB, injects it as a named Group
+// into clonedScene, then returns null. The group becomes part of the main scene
+// tree so its meshes are selectable and appear in the layers panel naturally.
 
-function AddonModel({
-  addon, isSelected, transformMode = "translate", onSelect, onTransformed, onMeshNames,
+function AddonInjector({
+  addon, clonedScene, onSceneChanged, onMeshNames,
 }: {
   addon: ProjectAddon;
-  isSelected?: boolean;
-  transformMode?: "translate" | "rotate" | "scale";
-  onSelect?: () => void;
-  onTransformed?: (pos: [number,number,number], rot: [number,number,number], sc: [number,number,number]) => void;
-  onMeshNames?: (names: string[]) => void;
+  clonedScene: THREE.Group;
+  onSceneChanged: () => void;
+  onMeshNames: (names: string[]) => void;
 }) {
   const { scene } = useGLTFDraco(addon.modelUrl);
-  const groupRef = useRef<THREE.Group>(null);
-  const [clone] = useState<THREE.Group>(() => {
-    const c = scene.clone(true);
-    c.traverse((obj) => {
+
+  // Mount / remount when the addon or the base scene changes
+  useEffect(() => {
+    const group = new THREE.Group();
+    group.name = addon.name;
+    group.userData.addonId = addon.id;
+    group.position.fromArray(addon.transform.position);
+    group.rotation.set(...(addon.transform.rotation as [number, number, number]));
+    group.scale.fromArray(addon.transform.scale);
+    group.visible = addon.visible;
+
+    const addonClone = scene.clone(true);
+    addonClone.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
       }
     });
-    return c;
-  });
+    group.add(addonClone);
+    clonedScene.add(group);
 
-  // Report mesh names up once
-  useEffect(() => {
-    if (!onMeshNames) return;
     const names: string[] = [];
-    clone.traverse((obj) => { if (obj instanceof THREE.Mesh && obj.name) names.push(obj.name); });
+    addonClone.traverse((obj) => { if (obj instanceof THREE.Mesh && obj.name) names.push(obj.name); });
     onMeshNames(names);
+    onSceneChanged();
+
+    return () => {
+      clonedScene.remove(group);
+      onSceneChanged();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [addon.modelUrl]);
+  }, [scene, clonedScene, addon.id]);
 
-  const { position, rotation, scale } = addon.transform;
-
-  function handleTransformChange() {
-    const g = groupRef.current;
+  // Sync transform live (when user moves the group via TransformControls,
+  // handleTransformChange → onAddonTransformed → addon.transform updates → this runs)
+  useEffect(() => {
+    let found: THREE.Object3D | null = null;
+    clonedScene.traverse((obj) => { if (!found && obj.userData?.addonId === addon.id) found = obj; });
+    const g = found as THREE.Object3D | null;
     if (!g) return;
-    onTransformed?.(
-      [g.position.x, g.position.y, g.position.z],
-      [g.rotation.x, g.rotation.y, g.rotation.z],
-      [g.scale.x,    g.scale.y,    g.scale.z],
-    );
-  }
+    g.position.fromArray(addon.transform.position);
+    g.rotation.set(...(addon.transform.rotation as [number, number, number]));
+    g.scale.fromArray(addon.transform.scale);
+  }, [addon.transform, clonedScene, addon.id]);
 
-  return (
-    <>
-      <group
-        ref={groupRef}
-        position={position}
-        rotation={rotation}
-        scale={scale}
-        onPointerDown={(e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onSelect?.(); }}
-      >
-        <primitive object={clone} />
-        {isSelected && (
-          <mesh renderOrder={-1}>
-            <boxGeometry args={[0.01, 0.01, 0.01]} />
-            <meshBasicMaterial transparent opacity={0} />
-          </mesh>
-        )}
-      </group>
-      {isSelected && groupRef.current && (
-        <TransformControls
-          object={groupRef.current}
-          mode={transformMode}
-          onChange={handleTransformChange}
-          size={0.85}
-        />
-      )}
-    </>
-  );
+  // Sync visibility
+  useEffect(() => {
+    let found: THREE.Object3D | null = null;
+    clonedScene.traverse((obj) => { if (!found && obj.userData?.addonId === addon.id) found = obj; });
+    const g = found as THREE.Object3D | null;
+    if (g) g.visible = addon.visible;
+  }, [addon.visible, clonedScene, addon.id]);
+
+  return null;
 }
 
 // ─── AnnotationPinGizmo ────────────────────────────────────────────────────────
@@ -1801,11 +1805,9 @@ interface SceneEditorViewportProps {
   sceneVersion?: number;
   // Addon GLBs
   addons?: ProjectAddon[];
-  selectedAddonId?: string | null;
-  onAddonSelect?: (id: string | null) => void;
   onAddonTransformed?: (id: string, pos: [number,number,number], rot: [number,number,number], sc: [number,number,number]) => void;
-  addonTransformMode?: "translate" | "rotate" | "scale";
   onAddonMeshNames?: (addonId: string, names: string[]) => void;
+  onSceneTreeUpdate?: (tree: SceneTreeNode[]) => void;
   onTriangleCounts?: (counts: MeshTriangleCounts) => void;
   // Annotations
   annotations?: AnnotationPin[];
@@ -1846,8 +1848,7 @@ const SceneEditorViewport = forwardRef<SceneEditorViewportHandle, SceneEditorVie
      placedLights = [], placingLightType, onLightPlaced,
      selectedLightId, onLightSelect, onLightTransformed,
      onMeshDoubleClick, sceneVersion = 0,
-     addons = [], selectedAddonId, onAddonSelect, onAddonTransformed, addonTransformMode,
-     onAddonMeshNames, onTriangleCounts,
+     addons = [], onAddonTransformed, onAddonMeshNames, onSceneTreeUpdate, onTriangleCounts,
      annotations = [], placingAnnotation = false, onAnnotationPlaced,
      ...props }, ref) => {
     const cameraCaptureRef = useRef<(() => CameraCoords | null) | null>(null);
@@ -1938,11 +1939,9 @@ const SceneEditorViewport = forwardRef<SceneEditorViewportHandle, SceneEditorVie
               shapeTransformMode={shapeTransformMode}
               shapeMaterials={shapeMaterials}
               addons={addons}
-              selectedAddonId={selectedAddonId}
-              onAddonSelect={onAddonSelect}
               onAddonTransformed={onAddonTransformed}
-              addonTransformMode={addonTransformMode}
               onAddonMeshNames={onAddonMeshNames}
+              onSceneTreeUpdate={onSceneTreeUpdate}
               onTriangleCounts={onTriangleCounts}
               annotations={annotations}
               placingAnnotation={placingAnnotation}

@@ -3300,7 +3300,6 @@ export default function SceneEditorPage() {
   // ── Addon GLBs ─────────────────────────────────────────────────────────────
   const [addons,            setAddons]            = useState<ProjectAddon[]>([]);
   const [selectedAddonId,   setSelectedAddonId]   = useState<string | null>(null);
-  const [addonTransformMode, setAddonTransformMode] = useState<"translate" | "rotate" | "scale">("translate");
   const [addonMeshNames,    setAddonMeshNames]    = useState<Record<string, string[]>>({});
   const [addonUploading,    setAddonUploading]    = useState(false);
   const [addonUploadPct,    setAddonUploadPct]    = useState(0);
@@ -3596,6 +3595,10 @@ export default function SceneEditorPage() {
     setSelectedMeshes(prev =>
       prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
     );
+  }, []);
+
+  const handleSceneTreeUpdate = useCallback((tree: SceneTreeNode[]) => {
+    setSceneTree(tree);
   }, []);
 
   const handleSceneLoaded = useCallback((tree: SceneTreeNode[]) => {
@@ -4197,8 +4200,12 @@ export default function SceneEditorPage() {
   }
 
   function handleAddonDelete(id: string) {
+    const addon = addons.find(a => a.id === id);
     setAddons(prev => prev.filter(a => a.id !== id));
-    if (selectedAddonId === id) setSelectedAddonId(null);
+    if (selectedAddonId === id) {
+      setSelectedAddonId(null);
+      if (addon) setSelectedMeshes(prev => prev.filter(n => n !== addon.name));
+    }
     setAddonMeshNames(prev => { const n = { ...prev }; delete n[id]; return n; });
   }
 
@@ -4594,6 +4601,21 @@ export default function SceneEditorPage() {
                 className="px-2.5 py-1.5 bg-white/7 hover:bg-white/12 border border-white/8 text-white/60 text-xs rounded-lg transition-colors">
                 {project.model_url ? "Replace GLB" : "Upload GLB"}
               </button>
+              {addonUploading ? (
+                <div className="flex items-center gap-1.5">
+                  <div className="w-16 h-1 bg-white/10 rounded-full overflow-hidden">
+                    <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${addonUploadPct}%` }} />
+                  </div>
+                  <span className="text-white/40 text-[10px] tabular-nums">{addonUploadPct}%</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => addonFileRef.current?.click()}
+                  title="Import an additional GLB as an addon (porch extension, garage, etc.)"
+                  className="px-2.5 py-1.5 bg-white/7 hover:bg-white/12 border border-white/8 text-white/60 text-xs rounded-lg transition-colors">
+                  + Addon
+                </button>
+              )}
               {/* Auto-compress toggle */}
               <label className="flex items-center gap-1 cursor-pointer select-none" title="Automatically compress textures + geometry after upload">
                 <span
@@ -4702,12 +4724,6 @@ export default function SceneEditorPage() {
                         {baking ? "Baking…" : "⊕ Bake"}
                       </button>
                     )}
-                    <button
-                      onClick={() => addonFileRef.current?.click()}
-                      disabled={addonUploading}
-                      className="text-[9px] text-blue-400/70 hover:text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/20 hover:border-blue-400/40 transition-colors disabled:opacity-40">
-                      {addonUploading ? `${addonUploadPct}%` : "+ Import"}
-                    </button>
                   </div>
                 </div>
                 {addonUploadErr && <p className="text-[9px] text-red-400 px-3 py-1">{addonUploadErr}</p>}
@@ -4720,7 +4736,12 @@ export default function SceneEditorPage() {
                         className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer group transition-colors ${
                           selectedAddonId === addon.id ? "bg-blue-600/15 border border-blue-500/25" : "hover:bg-white/5 border border-transparent"
                         }`}
-                        onClick={() => setSelectedAddonId(selectedAddonId === addon.id ? null : addon.id)}>
+                        onClick={() => {
+                          const selecting = selectedAddonId !== addon.id;
+                          setSelectedAddonId(selecting ? addon.id : null);
+                          if (selecting) { setSelectedMeshes([addon.name]); setSelectedPropId(null); }
+                          else { setSelectedMeshes([]); }
+                        }}>
                         <button
                           onClick={e => { e.stopPropagation(); handleAddonToggleVisible(addon.id); }}
                           className={`flex-shrink-0 transition-colors ${addon.visible ? "text-white/50 hover:text-white" : "text-white/15 hover:text-white/40"}`}>
@@ -4729,18 +4750,6 @@ export default function SceneEditorPage() {
                         <span className={`flex-1 text-[10px] truncate ${selectedAddonId === addon.id ? "text-blue-300" : "text-white/60"}`}>
                           {addon.name}
                         </span>
-                        {selectedAddonId === addon.id && (
-                          <div className="flex items-center gap-0.5">
-                            {(["translate","rotate","scale"] as const).map(m => (
-                              <button key={m}
-                                onClick={e => { e.stopPropagation(); setAddonTransformMode(m); }}
-                                title={`${m[0].toUpperCase()}${m.slice(1)}`}
-                                className={`w-5 h-5 rounded text-[9px] font-bold transition-colors ${addonTransformMode === m ? "bg-blue-500 text-white" : "bg-white/8 text-white/30 hover:text-white"}`}>
-                                {m[0].toUpperCase()}
-                              </button>
-                            ))}
-                          </div>
-                        )}
                         <button onClick={e => { e.stopPropagation(); handleAddonDelete(addon.id); }}
                           className="opacity-0 group-hover:opacity-100 text-red-400/60 hover:text-red-300 text-[10px] transition-opacity">✕</button>
                       </div>
@@ -4911,11 +4920,9 @@ export default function SceneEditorPage() {
                 onLightTransformed={handleLightTransformed}
                 onMeshDoubleClick={handleMeshDoubleClick}
                 addons={addons}
-                selectedAddonId={selectedAddonId}
-                onAddonSelect={(id) => { setSelectedAddonId(id); setSelectedMeshes([]); setSelectedPropId(null); }}
                 onAddonTransformed={handleAddonTransformed}
-                addonTransformMode={addonTransformMode}
                 onAddonMeshNames={(addonId, names) => setAddonMeshNames(prev => ({ ...prev, [addonId]: names }))}
+                onSceneTreeUpdate={handleSceneTreeUpdate}
                 onTriangleCounts={setTriangleCounts}
                 annotations={annotations}
                 placingAnnotation={placingAnnotation}
