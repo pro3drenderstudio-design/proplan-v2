@@ -39,6 +39,13 @@ function useAutoLowPerf(): boolean {
   }, []);
 }
 
+function useIsIOS(): boolean {
+  return useMemo(() => {
+    if (typeof navigator === "undefined") return false;
+    return /iPad|iPhone|iPod/.test(navigator.userAgent);
+  }, []);
+}
+
 export type ViewerStatus = "loading" | "ready" | "error";
 
 // ── Viewer-side prop rendering (no selection, no transform controls) ──────────
@@ -259,19 +266,10 @@ export default function R3FViewer({
 }: R3FViewerProps) {
   const autoLowPerf = useAutoLowPerf();
   const lowPerf = lowPerfProp ?? autoLowPerf;
+  const isIOS = useIsIOS();
   const [ready, setReady] = useState(false);
-  const [canvasMounted, setCanvasMounted] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const modelLoadedRef = useRef(false);
-
-  // Defer Canvas mount by one animation frame so the Preloader's compositor
-  // layer is fully established before WebGL creates its own GPU layer.
-  // On iOS (CAMetalLayer), WebGL layers can appear above CSS layers if they
-  // are created simultaneously — the 1-frame delay prevents this race.
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => setCanvasMounted(true));
-    return () => cancelAnimationFrame(raf);
-  }, []);
 
   const [ptStatus, setPtStatus] = useState<PTStatus>({ state: "off", samples: 0 });
   const ptActive = ptStatus.state === "rendering" || ptStatus.state === "done";
@@ -323,17 +321,19 @@ export default function R3FViewer({
 
   return (
     <div className="relative w-full h-full" style={{ background: "#0d0d0d" }}>
-      {/* Solid cover that sits above the Canvas in the same stacking context.
-          This prevents the Canvas's first WebGL frame (which can composite
-          above fixed overlays via GPU layers) from creating a visible flash.
-          Uses will-change: transform so it gets its own GPU layer, ensuring
-          proper z-ordering with the Canvas layer. */}
-      {!ready && (
-        <div
-          className="absolute inset-0 z-20"
-          style={{ background: "#0d0d0d", willChange: "transform", transform: "translateZ(0)" }}
-        />
-      )}
+      {/* Cover that sits above the Canvas while the first frame renders.
+          Fades out (300 ms) instead of disappearing instantly to prevent
+          the flash between cover removal and the Preloader's own fade-out. */}
+      <div
+        className="absolute inset-0 z-20 transition-opacity duration-300"
+        style={{
+          background: "#0d0d0d",
+          willChange: "transform",
+          transform: "translateZ(0)",
+          opacity: ready ? 0 : 1,
+          pointerEvents: ready ? "none" : "auto",
+        }}
+      />
 
       {/* Path tracing status indicator */}
       {(sceneSettings?.pathTracing) && ptStatus.state !== "off" && (
@@ -347,18 +347,20 @@ export default function R3FViewer({
       )}
 
       <CanvasErrorBoundary onError={handleCanvasError}>
-      {canvasMounted && <Canvas
+      <Canvas
         style={{ background: "#0d0d0d" }}
         shadows={(sceneSettings?.shadows ?? true) && !lowPerf ? "soft" : false}
-        dpr={lowPerf ? 1 : [1, 2]}
+        dpr={lowPerf ? 1 : [1, 1.5]}
+        frameloop={lowPerf ? "demand" : "always"}
         camera={{ position: [8, 6, 12], fov: sceneSettings?.cameraFov ?? 45 }}
         gl={{
           antialias: !lowPerf,
           alpha: false,
+          stencil: false,
           toneMapping: ACESFilmicToneMapping,
           toneMappingExposure: 1.1,
           outputColorSpace: SRGBColorSpace,
-          powerPreference: lowPerf ? "default" : "high-performance",
+          powerPreference: isIOS ? "low-power" : lowPerf ? "default" : "high-performance",
           failIfMajorPerformanceCaveat: false,
         }}
         onCreated={({ gl }) => {
@@ -463,7 +465,7 @@ export default function R3FViewer({
           sceneVersion={sceneVersion}
           onStatus={setPtStatus}
         />
-      </Canvas>}
+      </Canvas>
       </CanvasErrorBoundary>
     </div>
   );

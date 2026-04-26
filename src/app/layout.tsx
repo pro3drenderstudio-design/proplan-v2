@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, DM_Sans } from "next/font/google";
+import { Bricolage_Grotesque, Cormorant_Garamond, DM_Sans, Jost } from "next/font/google";
 import "./globals.css";
 
 // Bricolage Grotesque — wide, confident display font; works beautifully at large sizes
@@ -17,6 +17,21 @@ const dmSans = DM_Sans({
   display: "swap",
 });
 
+const cormorant = Cormorant_Garamond({
+  variable: "--font-cormorant",
+  subsets: ["latin"],
+  weight: ["300", "400"],
+  style: ["normal", "italic"],
+  display: "block",
+});
+
+const jost = Jost({
+  variable: "--font-jost",
+  subsets: ["latin"],
+  weight: ["200", "300"],
+  display: "block",
+});
+
 export const metadata: Metadata = {
   title: "ProPlan Studio — Sell Homes Before They're Built",
   description:
@@ -29,7 +44,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${bricolage.variable} ${dmSans.variable} h-full antialiased`}
+      className={`${bricolage.variable} ${dmSans.variable} ${cormorant.variable} ${jost.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

@@ -1321,21 +1321,20 @@ function buildPdf({
   const maxNameW = pageW * 0.52;
   const nameLines = doc.splitTextToSize(project.name, maxNameW) as string[];
   doc.text(nameLines, tx, ty + 12);
-  let nameEndY = ty + 12 + nameLines.length * 11;
+  let nameEndY = ty + 12 + nameLines.length * 9;
 
   // Community / lot
   if (lotInfo?.communityName || lotInfo?.lotNumber) {
     const sub = [lotInfo.communityName, lotInfo.lotNumber ? `Lot ${lotInfo.lotNumber}` : null].filter(Boolean).join("  ·  ");
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
     doc.setTextColor(aR, aG, aB);
-    doc.text(sub, tx, nameEndY + 5);
-    nameEndY += 9;
+    doc.text(sub, tx, nameEndY + 3);
+    nameEndY += 7;
   }
 
-  // Prepared for (+100%: 6 → 12)
-  doc.setFont("helvetica", "normal"); doc.setFontSize(12);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8);
   doc.setTextColor(145, 165, 210);
-  doc.text(`Prepared for  ${buyer.firstName} ${buyer.lastName}`, tx, nameEndY + 5);
+  doc.text(`Prepared for  ${buyer.firstName} ${buyer.lastName}`, tx, nameEndY + 3);
 
   // ── Price box — right side of scrim (+15% height: 21 → 24) ──────
   const pBoxW  = 88;
@@ -1356,17 +1355,17 @@ function buildPdf({
   doc.setTextColor(aR, aG, aB);
   doc.text("YOUR ESTIMATE", pBoxX + pBoxW / 2, pBoxY2 + 7, { align: "center" });
 
-  doc.setFont("helvetica", "bold"); doc.setFontSize(40);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(22);
   doc.setTextColor(245, 248, 255);
   doc.text(priceStr, pBoxX + pBoxW / 2, pBoxY2 + 20, { align: "center" });
 
-  // ── AI Visualized badge — only when user triggered AI render ─────
+  // ── AI Visualized badge — tucked below price box on right side ──
   if (aiVisualized) {
     doc.setFillColor(aR, aG, aB);
-    doc.roundedRect(margin, pageH - 15, 28, 6, 1.5, 1.5, "F");
+    doc.roundedRect(pBoxX, pBoxY2 + pBoxH + 2, 28, 5, 1.5, 1.5, "F");
     doc.setFont("helvetica", "bold"); doc.setFontSize(4.5);
     doc.setTextColor(5, 8, 18);
-    doc.text("AI VISUALIZED", margin + 14, pageH - 11, { align: "center" });
+    doc.text("AI VISUALIZED", pBoxX + 14, pBoxY2 + pBoxH + 5.2, { align: "center" });
   }
 
   drawPageFooter(1);

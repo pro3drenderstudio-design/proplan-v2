@@ -13,6 +13,31 @@ import { PhaseId } from "@/constants/phases";
 import { ModelNodeGroups, MaterialLibraryEntry } from "@/types/database";
 import { capTextureSize } from "./cap-texture-size";
 
+/** Invert a loaded texture's RGB channels (glossiness → roughness). */
+function invertGlossinessTexture(src: THREE.Texture): THREE.CanvasTexture {
+  const img = src.image as HTMLImageElement | HTMLCanvasElement | ImageBitmap;
+  const w = (img as HTMLImageElement).naturalWidth  || (img as HTMLCanvasElement).width  || 256;
+  const h = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height || 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img as CanvasImageSource, 0, 0, w, h);
+  const id = ctx.getImageData(0, 0, w, h);
+  for (let i = 0; i < id.data.length; i += 4) {
+    id.data[i]     = 255 - id.data[i];
+    id.data[i + 1] = 255 - id.data[i + 1];
+    id.data[i + 2] = 255 - id.data[i + 2];
+  }
+  ctx.putImageData(id, 0, 0);
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = t.wrapT = src.wrapS;
+  t.repeat.copy(src.repeat);
+  t.offset.copy(src.offset);
+  t.rotation = src.rotation;
+  t.colorSpace = THREE.LinearSRGBColorSpace;
+  return t;
+}
+
 export type LevelId = 1 | 2 | 3;
 
 const DEFAULT_NODE_GROUPS: Required<ModelNodeGroups> = {
@@ -248,6 +273,7 @@ export function applyMaterialOverride(
       url: string | null | undefined,
       slot: "map" | "normalMap" | "bumpMap" | "roughnessMap" | "metalnessMap" | "aoMap",
       srgb = false,
+      invert = false,
     ) {
       if (!url) return;
       loader.load(url, (loaded) => {
@@ -260,8 +286,10 @@ export function applyMaterialOverride(
           loaded.rotation = ((p.uvRotation ?? 0) * Math.PI) / 180;
         }
         loaded.needsUpdate = true;
+        let tex: THREE.Texture = loaded;
+        if (invert) tex = invertGlossinessTexture(loaded);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (m as any)[slot] = loaded;
+        (m as any)[slot] = tex;
         if (slot === "map" && !p.colorTint) {
           // Albedo tex provides color — switch from placeholder tint to white
           m.color.set("#ffffff");
@@ -274,12 +302,13 @@ export function applyMaterialOverride(
       });
     }
 
-    loadDeferred(p.albedoMapUrl,    "map",          true);
-    loadDeferred(p.normalMapUrl,    "normalMap");
-    loadDeferred(p.bumpMapUrl,      "bumpMap");
-    loadDeferred(p.roughnessMapUrl, "roughnessMap");
-    loadDeferred(p.metalnessMapUrl, "metalnessMap");
-    loadDeferred(p.aoMapUrl,        "aoMap");
+    const useGloss = !p.roughnessMapUrl && !!p.glossinessMapUrl;
+    loadDeferred(p.albedoMapUrl,                             "map",          true);
+    loadDeferred(p.normalMapUrl,                             "normalMap");
+    loadDeferred(p.bumpMapUrl,                               "bumpMap");
+    loadDeferred(p.roughnessMapUrl ?? p.glossinessMapUrl,   "roughnessMap", false, useGloss);
+    loadDeferred(p.metalnessMapUrl,                          "metalnessMap");
+    loadDeferred(p.aoMapUrl,                                 "aoMap");
 
     mat.envMapIntensity = 1.0;
     if (p.emissiveColor && (p.emissiveIntensity ?? 0) > 0) {

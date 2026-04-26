@@ -25,24 +25,30 @@ function OptionRow({
   isFav,
   onSelect,
   onToggleFavorite,
+  compact = false,
 }: {
   option: Option;
   isSelected: boolean;
   isFav: boolean;
   onSelect: () => void;
   onToggleFavorite?: () => void;
+  compact?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
   const hasThumb = !!option.thumbnail_url;
+
+  const thumbSize    = compact ? 14 : hovered ? 36 : 22;
+  const thumbRadius  = compact ? 4  : hovered ? 8 : 9999;
+  const vertPad      = compact ? 5  : hasThumb ? (hovered ? 6 : 8) : 10;
 
   return (
     <div className="flex items-center gap-1" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <button
         onClick={onSelect}
-        className="flex-1 flex items-center gap-2.5 rounded-xl px-2.5 text-left transition-all duration-200 select-none min-w-0 group"
+        className="flex-1 flex items-center gap-2 rounded-xl px-2 text-left transition-all duration-200 select-none min-w-0 group"
         style={{
-          paddingTop: hasThumb ? (hovered ? 6 : 8) : 10,
-          paddingBottom: hasThumb ? (hovered ? 6 : 8) : 10,
+          paddingTop: vertPad,
+          paddingBottom: vertPad,
           background: isSelected
             ? "rgba(255,255,255,0.09)"
             : hovered
@@ -61,10 +67,10 @@ function OptionRow({
           <div
             className="flex-shrink-0 overflow-hidden transition-all duration-200"
             style={{
-              width: hovered ? 36 : 22,
-              height: hovered ? 36 : 22,
-              borderRadius: hovered ? 8 : 9999,
-              boxShadow: hovered
+              width: thumbSize,
+              height: thumbSize,
+              borderRadius: thumbRadius,
+              boxShadow: hovered && !compact
                 ? "0 4px 12px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.15)"
                 : isSelected
                 ? "0 0 0 2px rgba(255,255,255,0.25)"
@@ -82,8 +88,8 @@ function OptionRow({
           <span
             className="flex-shrink-0 rounded-full transition-all duration-200"
             style={{
-              width: hovered ? 8 : 6,
-              height: hovered ? 8 : 6,
+              width: compact ? 5 : hovered ? 8 : 6,
+              height: compact ? 5 : hovered ? 8 : 6,
               background: isSelected ? "#60a5fa" : hovered ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)",
               boxShadow: isSelected ? "0 0 6px rgba(96,165,250,0.5)" : "none",
             }}
@@ -92,16 +98,22 @@ function OptionRow({
 
         {/* Label */}
         <span
-          className="flex-1 text-xs font-medium leading-snug truncate transition-colors duration-150"
-          style={{ color: isSelected ? "rgba(255,255,255,0.92)" : hovered ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.5)" }}
+          className="flex-1 font-medium leading-snug truncate transition-colors duration-150"
+          style={{
+            fontSize: compact ? 10 : 12,
+            color: isSelected ? "rgba(255,255,255,0.92)" : hovered ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.5)",
+          }}
         >
           {option.friendly_name}
         </span>
 
         {/* Price */}
         <span
-          className="text-[10px] font-semibold flex-shrink-0 ml-1 transition-colors"
-          style={{ color: isSelected ? "#93c5fd" : hovered ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.2)" }}
+          className="font-semibold flex-shrink-0 ml-1 transition-colors"
+          style={{
+            fontSize: compact ? 9 : 10,
+            color: isSelected ? "#93c5fd" : hovered ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.2)",
+          }}
         >
           {option.price_impact === 0
             ? "incl."
@@ -113,7 +125,7 @@ function OptionRow({
         </span>
       </button>
 
-      {onToggleFavorite && (
+      {onToggleFavorite && !compact && (
         <button
           onClick={onToggleFavorite}
           className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-150"
@@ -140,17 +152,20 @@ function CategoryCard({
   onOptionSelect,
   favorites,
   onToggleFavorite,
+  compact = false,
 }: {
   category: CategoryWithOptions;
   selectedOptions: Record<string, string>;
   onOptionSelect: (categoryId: string, option: Option) => void;
   favorites?: Set<string>;
   onToggleFavorite?: (optionId: string) => void;
+  compact?: boolean;
 }) {
   return (
     <div
-      className="flex-shrink-0 rounded-2xl p-4"
+      className="flex-shrink-0 rounded-xl"
       style={{
+        padding: compact ? "8px 10px" : 16,
         background: "rgba(0,0,0,0.55)",
         backdropFilter: "blur(24px)",
         WebkitBackdropFilter: "blur(24px)",
@@ -159,13 +174,19 @@ function CategoryCard({
       }}
     >
       <p
-        className="text-[9px] font-bold uppercase tracking-[0.18em] mb-3"
-        style={{ color: "rgba(255,255,255,0.28)", fontFamily: "var(--font-syne), sans-serif" }}
+        className="font-bold uppercase"
+        style={{
+          fontSize: compact ? 8 : 9,
+          letterSpacing: "0.18em",
+          marginBottom: compact ? 6 : 12,
+          color: "rgba(255,255,255,0.28)",
+          fontFamily: "var(--font-syne), sans-serif",
+        }}
       >
         {category.name}
       </p>
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-0.5">
         {category.options.map((option) => (
           <OptionRow
             key={option.id}
@@ -174,6 +195,7 @@ function CategoryCard({
             isFav={favorites?.has(option.id) ?? false}
             onSelect={() => onOptionSelect(category.id, option)}
             onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(option.id) : undefined}
+            compact={compact}
           />
         ))}
       </div>
@@ -239,11 +261,11 @@ export default function OptionsPanel({
 
   return (
     <>
-      {/* Mobile: conditionally rendered bottom sheet */}
+      {/* Mobile: compact bottom sheet */}
       {isOpen && (
         <div
           ref={mobileRef}
-          className="md:hidden fixed left-2 right-2 bottom-[72px] max-h-[55vh] z-[60] flex flex-col gap-2.5 overflow-y-auto pb-1"
+          className="md:hidden fixed left-2 right-2 bottom-[72px] max-h-[28vh] z-[60] flex flex-col gap-1.5 overflow-y-auto pb-1"
           style={scrollStyle}
         >
           {messageNode}
@@ -255,6 +277,7 @@ export default function OptionsPanel({
               onOptionSelect={onOptionSelect}
               favorites={favorites}
               onToggleFavorite={onToggleFavorite}
+              compact
             />
           ))}
         </div>

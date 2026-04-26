@@ -22,10 +22,10 @@ function Arrow() {
 }
 
 const REAL_RENDERS = [
-  { url: "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775608561463-elevation.jpg", label: "Exterior — Midday" },
-  { url: "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775090072907-interior.jpg",  label: "Interior — Natural Light" },
-  { url: "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775502302584-elevation.jpg", label: "Exterior — Golden Hour" },
-  { url: "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775122222672-elevation.jpg", label: "Contemporary — Dusk" },
+  { url: "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775608561463-elevation.webp", label: "Exterior — Midday" },
+  { url: "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775090072907-interior.webp",  label: "Interior — Natural Light" },
+  { url: "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775502302584-elevation.webp", label: "Exterior — Golden Hour" },
+  { url: "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775122222672-elevation.webp", label: "Contemporary — Dusk" },
 ];
 
 export default async function ThreeDRenderingPage() {

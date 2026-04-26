@@ -27,7 +27,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { name, category, base_color, roughness, metalness, normal_map_url, thumbnail_url, properties } = body;
+  const { name, category, folder_id, base_color, roughness, metalness, normal_map_url, thumbnail_url, properties } = body;
 
   if (!name || !base_color) {
     return NextResponse.json({ error: "name and base_color are required" }, { status: 400 });
@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
     .insert({
       name,
       category: category ?? null,
+      folder_id: folder_id ?? null,
       base_color,
       roughness: roughness ?? 0.5,
       metalness: metalness ?? 0.0,

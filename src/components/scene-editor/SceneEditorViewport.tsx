@@ -445,6 +445,72 @@ function EditorScene({
     return null;
   }
 
+  // Loads a glossiness texture and returns it inverted (for use as roughnessMap).
+  function loadTexInverted(url: string | null | undefined): THREE.Texture | null {
+    if (!url) return null;
+    const invertKey = `${url}:inverted`;
+    const cached = texCacheRef.current.get(invertKey);
+    if (cached instanceof THREE.Texture) return cached;
+    if (cached === "loading" || cached === "failed") return null;
+    // Trigger source load if not already in progress
+    const srcKey = url;
+    const srcCached = texCacheRef.current.get(srcKey);
+    if (!(srcCached instanceof THREE.Texture)) {
+      // Load source first, then invert on arrival
+      texCacheRef.current.set(invertKey, "loading");
+      texLoaderRef.current.load(
+        url,
+        (src) => {
+          src.wrapS = src.wrapT = THREE.RepeatWrapping;
+          src.colorSpace = THREE.LinearSRGBColorSpace;
+          texCacheRef.current.set(srcKey, src);
+          const img = src.image as HTMLImageElement | HTMLCanvasElement | ImageBitmap;
+          const w = (img as HTMLImageElement).naturalWidth  || (img as HTMLCanvasElement).width  || 256;
+          const h = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height || 256;
+          const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+          const ctx = cv.getContext("2d")!;
+          ctx.drawImage(img as CanvasImageSource, 0, 0, w, h);
+          const id = ctx.getImageData(0, 0, w, h);
+          for (let i = 0; i < id.data.length; i += 4) {
+            id.data[i]     = 255 - id.data[i];
+            id.data[i + 1] = 255 - id.data[i + 1];
+            id.data[i + 2] = 255 - id.data[i + 2];
+          }
+          ctx.putImageData(id, 0, 0);
+          const inv = new THREE.CanvasTexture(cv);
+          inv.wrapS = inv.wrapT = THREE.RepeatWrapping;
+          inv.colorSpace = THREE.LinearSRGBColorSpace;
+          inv.needsUpdate = true;
+          texCacheRef.current.set(invertKey, inv);
+          setTexVersion(v => v + 1);
+        },
+        undefined,
+        () => texCacheRef.current.set(invertKey, "failed"),
+      );
+      return null;
+    }
+    // Source already loaded — invert synchronously
+    const img = srcCached.image as HTMLImageElement | HTMLCanvasElement | ImageBitmap;
+    const w = (img as HTMLImageElement).naturalWidth  || (img as HTMLCanvasElement).width  || 256;
+    const h = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height || 256;
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+    const ctx = cv.getContext("2d")!;
+    ctx.drawImage(img as CanvasImageSource, 0, 0, w, h);
+    const id = ctx.getImageData(0, 0, w, h);
+    for (let i = 0; i < id.data.length; i += 4) {
+      id.data[i]     = 255 - id.data[i];
+      id.data[i + 1] = 255 - id.data[i + 1];
+      id.data[i + 2] = 255 - id.data[i + 2];
+    }
+    ctx.putImageData(id, 0, 0);
+    const inv = new THREE.CanvasTexture(cv);
+    inv.wrapS = inv.wrapT = THREE.RepeatWrapping;
+    inv.colorSpace = THREE.LinearSRGBColorSpace;
+    inv.needsUpdate = true;
+    texCacheRef.current.set(invertKey, inv);
+    return inv;
+  }
+
   // Three.js r184 normal_fragment_maps uses #elif, so normal and bump are mutually exclusive by
   // default. This chunk replaces that include to apply normal map first, then layer bump on top.
   const COMBINED_NORMAL_BUMP = `
@@ -602,7 +668,9 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
     const albedoOv = applyUV(loadTex(p.albedoMapUrl, true), p);
     const normalOv = applyUV(loadTex(p.normalMapUrl),       p);
     const bumpOv   = applyUV(loadTex(p.bumpMapUrl),         p);
-    const roughOv  = applyUV(loadTex(p.roughnessMapUrl),    p);
+    const roughOv  = applyUV(
+      p.roughnessMapUrl ? loadTex(p.roughnessMapUrl) : loadTexInverted(p.glossinessMapUrl), p,
+    );
     const metalOv  = applyUV(loadTex(p.metalnessMapUrl),    p);
     const aoOv     = applyUV(loadTex(p.aoMapUrl),           p);
 
@@ -622,8 +690,9 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
     // Include 'c' flag when both normal+bump are set so the combined-shader variant
     // gets its own program cache entry, distinct from normal-only or bump-only.
     const bothNB = !!(normalTex && bumpTex);
+    const glossKey = !p.roughnessMapUrl && p.glossinessMapUrl ? "g" : "";
     const texKey = [albedoTex, normalTex, bumpTex, roughTex, metalTex, aoTex]
-      .map(t => (t ? "1" : "0")).join("") + `|${projection}|${bothNB ? "c" : ""}`;
+      .map(t => (t ? "1" : "0")).join("") + `|${projection}|${bothNB ? "c" : ""}|${glossKey}`;
 
     let mat = overrideMatsRef.current.get(meshName);
     if (!mat || (mat as any).__texKey !== texKey) {

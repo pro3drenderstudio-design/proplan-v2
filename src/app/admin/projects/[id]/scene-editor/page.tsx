@@ -177,7 +177,7 @@ function OptionsTree({
   onCaptureCamera, onClearCamera, onSetDefault, onCategoryClick, onUpdateShowWhen,
   onCategoryAdded, onCategoryUpdated, onCategoryDeleted,
   onOptionAdded, onOptionUpdated, onOptionDeleted,
-  onReorder,
+  onReorder, onOptionReorder,
   projectId,
 }: {
   categories: CategoryWithOptions[];
@@ -194,9 +194,10 @@ function OptionsTree({
   onCategoryUpdated?: (catId: string, name: string, phase: Phase) => void;
   onCategoryDeleted?: (catId: string) => void;
   onOptionAdded?: (catId: string, opt: CategoryWithOptions["options"][0]) => void;
-  onOptionUpdated?: (optId: string, name: string, price: number) => void;
+  onOptionUpdated?: (optId: string, name: string, price: number, thumbnailUrl?: string | null) => void;
   onOptionDeleted?: (optId: string, catId: string) => void;
   onReorder?: (phase: Phase, newOrder: CategoryWithOptions[]) => void;
+  onOptionReorder?: (catId: string, newOptions: CategoryWithOptions["options"]) => void;
   projectId?: string;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -214,6 +215,9 @@ function OptionsTree({
   const [editOptId,    setEditOptId]    = useState<string | null>(null);
   const [editOptName,  setEditOptName]  = useState("");
   const [editOptPrice, setEditOptPrice] = useState("0");
+  const [thumbUploading, setThumbUploading] = useState(false);
+  const thumbFileRef   = useRef<HTMLInputElement>(null);
+  const thumbTargetRef = useRef<{ optId: string; catId: string } | null>(null);
 
   function toggleShowWhen(catId: string) {
     setShowWhenOpen(s => { const n = new Set(s); n.has(catId) ? n.delete(catId) : n.add(catId); return n; });
@@ -265,6 +269,51 @@ function OptionsTree({
     if (ok) onOptionDeleted?.(optId, catId);
   }
 
+  async function handleThumbnailUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const target = thumbTargetRef.current;
+    if (!file || !target) return;
+    setThumbUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("optionId", target.optId);
+      const res = await fetch("/api/admin/option-thumbnail", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error ?? "Upload failed");
+      const opt = categories.flatMap(c => c.options).find(o => o.id === target.optId);
+      if (opt) {
+        await updateOption(target.optId, { thumbnail_url: data.url });
+        onOptionUpdated?.(target.optId, opt.friendly_name, opt.price_impact, data.url);
+      }
+    } catch (err) {
+      console.error("Thumbnail upload error:", err);
+    } finally {
+      setThumbUploading(false);
+      thumbTargetRef.current = null;
+    }
+  }
+
+  async function handleThumbnailClear(optId: string) {
+    const opt = categories.flatMap(c => c.options).find(o => o.id === optId);
+    if (!opt) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from("options") as any).update({ thumbnail_url: null }).eq("id", optId);
+    onOptionUpdated?.(optId, opt.friendly_name, opt.price_impact, undefined);
+  }
+
+  function handleOptionDragEnd(event: DragEndEvent, catId: string) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const cat = categories.find(c => c.id === catId);
+    if (!cat) return;
+    const oldIdx = cat.options.findIndex(o => o.id === active.id);
+    const newIdx = cat.options.findIndex(o => o.id === over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    onOptionReorder?.(catId, arrayMove(cat.options, oldIdx, newIdx));
+  }
+
   // Require a 6px movement before drag activates, preventing accidental drags on click
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -286,6 +335,8 @@ function OptionsTree({
 
   return (
     <div className="flex flex-col gap-0.5">
+      {/* Hidden file input for thumbnail uploads */}
+      <input ref={thumbFileRef} type="file" accept="image/*" className="hidden" onChange={handleThumbnailUpload} />
       {/* Add Category */}
       <div className="px-1 pb-1 border-b border-white/6 mb-1">
         {addCatOpen ? (
@@ -484,6 +535,8 @@ function OptionsTree({
                 )}
 
                 {!collapsed.has(cat.id) && (<>
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={e => handleOptionDragEnd(e, cat.id)}>
+                    <SortableContext items={cat.options.map(o => o.id)} strategy={verticalListSortingStrategy}>
                   {cat.options.map(opt => {
                     const isActive  = opt.id === activeOptionId;
                     const isDefault = cat.default_option === opt.friendly_name;
@@ -491,8 +544,11 @@ function OptionsTree({
                     const glbNodes  = glbMeshNames.size > 0 ? allNodes.filter(n => glbMeshNames.has(n)) : allNodes;
                     const staleCount = glbMeshNames.size > 0 ? allNodes.length - glbNodes.length : 0;
                     const assignments = opt.material_assignments ?? [];
+                    const isThumbLoading = thumbUploading && thumbTargetRef.current?.optId === opt.id;
                     return (
-                      <div key={opt.id}
+                      <SortableCategoryItem key={opt.id} id={opt.id}>
+                      {(optDragHandleProps) => (
+                      <div
                         className={`ml-3 rounded-lg mb-0.5 border transition-colors group/opt ${
                           isActive ? "bg-blue-600/12 border-blue-500/30" : "border-transparent hover:bg-white/4"
                         }`}>
@@ -514,10 +570,25 @@ function OptionsTree({
                         ) : (
                           <div className="flex items-center">
                             <button
+                              {...optDragHandleProps}
+                              title="Drag to reorder"
+                              className="flex-shrink-0 px-0.5 py-1 text-white/12 hover:text-white/35 cursor-grab active:cursor-grabbing opacity-0 group-hover/opt:opacity-100 transition-colors touch-none">
+                              <svg className="w-2 h-2.5" viewBox="0 0 10 16" fill="currentColor">
+                                <circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/>
+                                <circle cx="3" cy="8" r="1.2"/><circle cx="7" cy="8" r="1.2"/>
+                                <circle cx="3" cy="13" r="1.2"/><circle cx="7" cy="13" r="1.2"/>
+                              </svg>
+                            </button>
+                            <button
                               onClick={() => onActivate(isActive ? null : opt.id)}
                               onDoubleClick={(e) => { e.stopPropagation(); onOptionDoubleClick?.(opt.id); }}
                               className="flex items-center gap-1.5 px-2 py-1.5 text-left flex-1 min-w-0">
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-blue-400" : "bg-white/15"}`} />
+                              {opt.thumbnail_url ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={opt.thumbnail_url} alt="" className="w-4 h-4 rounded flex-shrink-0 object-cover border border-white/10" />
+                              ) : (
+                                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-blue-400" : "bg-white/15"}`} />
+                              )}
                               <span className={`text-xs flex-1 truncate ${isActive ? "text-white" : "text-white/55"}`}>
                                 {opt.friendly_name}
                               </span>
@@ -531,6 +602,34 @@ function OptionsTree({
                                 <span className="text-[9px] text-violet-400/50">{assignments.length}mat</span>
                               )}
                             </button>
+                            {/* Thumbnail upload button */}
+                            <button
+                              onClick={e => { e.stopPropagation(); thumbTargetRef.current = { optId: opt.id, catId: cat.id }; thumbFileRef.current?.click(); }}
+                              title={opt.thumbnail_url ? "Change thumbnail" : "Add thumbnail"}
+                              disabled={isThumbLoading}
+                              className="flex-shrink-0 p-1 rounded text-white/15 hover:text-white/60 transition-colors opacity-0 group-hover/opt:opacity-100 disabled:opacity-40">
+                              {isThumbLoading ? (
+                                <svg className="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/>
+                                </svg>
+                              ) : (
+                                <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                                  <circle cx="12" cy="13" r="3" />
+                                </svg>
+                              )}
+                            </button>
+                            {/* Clear thumbnail */}
+                            {opt.thumbnail_url && (
+                              <button
+                                onClick={e => { e.stopPropagation(); handleThumbnailClear(opt.id); }}
+                                title="Remove thumbnail"
+                                className="flex-shrink-0 p-1 rounded text-white/15 hover:text-amber-400 transition-colors opacity-0 group-hover/opt:opacity-100">
+                                <svg className="w-2 h-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
                             <button
                               onClick={e => { e.stopPropagation(); onSetDefault?.(cat.id, opt.friendly_name); }}
                               title={isDefault ? "Remove as default" : "Set as default"}
@@ -558,8 +657,12 @@ function OptionsTree({
                           </div>
                         )}
                       </div>
+                      )}
+                      </SortableCategoryItem>
                     );
                   })}
+                    </SortableContext>
+                  </DndContext>
                   {/* Add option */}
                   {addOptCatId === cat.id ? (
                     <div className="ml-3 px-2 py-1.5 flex flex-col gap-1">
@@ -4821,8 +4924,13 @@ export default function SceneEditorPage() {
                   onCategoryUpdated={(catId, name, phase) => setCategories(prev => prev.map(c => c.id === catId ? { ...c, name, phase } : c))}
                   onCategoryDeleted={(catId) => setCategories(prev => prev.filter(c => c.id !== catId))}
                   onOptionAdded={(catId, opt) => setCategories(prev => prev.map(c => c.id === catId ? { ...c, options: [...c.options, opt] } : c))}
-                  onOptionUpdated={(optId, name, price) => setCategories(prev => prev.map(c => ({ ...c, options: c.options.map(o => o.id === optId ? { ...o, friendly_name: name, price_impact: price } : o) })))}
+                  onOptionUpdated={(optId, name, price, thumbnailUrl) => setCategories(prev => prev.map(c => ({ ...c, options: c.options.map(o => o.id === optId ? { ...o, friendly_name: name, price_impact: price, ...(thumbnailUrl !== undefined ? { thumbnail_url: thumbnailUrl ?? undefined } : {}) } : o) })))}
                   onOptionDeleted={(optId, catId) => setCategories(prev => prev.map(c => c.id === catId ? { ...c, options: c.options.filter(o => o.id !== optId) } : c))}
+                  onOptionReorder={(catId, newOptions) => {
+                    const updated = newOptions.map((opt, i) => ({ ...opt, sort_order: i }));
+                    setCategories(prev => prev.map(c => c.id === catId ? { ...c, options: updated } : c));
+                    updated.forEach(opt => updateOption(opt.id, { sort_order: opt.sort_order }).catch(console.error));
+                  }}
                   onOptionDoubleClick={handleOptionDoubleClick}
                   onReorder={(phase, newOrder) => {
                     const updated = newOrder.map((cat, i) => ({ ...cat, sort_order: i }));

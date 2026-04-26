@@ -43,6 +43,30 @@ import {
 import type { MaterialLibraryEntry } from "@/types/database";
 import { capTextureSize } from "@/lib/three/cap-texture-size";
 
+function invertGlossinessTexture(src: THREE.Texture): THREE.CanvasTexture {
+  const img = src.image as HTMLImageElement | HTMLCanvasElement | ImageBitmap;
+  const w = (img as HTMLImageElement).naturalWidth  || (img as HTMLCanvasElement).width  || 256;
+  const h = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height || 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img as CanvasImageSource, 0, 0, w, h);
+  const id = ctx.getImageData(0, 0, w, h);
+  for (let i = 0; i < id.data.length; i += 4) {
+    id.data[i]     = 255 - id.data[i];
+    id.data[i + 1] = 255 - id.data[i + 1];
+    id.data[i + 2] = 255 - id.data[i + 2];
+  }
+  ctx.putImageData(id, 0, 0);
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = t.wrapT = src.wrapS;
+  t.repeat.copy(src.repeat);
+  t.offset.copy(src.offset);
+  t.rotation = src.rotation;
+  t.colorSpace = THREE.LinearSRGBColorSpace;
+  return t;
+}
+
 type GlbOverrideMap = Record<string, {
   base_color: string;
   roughness: number;
@@ -109,6 +133,7 @@ function applyGlbOverridesToScene(scene: THREE.Group, overrides: GlbOverrideMap)
         fallback: THREE.Texture | null | undefined,
         slot: "map" | "normalMap" | "bumpMap" | "roughnessMap" | "metalnessMap" | "aoMap",
         srgb = false,
+        invert = false,
       ) {
         if (url) {
           loader.load(url, (loaded) => {
@@ -121,8 +146,10 @@ function applyGlbOverridesToScene(scene: THREE.Group, overrides: GlbOverrideMap)
               loaded.rotation = ((p.uvRotation ?? 0) * Math.PI) / 180;
             }
             loaded.needsUpdate = true;
+            let tex: THREE.Texture = loaded;
+            if (invert) tex = invertGlossinessTexture(loaded);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (newMat as any)[slot] = loaded;
+            (newMat as any)[slot] = tex;
             if (slot === "map" && !p.colorTint) {
               newMat.color.set(origColorHex);
               if (brightness !== 1) newMat.color.multiplyScalar(brightness);
@@ -138,12 +165,13 @@ function applyGlbOverridesToScene(scene: THREE.Group, overrides: GlbOverrideMap)
         }
       }
 
-      loadDeferred(p.albedoMapUrl,    orig?.map,          "map",          true);
-      loadDeferred(p.normalMapUrl,    orig?.normalMap,    "normalMap");
-      loadDeferred(p.roughnessMapUrl, orig?.roughnessMap, "roughnessMap");
-      loadDeferred(p.metalnessMapUrl, orig?.metalnessMap, "metalnessMap");
-      loadDeferred(p.aoMapUrl,        orig?.aoMap,        "aoMap");
-      loadDeferred(p.bumpMapUrl,      orig?.bumpMap,      "bumpMap");
+      const useGloss = !p.roughnessMapUrl && !!p.glossinessMapUrl;
+      loadDeferred(p.albedoMapUrl,                            orig?.map,          "map",          true);
+      loadDeferred(p.normalMapUrl,                            orig?.normalMap,    "normalMap");
+      loadDeferred(p.roughnessMapUrl ?? p.glossinessMapUrl,  orig?.roughnessMap, "roughnessMap", false, useGloss);
+      loadDeferred(p.metalnessMapUrl,                         orig?.metalnessMap, "metalnessMap");
+      loadDeferred(p.aoMapUrl,                                orig?.aoMap,        "aoMap");
+      loadDeferred(p.bumpMapUrl,                              orig?.bumpMap,      "bumpMap");
 
       // Apply scalar extras for already-set inherited textures
       if (!p.normalMapUrl    && orig?.normalMap)    newMat.normalScale.set(p.normalScale ?? 1, p.normalScale ?? 1);

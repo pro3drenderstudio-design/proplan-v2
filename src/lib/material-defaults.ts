@@ -7,6 +7,7 @@ export const DEFAULT_MATERIAL_PROPS: Required<MaterialProperties> = {
   bumpMapUrl:         null,
   bumpScale:          0.05,
   roughnessMapUrl:    null,
+  glossinessMapUrl:   null,
   metalnessMapUrl:    null,
   aoMapUrl:           null,
   aoIntensity:        1,

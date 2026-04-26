@@ -295,6 +295,7 @@ export interface MaterialProperties {
   bumpMapUrl?:         string | null;
   bumpScale?:          number;          // 0–1, default 0.05
   roughnessMapUrl?:    string | null;
+  glossinessMapUrl?:   string | null;  // inverse of roughness (white = smooth); used when roughnessMapUrl is absent
   metalnessMapUrl?:    string | null;
   aoMapUrl?:           string | null;
   aoIntensity?:        number;          // 0–2, default 1
@@ -330,11 +331,20 @@ export interface MaterialProperties {
   transmission?:       number;          // 0–1, default 0 (glass)
 }
 
+// Material folder (v9)
+export interface MaterialFolder {
+  id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
+}
+
 // Material library entry (v3)
 export interface MaterialLibraryEntry {
   id: string;
   name: string;
   category: string | null;       // "Exterior", "Flooring", "Countertops", etc.
+  folder_id?: string | null;     // v9: optional organisational folder
   base_color: string;            // hex color
   roughness: number;
   metalness: number;

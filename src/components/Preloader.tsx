@@ -59,11 +59,11 @@ export default function Preloader({
   const mountAt = useRef<number>(0);
   const rafRef  = useRef<number>(0);
 
-  // Staggered entrance
+  // Staggered entrance — single rAF so fonts are already applied before opacity starts
   useEffect(() => {
     mountAt.current = performance.now();
-    const t = setTimeout(() => setEntered(true), 60);
-    return () => clearTimeout(t);
+    const id = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(id);
   }, []);
 
   // rAF-driven progress
@@ -104,12 +104,16 @@ export default function Preloader({
         "transition-opacity duration-700",
         visible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
       ].join(" ")}
-      style={{ background: "#080909" }}
+      style={{
+        background: "#0d0d0d",
+        // Force GPU compositing layer so this sits above the WebGL canvas
+        // on iOS (CAMetalLayer compositor ignores CSS z-index otherwise).
+        willChange: "opacity",
+        transform: "translateZ(0)",
+      }}
     >
-      {/* ── Fonts & keyframes ─────────────────────────────────────── */}
+      {/* ── Keyframes only — fonts loaded via next/font in layout ── */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=Jost:wght@200;300&display=swap');
-
         @keyframes pl-shimmer {
           0%   { transform: translateX(-120%); }
           100% { transform: translateX(600%);  }
@@ -211,9 +215,8 @@ export default function Preloader({
         {/* Builder identity */}
         <div style={{
           marginBottom: 56,
-          opacity:   entered ? 1 : 0,
-          transform: entered ? "translateY(0)" : "translateY(10px)",
-          transition: "opacity 0.9s ease 0.1s, transform 0.9s ease 0.1s",
+          opacity: entered ? 1 : 0,
+          transition: "opacity 0.9s ease 0.1s",
         }}>
           {builderLogo ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -224,7 +227,7 @@ export default function Preloader({
             />
           ) : builderName ? (
             <span style={{
-              fontFamily: "'Jost', sans-serif",
+              fontFamily: "var(--font-jost), sans-serif",
               fontWeight: 200,
               fontSize: 10,
               letterSpacing: "0.42em",
@@ -247,12 +250,11 @@ export default function Preloader({
         <div style={{
           textAlign: "center",
           marginBottom: 56,
-          opacity:   entered ? 1 : 0,
-          transform: entered ? "translateY(0)" : "translateY(12px)",
-          transition: "opacity 1s ease 0.28s, transform 1s ease 0.28s",
+          opacity: entered ? 1 : 0,
+          transition: "opacity 1s ease 0.28s",
         }}>
           <h1 style={{
-            fontFamily: "'Cormorant Garamond', Georgia, 'Times New Roman', serif",
+            fontFamily: "var(--font-cormorant), Georgia, 'Times New Roman', serif",
             fontWeight: 300,
             fontSize: "clamp(36px, 5.5vw, 58px)",
             letterSpacing: "0.04em",
@@ -263,7 +265,7 @@ export default function Preloader({
             Your Home
           </h1>
           <p style={{
-            fontFamily: "'Jost', sans-serif",
+            fontFamily: "var(--font-jost), sans-serif",
             fontWeight: 200,
             fontSize: 9,
             letterSpacing: "0.42em",
@@ -279,9 +281,8 @@ export default function Preloader({
         <div style={{
           width: "100%", maxWidth: 340,
           display: "flex", flexDirection: "column", gap: 20,
-          opacity:   entered ? 1 : 0,
-          transform: entered ? "translateY(0)" : "translateY(8px)",
-          transition: "opacity 1.1s ease 0.5s, transform 1.1s ease 0.5s",
+          opacity: entered ? 1 : 0,
+          transition: "opacity 1.1s ease 0.5s",
         }}>
           {/* Track */}
           <div style={{ position: "relative" }}>
@@ -339,7 +340,7 @@ export default function Preloader({
 
           {/* Rotating status message */}
           <p style={{
-            fontFamily: "'Jost', sans-serif",
+            fontFamily: "var(--font-jost), sans-serif",
             fontWeight: 200,
             fontSize: 9,
             letterSpacing: "0.2em",
@@ -357,21 +358,27 @@ export default function Preloader({
 
       {/* ── Powered-by footer ─────────────────────────────────────── */}
       {(builderLogo || builderName) && (
-        <div style={{
-          position: "absolute",
-          bottom: 28,
-          left: "50%",
-          transform: "translateX(-50%)",
-          display: "flex", alignItems: "center", gap: 7,
-          opacity: entered ? 0.22 : 0,
-          transition: "opacity 1.4s ease 0.9s",
-          whiteSpace: "nowrap",
-        }}>
+        <a
+          href="https://proplanstudio.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            position: "absolute",
+            bottom: 28,
+            left: "50%",
+            transform: "translateX(-50%)",
+            display: "flex", alignItems: "center", gap: 8,
+            opacity: entered ? 0.45 : 0,
+            transition: "opacity 1.4s ease 0.9s",
+            whiteSpace: "nowrap",
+            textDecoration: "none",
+          }}
+        >
           <span style={{
-            fontFamily: "'Jost', sans-serif",
-            fontWeight: 200,
-            fontSize: 8,
-            letterSpacing: "0.26em",
+            fontFamily: "var(--font-jost), sans-serif",
+            fontWeight: 300,
+            fontSize: 10,
+            letterSpacing: "0.22em",
             textTransform: "uppercase",
             color: "rgba(255,255,255,0.7)",
           }}>
@@ -381,9 +388,9 @@ export default function Preloader({
           <img
             src="/logo_light.png"
             alt="ProPlan Studio"
-            style={{ height: 9, objectFit: "contain", opacity: 0.8 }}
+            style={{ height: 12, objectFit: "contain", opacity: 0.9 }}
           />
-        </div>
+        </a>
       )}
     </div>
   );

@@ -58,6 +58,38 @@ interface Props {
   projectSlug: string;
 }
 
+// ─── Texture preloader ────────────────────────────────────────────────────────
+// Primes the browser's HTTP cache for every texture URL referenced by the
+// filtered material library. Must use crossOrigin="anonymous" to match how
+// Three.js TextureLoader fetches — CORS and no-cors responses are stored in
+// separate cache entries, so mismatching would produce two round-trips.
+const TEX_PROPS = [
+  "albedoMapUrl", "normalMapUrl", "roughnessMapUrl", "glossinessMapUrl",
+  "bumpMapUrl", "metalnessMapUrl", "aoMapUrl", "displacementMapUrl",
+] as const;
+
+function preloadMaterialTextures(materials: MaterialLibraryEntry[]) {
+  const seen = new Set<string>();
+  for (const mat of materials) {
+    const p = mat.properties ?? {};
+    for (const key of TEX_PROPS) {
+      const url = p[key as keyof typeof p];
+      if (typeof url === "string" && url && !seen.has(url)) {
+        seen.add(url);
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = url;
+      }
+    }
+  }
+}
+
+// ─── Debug flag ───────────────────────────────────────────────────────────────
+// Set to true to bypass the fancy Preloader + GuidedPanel with a plain dark
+// overlay — used to isolate whether twitches come from the animations or the
+// R3F viewer itself. Flip to false to restore the real experience.
+const DEBUG_SIMPLE_PRELOADER = false;
+
 export default function ConfiguratorClient({ companySlug, projectSlug }: Props) {
   const [isLoaded, setIsLoaded]         = useState(false);
   const [viewerStatus, setViewerStatus] = useState<ViewerStatus>("loading");
@@ -94,7 +126,8 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
   const [isCapturing, setIsCapturing]           = useState(false);
   const [notFound, setNotFound]                 = useState(false);
   const [optionsPanelOpen, setOptionsPanelOpen] = useState(false);
-  const landingShownRef = useRef(false);
+  const [builderResolved, setBuilderResolved]   = useState(false);
+  const landingShownRef  = useRef(false);
 
   // Lot context passed from community map
   const searchParams = useSearchParams();
@@ -249,8 +282,13 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
 
     fetch(`/api/builders/public/${encodeURIComponent(companySlug)}`, { signal })
       .then(r => r.ok ? r.json() : null)
-      .then(b => { if (!signal.aborted) setBuilder(b?.company_name ? b : null); })
-      .catch(() => {});
+      .then(b => {
+        if (!signal.aborted) {
+          setBuilder(b?.company_name ? b : null);
+          setBuilderResolved(true);
+        }
+      })
+      .catch(() => { if (!signal.aborted) setBuilderResolved(true); });
 
     getProjectBySlugs(companySlug, projectSlug).then(p => {
       if (signal.aborted) return;
@@ -278,7 +316,11 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
           }
           const meshBaseMats = (p.camera_defaults as any)?._meshBaseMats ?? {};
           for (const id of Object.values(meshBaseMats as Record<string, string>)) referencedIds.add(id);
-          setMaterialLibrary(referencedIds.size > 0 ? (mats as MaterialLibraryEntry[]).filter(m => referencedIds.has(m.id)) : mats);
+          const filteredMats = referencedIds.size > 0
+            ? (mats as MaterialLibraryEntry[]).filter(m => referencedIds.has(m.id))
+            : (mats as MaterialLibraryEntry[]);
+          setMaterialLibrary(filteredMats);
+          preloadMaterialTextures(filteredMats);
 
           const grouped: Record<PhaseColumn, CategoryWithOptions[]> = {
             blueprint: [], interior: [], exterior: [],
@@ -315,19 +357,6 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     });
   }, [allCategories]);
 
-  // ── Phase warmup ───────────────────────────────────────────────────────────
-  // Once the viewer is ready, silently switch to interior for ~700ms during the
-  // preloader fade-out so its HDRI/textures get cached. The user never sees it.
-  const phaseWarmupDone = useRef(false);
-  useEffect(() => {
-    if (!isLoaded || phaseWarmupDone.current || !project) return;
-    const isR3FModel = project.viewer_mode === "r3f" || (project.viewer_mode == null && !!project.model_url);
-    if (!isR3FModel) return;
-    phaseWarmupDone.current = true;
-    const t1 = setTimeout(() => setConfig(prev => ({ ...prev, currentPhase: "interior", activeOverride: null })), 120);
-    const t2 = setTimeout(() => setConfig(prev => ({ ...prev, currentPhase: DEFAULT_PHASE, activeOverride: null })), 860);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [isLoaded, project]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   function handleStatusChange(status: ViewerStatus) {
@@ -452,10 +481,30 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
 
   function handleCategoryEnter(category: CategoryWithOptions) {
     const catPhase = (category.phase ?? "") as PhaseId;
+    if (!catPhase) return;
     const override = category.camera_override ?? null;
-    if (catPhase && catPhase !== config.currentPhase) {
-      // Switch phase and apply camera override in one setConfig call
-      setConfig(prev => ({ ...prev, currentPhase: catPhase, activeOverride: override }));
+
+    // Use functional updater so the phase comparison is against the LATEST
+    // committed state, not the potentially-stale config closure.
+    const isPhaseChange = catPhase !== config.currentPhase;
+    setConfig(prev => {
+      if (catPhase !== prev.currentPhase) {
+        return { ...prev, currentPhase: catPhase, activeOverride: override };
+      } else if (override !== null) {
+        return { ...prev, activeOverride: override };
+      }
+      return prev;
+    });
+
+    // Apply camera immediately — always move to the category's configured override,
+    // or fall back to the phase default. Bypasses the state→effect cascade to
+    // guarantee the camera moves even when config is stale or batching delays the effect.
+    if (isLoaded && apiRef.current) {
+      const phaseCamera = project?.camera_defaults?.[catPhase] ?? undefined;
+      setPhaseCamera(apiRef.current, catPhase, override ?? phaseCamera);
+    }
+
+    if (isPhaseChange) {
       setNudgeDismissed(false);
       setIntNudgeDismissed(false);
       if (isLoaded) {
@@ -463,8 +512,6 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
         setPhaseOverlay(PHASE_OVERLAY_LABELS[catPhase] ?? "Loading…");
         phaseOverlayTimer.current = setTimeout(() => setPhaseOverlay(null), 1100);
       }
-    } else if (override) {
-      setConfig(prev => ({ ...prev, activeOverride: override }));
     }
   }
 
@@ -554,13 +601,15 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
           </ViewerErrorBoundary>
         )}
 
-        <Preloader
-          visible={!isLoaded}
-          viewerReady={everReady}
-          accentColor={builder?.accent_color}
-          builderName={builder?.company_name}
-          builderLogo={builder?.logo_url}
-        />
+        {DEBUG_SIMPLE_PRELOADER ? null : (
+          <Preloader
+            visible={builderResolved && !isLoaded}
+            viewerReady={everReady}
+            accentColor={builder?.accent_color}
+            builderName={builder?.company_name}
+            builderLogo={builder?.logo_url}
+          />
+        )}
 
         {/* Phase transition overlay — hides the 1-second black while new-phase
             textures download. Fades in immediately, fades out after 1.1 s. */}
@@ -916,7 +965,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
       )}
 
       {/* ── Guided configurator panel (shown when guidedMode is active) ── */}
-      {isLoaded && guidedMode && guidedCategories.length > 0 && project && (
+      {!DEBUG_SIMPLE_PRELOADER && isLoaded && guidedMode && guidedCategories.length > 0 && project && (
         <GuidedPanel
           project={project}
           categories={guidedCategories}
@@ -934,10 +983,14 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
       )}
 
       {/* ── Landing overlay (shown once after model loads, non-guided mode) ── */}
-      {showLanding && !guidedMode && project && (
+      {!DEBUG_SIMPLE_PRELOADER && showLanding && !guidedMode && project && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center p-6"
-          style={{ background: "rgba(5,7,14,0.88)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}
+          style={{
+            background: "rgba(5,7,14,0.88)",
+            backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+            animation: "slideUpFade 0.45s ease both",
+          }}
         >
           <div className="flex flex-col items-center text-center max-w-sm gap-6">
             {/* Builder logo */}

@@ -216,7 +216,7 @@ function OptionCard({
             borderRadius: 3,
             padding: "1px 5px",
             fontSize: 8,
-            fontFamily: "'Jost', sans-serif",
+            fontFamily: "var(--font-jost), sans-serif",
             fontWeight: 300,
             letterSpacing: "0.03em",
             color:
@@ -263,7 +263,7 @@ function OptionCard({
       <div style={{ padding: "7px 8px 8px" }}>
         <p
           style={{
-            fontFamily: "'Jost', sans-serif",
+            fontFamily: "var(--font-jost), sans-serif",
             fontWeight: 300,
             fontSize: 10,
             color: isSelected || highlighted
@@ -341,10 +341,11 @@ export default function GuidedPanel({
   const currentCat  = categories[catIdx];
   const selectedOpt = currentCat ? selectedOptions[currentCat.id] : undefined;
 
-  // ── Entrance
+  // ── Entrance — delay matches Preloader fade (700 ms) so content appears
+  // as the Preloader finishes dissolving, not before it starts.
   useEffect(() => {
-    const t = setTimeout(() => setEntered(true), 80);
-    return () => clearTimeout(t);
+    const id = setTimeout(() => setEntered(true), 500);
+    return () => clearTimeout(id);
   }, []);
 
   // ── Detect touch/coarse-pointer device
@@ -372,9 +373,9 @@ export default function GuidedPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mobileOptIdx, isTouch, catIdx, step]);
 
-  // ── Typewriter
+  // ── Typewriter — waits for `entered` so text only appears after Preloader fades
   useEffect(() => {
-    if (step !== "intro") return;
+    if (step !== "intro" || !entered) return;
     setIntroTyped("");
     setShowCTA(false);
     let i = 0;
@@ -387,7 +388,7 @@ export default function GuidedPanel({
       }
     }, 24);
     return () => clearInterval(id);
-  }, [step, introText]);
+  }, [step, introText, entered]);
 
   // ── Panel slide-in when entering category step
   useEffect(() => {
@@ -472,11 +473,8 @@ export default function GuidedPanel({
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=Jost:wght@200;300&display=swap');
-
-        @keyframes gp-fromBlack      { from { filter:brightness(0); } to { filter:brightness(1); } }
-        @keyframes gp-fadeUp         { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes gp-cursor         { 0%,100% { opacity:1; } 50% { opacity:0; } }
+        @keyframes gp-fadeUp  { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes gp-cursor  { 0%,100% { opacity:1; } 50% { opacity:0; } }
       `}</style>
 
       {/* ── Intro overlay ────────────────────────────────────────────────── */}
@@ -487,7 +485,7 @@ export default function GuidedPanel({
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 150,
+            zIndex: 90,
             background: "rgba(5,7,14,0.9)",
             backdropFilter: "blur(18px)",
             WebkitBackdropFilter: "blur(18px)",
@@ -496,7 +494,6 @@ export default function GuidedPanel({
             alignItems: "center",
             justifyContent: "center",
             padding: "0 40px",
-            animation: "gp-fromBlack 0.75s ease forwards",
           }}
         >
           {/* Brand */}
@@ -505,8 +502,7 @@ export default function GuidedPanel({
               style={{
                 marginBottom: 44,
                 opacity: entered ? 1 : 0,
-                transform: entered ? "translateY(0)" : "translateY(8px)",
-                transition: "opacity 0.8s ease 0.1s, transform 0.8s ease 0.1s",
+                transition: "opacity 0.8s ease 0.1s",
               }}
             >
               {builderLogo ? (
@@ -519,7 +515,7 @@ export default function GuidedPanel({
               ) : (
                 <span
                   style={{
-                    fontFamily: "'Jost', sans-serif",
+                    fontFamily: "var(--font-jost), sans-serif",
                     fontWeight: 200,
                     fontSize: 10,
                     letterSpacing: "0.4em",
@@ -547,7 +543,7 @@ export default function GuidedPanel({
           >
             <p
               style={{
-                fontFamily: "'Cormorant Garamond', Georgia, serif",
+                fontFamily: "var(--font-cormorant), Georgia, serif",
                 fontWeight: 300,
                 fontSize: "clamp(20px, 3vw, 28px)",
                 color: "rgba(255,255,255,0.85)",
@@ -557,7 +553,7 @@ export default function GuidedPanel({
               }}
             >
               {introTyped}
-              {!showCTA && (
+              {entered && !showCTA && (
                 <span
                   style={{
                     marginLeft: 2,
@@ -595,7 +591,7 @@ export default function GuidedPanel({
                 }
               }}
               style={{
-                fontFamily: "'Jost', sans-serif",
+                fontFamily: "var(--font-jost), sans-serif",
                 fontWeight: 300,
                 fontSize: 11,
                 letterSpacing: "0.3em",
@@ -613,7 +609,7 @@ export default function GuidedPanel({
             <button
               onClick={onFinished}
               style={{
-                fontFamily: "'Jost', sans-serif",
+                fontFamily: "var(--font-jost), sans-serif",
                 fontWeight: 200,
                 fontSize: 9,
                 letterSpacing: "0.24em",
@@ -657,7 +653,7 @@ export default function GuidedPanel({
               alignItems: "center",
               justifyContent: "center",
               gap: 5,
-              paddingTop: 12,
+              paddingTop: 8,
               paddingBottom: 2,
             }}
           >
@@ -692,7 +688,7 @@ export default function GuidedPanel({
           {/* Animated category content */}
           <div
             style={{
-              padding: "14px 24px 18px",
+              padding: "6px 20px 12px",
               textAlign: "center",
               opacity: isTransitioning ? 0 : 1,
               transform: isTransitioning ? "translateY(10px)" : "translateY(0)",
@@ -704,13 +700,13 @@ export default function GuidedPanel({
                 {/* Eyebrow */}
                 <p
                   style={{
-                    fontFamily: "'Jost', sans-serif",
+                    fontFamily: "var(--font-jost), sans-serif",
                     fontWeight: 200,
                     fontSize: 8,
                     letterSpacing: "0.28em",
                     textTransform: "uppercase",
-                    color: `${accent}88`,
-                    margin: "0 0 7px",
+                    color: "rgba(255,255,255,0.9)",
+                    margin: "0 0 4px",
                   }}
                 >
                   {String(currentCat.phase).charAt(0).toUpperCase() +
@@ -721,11 +717,11 @@ export default function GuidedPanel({
                 {/* Prompt */}
                 <h2
                   style={{
-                    fontFamily: "'Cormorant Garamond', Georgia, serif",
+                    fontFamily: "var(--font-cormorant), Georgia, serif",
                     fontWeight: 300,
-                    fontSize: "clamp(18px, 2.6vw, 26px)",
+                    fontSize: isTouch ? "clamp(15px, 2.2vw, 20px)" : "clamp(22px, 3.3vw, 30px)",
                     color: "rgba(255,255,255,0.88)",
-                    margin: "0 0 16px",
+                    margin: "0 0 10px",
                     lineHeight: 1.2,
                     letterSpacing: "0.01em",
                   }}
@@ -737,7 +733,7 @@ export default function GuidedPanel({
                 {isTouch ? (
                   /* ── Mobile single-card navigator ── */
                   <div
-                    style={{ marginBottom: 14 }}
+                    style={{ marginBottom: 8 }}
                     onTouchStart={e => { touchStartX.current = e.touches[0].clientX; }}
                     onTouchEnd={e => {
                       const dx = e.changedTouches[0].clientX - touchStartX.current;
@@ -746,14 +742,14 @@ export default function GuidedPanel({
                     }}
                   >
                     {/* Option dots */}
-                    <div style={{ display: "flex", justifyContent: "center", gap: 5, marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "center", gap: 4, marginBottom: 7 }}>
                       {currentCat.options.map((_, i) => (
                         <button
                           key={i}
                           onClick={() => setMobileOptIdx(i)}
                           style={{
-                            width: i === mobileOptIdx ? 16 : 5,
-                            height: 4,
+                            width: i === mobileOptIdx ? 14 : 4,
+                            height: 3,
                             borderRadius: 2,
                             background: i === mobileOptIdx ? accent : "rgba(255,255,255,0.2)",
                             border: "none",
@@ -766,12 +762,12 @@ export default function GuidedPanel({
                     </div>
 
                     {/* Card + arrows */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
                       <button
                         onClick={() => mobileOptIdx > 0 && setMobileOptIdx(i => i - 1)}
                         disabled={mobileOptIdx === 0}
                         style={{
-                          width: 32, height: 32, flexShrink: 0,
+                          width: 24, height: 24, flexShrink: 0,
                           borderRadius: "50%",
                           background: mobileOptIdx === 0 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.09)",
                           border: "1px solid rgba(255,255,255,0.1)",
@@ -781,12 +777,12 @@ export default function GuidedPanel({
                           transition: "background 0.15s",
                         }}
                       >
-                        <svg viewBox="0 0 12 12" fill="none" width={10} height={10} stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                        <svg viewBox="0 0 12 12" fill="none" width={8} height={8} stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
                           <path d="M8 2L4 6l4 4" />
                         </svg>
                       </button>
 
-                      {/* Large option card */}
+                      {/* Option card */}
                       {(() => {
                         const opt = currentCat.options[mobileOptIdx];
                         if (!opt) return null;
@@ -798,9 +794,9 @@ export default function GuidedPanel({
                           : delta.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
                         const isSelected = selectedOpt?.id === opt.id;
                         return (
-                          <div style={{ flex: 1, maxWidth: 220 }}>
+                          <div style={{ flex: 1, maxWidth: 160 }}>
                             <div style={{
-                              borderRadius: 8,
+                              borderRadius: 6,
                               overflow: "hidden",
                               outline: isSelected ? `2px solid ${accent}` : `2px solid ${accent}45`,
                               outlineOffset: 0,
@@ -813,22 +809,22 @@ export default function GuidedPanel({
                                     style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                                 ) : (
                                   <div style={{ width: "100%", height: "100%", background: `linear-gradient(135deg, ${accent}18, ${accent}06)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <div style={{ width: 40, height: 40, borderRadius: 6, background: `${accent}25` }} />
+                                    <div style={{ width: 28, height: 28, borderRadius: 4, background: `${accent}25` }} />
                                   </div>
                                 )}
                                 {isSelected && (
-                                  <div style={{ position: "absolute", top: 8, left: 8, width: 20, height: 20, borderRadius: "50%", background: accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg viewBox="0 0 12 12" fill="none" width={10} height={10}>
+                                  <div style={{ position: "absolute", top: 5, left: 5, width: 14, height: 14, borderRadius: "50%", background: accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                    <svg viewBox="0 0 12 12" fill="none" width={8} height={8}>
                                       <path d="M2 6l2.5 2.5L10 4" stroke="#080909" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
                                     </svg>
                                   </div>
                                 )}
                               </div>
-                              <div style={{ padding: "8px 12px 10px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <p style={{ fontFamily: "'Jost', sans-serif", fontWeight: 300, fontSize: 12, color: "rgba(255,255,255,0.85)", margin: 0 }}>
+                              <div style={{ padding: "5px 8px 7px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <p style={{ fontFamily: "var(--font-jost), sans-serif", fontWeight: 300, fontSize: 10, color: "rgba(255,255,255,0.85)", margin: 0 }}>
                                   {opt.friendly_name}
                                 </p>
-                                <span style={{ fontFamily: "'Jost', sans-serif", fontWeight: 300, fontSize: 10, color: delta > 0 ? "#f5d78a" : delta < 0 ? "#86efac" : "rgba(255,255,255,0.35)" }}>
+                                <span style={{ fontFamily: "var(--font-jost), sans-serif", fontWeight: 300, fontSize: 9, color: delta > 0 ? "#f5d78a" : delta < 0 ? "#86efac" : "rgba(255,255,255,0.35)" }}>
                                   {priceLabel}
                                 </span>
                               </div>
@@ -839,14 +835,14 @@ export default function GuidedPanel({
                               disabled={selecting}
                               style={{
                                 width: "100%",
-                                marginTop: 8,
-                                padding: "10px 0",
+                                marginTop: 6,
+                                padding: "7px 0",
                                 background: isSelected ? `${accent}22` : accent,
                                 border: isSelected ? `1px solid ${accent}60` : "none",
-                                borderRadius: 4,
-                                fontFamily: "'Jost', sans-serif",
+                                borderRadius: 3,
+                                fontFamily: "var(--font-jost), sans-serif",
                                 fontWeight: 300,
-                                fontSize: 10,
+                                fontSize: 9,
                                 letterSpacing: "0.22em",
                                 textTransform: "uppercase",
                                 color: isSelected ? accent : "#080909",
@@ -864,7 +860,7 @@ export default function GuidedPanel({
                         onClick={() => mobileOptIdx < currentCat.options.length - 1 && setMobileOptIdx(i => i + 1)}
                         disabled={mobileOptIdx === currentCat.options.length - 1}
                         style={{
-                          width: 32, height: 32, flexShrink: 0,
+                          width: 24, height: 24, flexShrink: 0,
                           borderRadius: "50%",
                           background: mobileOptIdx === currentCat.options.length - 1 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.09)",
                           border: "1px solid rgba(255,255,255,0.1)",
@@ -874,7 +870,7 @@ export default function GuidedPanel({
                           transition: "background 0.15s",
                         }}
                       >
-                        <svg viewBox="0 0 12 12" fill="none" width={10} height={10} stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                        <svg viewBox="0 0 12 12" fill="none" width={8} height={8} stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
                           <path d="M4 2l4 4-4 4" />
                         </svg>
                       </button>
@@ -922,7 +918,7 @@ export default function GuidedPanel({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    gap: 24,
+                    gap: 16,
                   }}
                 >
                   {/* Back */}
@@ -930,7 +926,7 @@ export default function GuidedPanel({
                     <button
                       onClick={() => advance("prev")}
                       style={{
-                        fontFamily: "'Jost', sans-serif",
+                        fontFamily: "var(--font-jost), sans-serif",
                         fontWeight: 200,
                         fontSize: 8,
                         letterSpacing: "0.22em",
@@ -965,7 +961,7 @@ export default function GuidedPanel({
                   <div>
                     <p
                       style={{
-                        fontFamily: "'Jost', sans-serif",
+                        fontFamily: "var(--font-jost), sans-serif",
                         fontWeight: 200,
                         fontSize: 7,
                         letterSpacing: "0.22em",
@@ -978,9 +974,9 @@ export default function GuidedPanel({
                     </p>
                     <p
                       style={{
-                        fontFamily: "'Cormorant Garamond', Georgia, serif",
+                        fontFamily: "var(--font-cormorant), Georgia, serif",
                         fontWeight: 400,
-                        fontSize: 17,
+                        fontSize: 18,
                         color: "rgba(255,255,255,0.72)",
                         margin: 0,
                         lineHeight: 1,
@@ -996,7 +992,7 @@ export default function GuidedPanel({
                     <button
                       onClick={() => advance("next")}
                       style={{
-                        fontFamily: "'Jost', sans-serif",
+                        fontFamily: "var(--font-jost), sans-serif",
                         fontWeight: 200,
                         fontSize: 8,
                         letterSpacing: "0.22em",
@@ -1016,7 +1012,7 @@ export default function GuidedPanel({
                   <button
                     onClick={onFinished}
                     style={{
-                      fontFamily: "'Jost', sans-serif",
+                      fontFamily: "var(--font-jost), sans-serif",
                       fontWeight: 200,
                       fontSize: 8,
                       letterSpacing: "0.2em",
@@ -1059,7 +1055,7 @@ export default function GuidedPanel({
         >
           <p
             style={{
-              fontFamily: "'Jost', sans-serif",
+              fontFamily: "var(--font-jost), sans-serif",
               fontWeight: 200,
               fontSize: 9,
               letterSpacing: "0.38em",
@@ -1073,7 +1069,7 @@ export default function GuidedPanel({
 
           <h2
             style={{
-              fontFamily: "'Cormorant Garamond', Georgia, serif",
+              fontFamily: "var(--font-cormorant), Georgia, serif",
               fontWeight: 300,
               fontSize: "clamp(30px, 5vw, 54px)",
               color: "rgba(255,255,255,0.92)",
@@ -1087,7 +1083,7 @@ export default function GuidedPanel({
 
           <p
             style={{
-              fontFamily: "'Cormorant Garamond', Georgia, serif",
+              fontFamily: "var(--font-cormorant), Georgia, serif",
               fontStyle: "italic",
               fontWeight: 300,
               fontSize: "clamp(15px, 2.2vw, 20px)",
@@ -1110,7 +1106,7 @@ export default function GuidedPanel({
             <button
               onClick={() => { onFinished(); onOpenSummary(); }}
               style={{
-                fontFamily: "'Jost', sans-serif",
+                fontFamily: "var(--font-jost), sans-serif",
                 fontWeight: 300,
                 fontSize: 11,
                 letterSpacing: "0.24em",
@@ -1128,7 +1124,7 @@ export default function GuidedPanel({
             <button
               onClick={onFinished}
               style={{
-                fontFamily: "'Jost', sans-serif",
+                fontFamily: "var(--font-jost), sans-serif",
                 fontWeight: 200,
                 fontSize: 11,
                 letterSpacing: "0.22em",
@@ -1147,7 +1143,7 @@ export default function GuidedPanel({
 
           <p
             style={{
-              fontFamily: "'Jost', sans-serif",
+              fontFamily: "var(--font-jost), sans-serif",
               fontWeight: 200,
               fontSize: 9,
               letterSpacing: "0.18em",
@@ -1159,7 +1155,7 @@ export default function GuidedPanel({
             Estimated total &nbsp;
             <span
               style={{
-                fontFamily: "'Cormorant Garamond', Georgia, serif",
+                fontFamily: "var(--font-cormorant), Georgia, serif",
                 fontSize: 15,
                 fontWeight: 400,
                 color: "rgba(255,255,255,0.5)",

@@ -4,42 +4,42 @@ import { useRef } from "react";
 
 const RENDERS = [
   {
-    url:   "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775607389780-elevation.jpg",
+    url:   "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775607389780-elevation.webp",
     title: "Traditional Elevation — Dusk",
     type:  "Exterior Dusk",
   },
   {
-    url:   "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775502302584-elevation.jpg",
+    url:   "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775502302584-elevation.webp",
     title: "Classic Elevation — Golden Hour",
     type:  "Exterior Golden Hour",
   },
   {
-    url:   "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775156293099-interior.jpg",
+    url:   "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775156293099-interior.webp",
     title: "Living Area — Golden Hour",
     type:  "Interior",
   },
   {
-    url:   "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775608561463-elevation.jpg",
+    url:   "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775608561463-elevation.webp",
     title: "Modern Farmhouse — Midday",
     type:  "Exterior Midday",
   },
   {
-    url:   "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775345418634-elevation.jpg",
+    url:   "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775345418634-elevation.webp",
     title: "Craftsman Elevation — Night",
     type:  "Exterior Night",
   },
   {
-    url:   "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775090072907-interior.jpg",
+    url:   "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775090072907-interior.webp",
     title: "Modern Interior — Natural Light",
     type:  "Interior",
   },
   {
-    url:   "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775094785433-floor_plan.jpg",
+    url:   "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775094785433-floor_plan.webp",
     title: "Floor Plan Render",
     type:  "Floor Plan",
   },
   {
-    url:   "https://qvgsdrjkjtzwtxfepyoe.supabase.co/storage/v1/object/public/render-studio/1775122222672-elevation.jpg",
+    url:   "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/marketing/renders/1775122222672-elevation.webp",
     title: "Contemporary Elevation — Dusk",
     type:  "Exterior Dusk",
   },

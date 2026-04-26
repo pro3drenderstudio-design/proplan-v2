@@ -49,15 +49,25 @@ function MapInput({ label, slot, value, onChange, onToast }: {
   const [uploading, setUploading] = useState(false);
 
   async function handleFile(file: File) {
+    if (file.size > 50 * 1024 * 1024) {
+      onToast(`File too large (${(file.size / 1024 / 1024).toFixed(0)} MB). Max 50 MB.`);
+      return;
+    }
     setUploading(true);
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("slot", slot);
-    const r = await fetch("/api/admin/texture-upload", { method: "POST", body: fd });
-    const data = await r.json();
-    if (r.ok) { onChange(data.url); onToast(`${label} uploaded`); }
-    else onToast(`Upload failed: ${data.error}`);
-    setUploading(false);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("slot", slot);
+      const r = await fetch("/api/admin/texture-upload", { method: "POST", body: fd });
+      let data: { url?: string; error?: string };
+      try { data = await r.json(); } catch { data = { error: `Server error (${r.status})` }; }
+      if (r.ok && data.url) { onChange(data.url); onToast(`${label} uploaded`); }
+      else onToast(`Upload failed: ${data.error ?? "unknown error"}`);
+    } catch (err) {
+      onToast(`Upload failed: ${err instanceof Error ? err.message : "network error"}`);
+    } finally {
+      setUploading(false);
+    }
   }
 
   return (
@@ -349,7 +359,13 @@ export default function MaterialEditor({
             </div>
 
             <MapInput label="Roughness Map" slot="roughness" value={p.roughnessMapUrl} onToast={onToast}
-              onChange={v => updateProp({ roughnessMapUrl: v })} />
+              onChange={v => updateProp({ roughnessMapUrl: v, glossinessMapUrl: v ? null : p.glossinessMapUrl })} />
+
+            <MapInput label="Glossiness Map" slot="glossiness" value={p.glossinessMapUrl} onToast={onToast}
+              onChange={v => updateProp({ glossinessMapUrl: v, roughnessMapUrl: v ? null : p.roughnessMapUrl })} />
+            {p.glossinessMapUrl && !p.roughnessMapUrl && (
+              <p className="text-[8px] text-white/25 -mt-2">Inverted to roughness on render (white = smooth)</p>
+            )}
 
             <MapInput label="Metalness Map" slot="metalness" value={p.metalnessMapUrl} onToast={onToast}
               onChange={v => updateProp({ metalnessMapUrl: v })} />
