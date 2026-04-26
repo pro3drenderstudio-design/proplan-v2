@@ -13,6 +13,7 @@ import ProjectInfoCard from "@/components/ProjectInfoCard";
 import FloorToggle from "@/components/FloorToggle";
 import Preloader from "@/components/Preloader";
 import SummaryPage from "@/components/SummaryPage";
+import GuidedPanel from "@/components/GuidedPanel";
 import { PHASES, DEFAULT_PHASE, PhaseId } from "@/constants/phases";
 import { setPhaseCamera, SketchfabCameraApi, CameraCoords } from "@/utils/sketchfab-camera";
 import { LevelId } from "@/logic/visibilityController";
@@ -82,6 +83,8 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
   const [selectedOptions, setSelectedOptions]   = useState<Record<string, Option>>({});
   const [showSummary, setShowSummary]           = useState(false);
   const [showLanding, setShowLanding]           = useState(false);
+  const [guidedMode, setGuidedMode]             = useState(true);
+  const [hoveredOption, setHoveredOption]       = useState<{ catId: string; option: Option } | null>(null);
   const [nudgeDismissed, setNudgeDismissed]         = useState(false);
   const [intNudgeDismissed, setIntNudgeDismissed]   = useState(false);
   const [interactedCatIds, setInteractedCatIds]     = useState<Set<string>>(new Set());
@@ -118,15 +121,21 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     return [...new Set(all)];
   }, [allCategories]);
 
+  // Merge hover preview into selections for live scene preview
+  const effectiveSelectedOptions = useMemo(() => {
+    if (!hoveredOption) return selectedOptions;
+    return { ...selectedOptions, [hoveredOption.catId]: hoveredOption.option };
+  }, [selectedOptions, hoveredOption]);
+
   const selectedNodes = useMemo(() => {
-    const activeOptionIds = new Set(Object.values(selectedOptions).map(o => o.id));
-    return Object.values(selectedOptions).flatMap(opt =>
+    const activeOptionIds = new Set(Object.values(effectiveSelectedOptions).map(o => o.id));
+    return Object.values(effectiveSelectedOptions).flatMap(opt =>
       (opt.node_list ?? []).filter(nodeName => {
         const conditionId = opt.node_conditions?.[nodeName];
         return !conditionId || activeOptionIds.has(conditionId);
       })
     );
-  }, [selectedOptions]);
+  }, [effectiveSelectedOptions]);
 
   const totalPrice = useMemo(() => {
     const base     = project?.base_price ?? 0;
@@ -181,6 +190,16 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
       level3Nodes: s?.level3Nodes ?? [],
     };
   }, [project]);
+
+  // Ordered category list for the guided flow: exterior → interior → blueprint
+  const guidedCategories = useMemo(
+    () => [
+      ...categoriesByPhase.exterior,
+      ...categoriesByPhase.interior,
+      ...categoriesByPhase.blueprint,
+    ],
+    [categoriesByPhase]
+  );
 
   const floors     = Math.min(project?.floors ?? 1, 3) as LevelId;
   const phaseIndex = PHASES.findIndex(p => p.id === config.currentPhase);
@@ -318,7 +337,9 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
       setEverReady(true);
       if (!landingShownRef.current) {
         landingShownRef.current = true;
-        setShowLanding(true);
+        // Only show the regular landing overlay when not in guided mode.
+        // In guided mode, GuidedPanel handles its own intro overlay.
+        if (!guidedMode) setShowLanding(true);
       }
     }
   }
@@ -429,6 +450,29 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     setInteractedCatIds(prev => prev.has(categoryId) ? prev : new Set([...prev, categoryId]));
   }
 
+  function handleCategoryEnter(category: CategoryWithOptions) {
+    const catPhase = (category.phase ?? "") as PhaseId;
+    const override = category.camera_override ?? null;
+    if (catPhase && catPhase !== config.currentPhase) {
+      // Switch phase and apply camera override in one setConfig call
+      setConfig(prev => ({ ...prev, currentPhase: catPhase, activeOverride: override }));
+      setNudgeDismissed(false);
+      setIntNudgeDismissed(false);
+      if (isLoaded) {
+        if (phaseOverlayTimer.current) clearTimeout(phaseOverlayTimer.current);
+        setPhaseOverlay(PHASE_OVERLAY_LABELS[catPhase] ?? "Loading…");
+        phaseOverlayTimer.current = setTimeout(() => setPhaseOverlay(null), 1100);
+      }
+    } else if (override) {
+      setConfig(prev => ({ ...prev, activeOverride: override }));
+    }
+  }
+
+  function handleGuidedFinished() {
+    setGuidedMode(false);
+    setShowLanding(false);
+  }
+
   function handleApiReady(api: SketchfabCameraApi) {
     apiRef.current = api;
     const phaseCamera = project?.camera_defaults?.[config.currentPhase] ?? undefined;
@@ -472,7 +516,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
       {/* ── Viewer wrapper ──────────────────────────────────────────────────────
           Mobile : w-full fixed 45vh strip at the top
           Desktop: absolute inset-0 fills the entire screen                   */}
-      <div className="relative flex-shrink-0 w-full h-[45vh] md:h-auto md:absolute md:inset-0">
+      <div className={`relative w-full md:h-auto md:absolute md:inset-0 ${isLoaded && guidedMode ? "flex-1 min-h-0" : "flex-shrink-0 h-[45vh]"}`}>
         {mountViewer && (
           <ViewerErrorBoundary>
           {isR3F ? (
@@ -482,7 +526,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
               currentLevel={config.currentLevel as 1 | 2 | 3}
               selectedOptions={selectedNodes}
               allOptionNodes={allOptionNodes}
-              selectedOptionObjects={selectedOptions}
+              selectedOptionObjects={effectiveSelectedOptions}
               materialLibrary={materialLibrary}
               meshBaseMatMap={meshBaseMatMap}
               glbMatOverrides={glbMatOverrides}
@@ -539,7 +583,9 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
 
         {isLoaded && (
           <>
-            <PhaseController currentPhase={config.currentPhase} setPhase={handlePhaseChange} />
+            {!guidedMode && (
+              <PhaseController currentPhase={config.currentPhase} setPhase={handlePhaseChange} />
+            )}
 
             {/* Builder logo — top left */}
             {builder && (
@@ -558,63 +604,67 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
               </div>
             )}
 
-            {/* Total estimate — top right */}
-            <div className="absolute top-5 right-4 z-50">
-              <div
-                className="rounded-xl px-3 py-2 md:px-4 md:py-2.5 text-right"
-                style={{
-                  background: "rgba(0,0,0,0.55)",
-                  backdropFilter: "blur(24px)",
-                  WebkitBackdropFilter: "blur(24px)",
-                  border: "1px solid rgba(255,255,255,0.09)",
-                }}
-              >
-                <p
-                  className="text-[8px] md:text-[9px] font-bold uppercase tracking-[0.15em] mb-0.5"
-                  style={{ color: "rgba(255,255,255,0.3)" }}
+            {/* Total estimate — top right (hidden in guided mode) */}
+            {!guidedMode && (
+              <div className="absolute top-5 right-4 z-50">
+                <div
+                  className="rounded-xl px-3 py-2 md:px-4 md:py-2.5 text-right"
+                  style={{
+                    background: "rgba(0,0,0,0.55)",
+                    backdropFilter: "blur(24px)",
+                    WebkitBackdropFilter: "blur(24px)",
+                    border: "1px solid rgba(255,255,255,0.09)",
+                  }}
                 >
-                  Total
-                </p>
-                <p
-                  className="text-sm md:text-xl font-extrabold text-white leading-none"
-                  style={{ fontFamily: "var(--font-syne), sans-serif" }}
-                >
-                  {totalPrice.toLocaleString("en-US", {
-                    style: "currency",
-                    currency: "USD",
-                    maximumFractionDigits: 0,
-                  })}
-                </p>
-                {lotInfo && lotInfo.priceModifier !== 0 && (
-                  <p className="text-[9px] mt-0.5" style={{ color: "rgba(251,191,36,0.8)" }}>
-                    {lotInfo.priceModifier > 0 ? "+" : "−"}
-                    {Math.abs(lotInfo.priceModifier).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} lot
+                  <p
+                    className="text-[8px] md:text-[9px] font-bold uppercase tracking-[0.15em] mb-0.5"
+                    style={{ color: "rgba(255,255,255,0.3)" }}
+                  >
+                    Total
                   </p>
-                )}
+                  <p
+                    className="text-sm md:text-xl font-extrabold text-white leading-none"
+                    style={{ fontFamily: "var(--font-syne), sans-serif" }}
+                  >
+                    {totalPrice.toLocaleString("en-US", {
+                      style: "currency",
+                      currency: "USD",
+                      maximumFractionDigits: 0,
+                    })}
+                  </p>
+                  {lotInfo && lotInfo.priceModifier !== 0 && (
+                    <p className="text-[9px] mt-0.5" style={{ color: "rgba(251,191,36,0.8)" }}>
+                      {lotInfo.priceModifier > 0 ? "+" : "−"}
+                      {Math.abs(lotInfo.priceModifier).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} lot
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Project info card — desktop + sm only */}
-            {project && <ProjectInfoCard project={project} />}
+            {/* Project info card — desktop + sm only (hidden in guided mode) */}
+            {!guidedMode && project && <ProjectInfoCard project={project} />}
 
             {/* ── Desktop-only: options panel (absolute right) ── */}
-            <div className="hidden md:block">
-              {allCategories.length > 0 && (
-                <OptionsPanel
-                  categories={allCategories}
-                  currentPhase={config.currentPhase}
-                  selectedOptions={selectedOptionsForPanel}
-                  onOptionSelect={handleOptionSelect}
-                  favorites={favorites}
-                  onToggleFavorite={handleToggleFavorite}
-                  isOpen={true}
-                  phaseMessage={phaseMessage}
-                />
-              )}
-            </div>
+            {!guidedMode && (
+              <div className="hidden md:block">
+                {allCategories.length > 0 && (
+                  <OptionsPanel
+                    categories={allCategories}
+                    currentPhase={config.currentPhase}
+                    selectedOptions={selectedOptionsForPanel}
+                    onOptionSelect={handleOptionSelect}
+                    favorites={favorites}
+                    onToggleFavorite={handleToggleFavorite}
+                    isOpen={true}
+                    phaseMessage={phaseMessage}
+                  />
+                )}
+              </div>
+            )}
 
             {/* ── Desktop-only: phase-completion nudges ── */}
-            {showTransitionNudge && (
+            {!guidedMode && showTransitionNudge && (
               <div
                 className="hidden md:flex absolute bottom-20 left-1/2 -translate-x-1/2 z-[55] pointer-events-auto items-center gap-3"
                 style={{
@@ -658,7 +708,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
               </div>
             )}
 
-            {showInteriorNudge && (
+            {!guidedMode && showInteriorNudge && (
               <div
                 className="hidden md:flex absolute bottom-20 left-1/2 -translate-x-1/2 z-[55] pointer-events-auto items-center gap-3"
                 style={{
@@ -703,7 +753,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
             )}
 
             {/* ── Desktop-only: bottom nav bar ── */}
-            <div className="hidden md:flex absolute bottom-5 left-0 right-0 z-50 items-center justify-center gap-3">
+            {!guidedMode && <div className="hidden md:flex absolute bottom-5 left-0 right-0 z-50 items-center justify-center gap-3">
               <button
                 onClick={handlePrevStep}
                 disabled={phaseIndex === 0}
@@ -766,7 +816,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
                   </svg>
                 </button>
               )}
-            </div>
+            </div>}
           </>
         )}
       </div>{/* end viewer wrapper */}
@@ -774,7 +824,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
       {/* ── Mobile-only: options + navigation section ───────────────────────────
           Sits below the viewer in the flex-col layout. Hidden on md+ (desktop
           uses the absolute overlays inside the viewer wrapper above).          */}
-      {isLoaded && (
+      {isLoaded && !guidedMode && (
         <div
           className="flex-1 min-h-0 md:hidden flex flex-col overflow-hidden"
           style={{ background: "#070b12" }}
@@ -865,8 +915,26 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
         </div>
       )}
 
-      {/* ── Landing overlay (shown once after model loads) ── */}
-      {showLanding && project && (
+      {/* ── Guided configurator panel (shown when guidedMode is active) ── */}
+      {isLoaded && guidedMode && guidedCategories.length > 0 && project && (
+        <GuidedPanel
+          project={project}
+          categories={guidedCategories}
+          selectedOptions={selectedOptions}
+          builderLogo={builder?.logo_url}
+          builderName={builder?.company_name}
+          accentColor={builder?.accent_color}
+          totalPrice={totalPrice}
+          onOptionSelect={handleOptionSelect}
+          onOptionHover={(catId, option) => setHoveredOption(option ? { catId, option } : null)}
+          onCategoryEnter={handleCategoryEnter}
+          onFinished={handleGuidedFinished}
+          onOpenSummary={handleOpenSummary}
+        />
+      )}
+
+      {/* ── Landing overlay (shown once after model loads, non-guided mode) ── */}
+      {showLanding && !guidedMode && project && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center p-6"
           style={{ background: "rgba(5,7,14,0.88)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}

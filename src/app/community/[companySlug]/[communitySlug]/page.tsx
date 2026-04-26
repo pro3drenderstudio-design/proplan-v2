@@ -360,6 +360,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
               {lot.status === "available" && (
                 <Link
                   href={`/project/${proj.company_slug}/${proj.slug}?lotId=${encodeURIComponent(lot.id)}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${encodeURIComponent(comm.slug)}&communityName=${encodeURIComponent(comm.name)}&lotPriceModifier=${lot.price_modifier ?? 0}`}
+                  target="_top"
                   className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110"
                   style={{ background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" }}
                 >
