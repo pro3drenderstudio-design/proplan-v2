@@ -19,6 +19,7 @@ import type {
 } from "@/components/scene-editor/SceneEditorViewport";
 import { DEFAULT_SCENE_SETTINGS } from "@/components/scene-editor/SceneEditorViewport";
 import MaterialEditor from "@/components/scene-editor/MaterialEditor";
+import ThumbnailGenPanel from "@/components/scene-editor/ThumbnailGenPanel";
 import { DEFAULT_MATERIAL_PROPS } from "@/lib/material-defaults";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
@@ -750,7 +751,7 @@ function OptionPropertiesPanel({
   activeOption, selectedMeshes, materials, glbMaterials, glbMeshNames,
   allCategories, shapeNames, allShapes,
   deletedMeshes, onToggleHidden,
-  onRemoveMaterialAssignment, onRemoveMesh, onRemoveStale, onSelectMesh, onSelectAll, onAssignMeshes, paintMatId, onPaintApply,
+  onRemoveMaterialAssignment, onRemoveMesh, onRemoveStale, onSelectMesh, onSelectAll, onAssignMeshes, onAssignMeshesToCategory, paintMatId, onPaintApply,
   onSetCondition, onSetConditionBulk,
 }: {
   activeOption: CategoryWithOptions["options"][0] | null;
@@ -769,6 +770,7 @@ function OptionPropertiesPanel({
   onSelectMesh: (meshName: string) => void;
   onSelectAll: (names: string[]) => void;
   onAssignMeshes: (optionId: string, meshNames: string[]) => Promise<void>;
+  onAssignMeshesToCategory: (categoryId: string, meshNames: string[]) => Promise<void>;
   paintMatId: string | null;
   onPaintApply: (optionId: string, meshName: string, matId: string) => Promise<void>;
   onSetCondition: (optionId: string, meshName: string, conditionOptionId: string | null) => Promise<void>;
@@ -841,6 +843,13 @@ function OptionPropertiesPanel({
               ⊙ Condition
             </button>
           </div>
+          <button
+            onClick={() => onAssignMeshesToCategory(activeOption.category_id, selectedMeshes)}
+            title="Add selected meshes to every option in this category"
+            className="w-full py-1 text-[10px] font-semibold bg-white/5 hover:bg-blue-600/20 border border-white/10 hover:border-blue-500/30 text-white/40 hover:text-blue-300 rounded-lg transition-colors"
+          >
+            + Assign to all in category
+          </button>
           {bulkCondOpen && (
             <div className="px-2 py-2 bg-purple-500/8 border border-purple-500/20 rounded-lg flex flex-col gap-1.5">
               <p className="text-[8px] text-purple-300/70 uppercase tracking-wider font-semibold">
@@ -3429,7 +3438,7 @@ export default function SceneEditorPage() {
   const [swapDiff, setSwapDiff] = useState<{ missing: string[]; found: string[] } | null>(null);
 
   // ── Left / right panel tabs ────────────────────────────────────────────────
-  const [leftTab,  setLeftTab]  = useState<"options" | "layers" | "health">("options");
+  const [leftTab,  setLeftTab]  = useState<"options" | "thumb" | "layers" | "health">("options");
   const [rightTab, setRightTab] = useState<"scene" | "material" | "props" | "shapes" | "lights" | "settings">("scene");
 
   // ── Placed props ───────────────────────────────────────────────────────────
@@ -3681,6 +3690,46 @@ export default function SceneEditorPage() {
     if (r.ok) setMaterials(await r.json());
   }, []);
 
+  // Preload material textures into browser HTTP cache so the first time a texture
+  // is assigned to a mesh it appears instantly instead of after a network delay.
+  useEffect(() => {
+    const TEX_KEYS = [
+      "albedoMapUrl", "normalMapUrl", "roughnessMapUrl", "glossinessMapUrl",
+      "bumpMapUrl", "metalnessMapUrl", "aoMapUrl", "displacementMapUrl",
+    ] as const;
+    const seen = new Set<string>();
+    for (const mat of materials) {
+      const p = mat.properties ?? {};
+      for (const key of TEX_KEYS) {
+        const url = (p as Record<string, unknown>)[key];
+        if (typeof url === "string" && url && !seen.has(url)) {
+          seen.add(url);
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.src = url;
+        }
+      }
+    }
+  }, [materials]);
+
+  // Also preload textures for the live edit preview so changes appear without delay.
+  useEffect(() => {
+    if (!editPreview) return;
+    const TEX_KEYS = [
+      "albedoMapUrl", "normalMapUrl", "roughnessMapUrl", "glossinessMapUrl",
+      "bumpMapUrl", "metalnessMapUrl", "aoMapUrl", "displacementMapUrl",
+    ] as const;
+    const p = editPreview.properties ?? {};
+    for (const key of TEX_KEYS) {
+      const url = (p as Record<string, unknown>)[key];
+      if (typeof url === "string" && url) {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = url;
+      }
+    }
+  }, [editPreview]);
+
   // ── Selection / transform handlers ────────────────────────────────────────
   const handleMeshSelect = useCallback((names: string[]) => {
     if (paintMatId && activeOptionId && names.length > 0) {
@@ -3782,6 +3831,20 @@ export default function SceneEditorPage() {
       .update({ node_list: updated }).eq("id", optionId);
     if (error) showToast(`Error: ${error.message}`);
     else { showToast(`${meshNames.length} mesh(es) assigned`); await reloadCategories(); }
+  }
+
+  async function handleAssignMeshesToCategory(categoryId: string, meshNames: string[]) {
+    const cat = categories.find(c => c.id === categoryId);
+    if (!cat || cat.options.length === 0) return;
+    pushUndo();
+    await Promise.all(
+      cat.options.map(opt => {
+        const updated = [...new Set([...(opt.node_list ?? []), ...meshNames])];
+        return (supabase.from("options") as any).update({ node_list: updated }).eq("id", opt.id);
+      }),
+    );
+    showToast(`${meshNames.length} mesh(es) assigned to all ${cat.options.length} options`);
+    await reloadCategories();
   }
 
   async function applyPaintToMesh(optionId: string, meshName: string, matId: string) {
@@ -4787,8 +4850,8 @@ export default function SceneEditorPage() {
 
           {/* Tab bar */}
           <div className="flex flex-shrink-0 border-b border-white/8">
-            {(["options", "layers", "health"] as const).map(tab => {
-              const label = tab === "layers" ? "Layers" : tab === "health" ? "Health" : "Options";
+            {(["options", "thumb", "layers", "health"] as const).map(tab => {
+              const label = tab === "layers" ? "Layers" : tab === "health" ? "Health" : tab === "thumb" ? "Thumb" : "Options";
               const hasBrokenMappings = tab === "health" && swapDiff && swapDiff.missing.length > 0;
               return (
                 <button key={tab} onClick={() => setLeftTab(tab)}
@@ -4879,6 +4942,21 @@ export default function SceneEditorPage() {
             </div>
           )}
 
+          {/* Thumb tab */}
+          {leftTab === "thumb" && (
+            <ThumbnailGenPanel
+              categories={categories}
+              onOptionThumbnailUpdated={(optId, url) =>
+                setCategories(prev => prev.map(c => ({
+                  ...c,
+                  options: c.options.map(o =>
+                    o.id === optId ? { ...o, thumbnail_url: url } : o,
+                  ),
+                })))
+              }
+            />
+          )}
+
           {/* Options tab */}
           {leftTab === "options" && <>
 
@@ -4967,6 +5045,7 @@ export default function SceneEditorPage() {
                 onSelectMesh={handleMeshToggle}
                 onSelectAll={names => setSelectedMeshes(names)}
                 onAssignMeshes={handleAssignMeshes}
+                onAssignMeshesToCategory={handleAssignMeshesToCategory}
                 onRemoveMaterialAssignment={handleRemoveMaterialAssignment}
                 onSetCondition={handleSetNodeCondition}
                 onSetConditionBulk={handleSetNodeConditionBulk}
