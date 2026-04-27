@@ -673,6 +673,7 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
     );
     const metalOv  = applyUV(loadTex(p.metalnessMapUrl),    p);
     const aoOv     = applyUV(loadTex(p.aoMapUrl),           p);
+    const dispOv   = applyUV(loadTex(p.displacementMapUrl), p);
 
     // Final textures: URL override takes priority, else inherit from GLB
     const albedoTex = albedoOv ?? origMat?.map          ?? null;
@@ -681,6 +682,7 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
     const roughTex  = roughOv  ?? origMat?.roughnessMap  ?? null;
     const metalTex  = metalOv  ?? origMat?.metalnessMap  ?? null;
     const aoTex     = aoOv     ?? origMat?.aoMap         ?? null;
+    const dispTex   = dispOv   ?? null;
 
     // Three.js bakes USE_NORMALMAP / USE_BUMPMAP etc. into the compiled shader at
     // creation time. If we add a texture to an already-compiled material, needsUpdate
@@ -691,7 +693,7 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
     // gets its own program cache entry, distinct from normal-only or bump-only.
     const bothNB = !!(normalTex && bumpTex);
     const glossKey = !p.roughnessMapUrl && p.glossinessMapUrl ? "g" : "";
-    const texKey = [albedoTex, normalTex, bumpTex, roughTex, metalTex, aoTex]
+    const texKey = [albedoTex, normalTex, bumpTex, roughTex, metalTex, aoTex, dispTex]
       .map(t => (t ? "1" : "0")).join("") + `|${projection}|${bothNB ? "c" : ""}|${glossKey}`;
 
     let mat = overrideMatsRef.current.get(meshName);
@@ -721,15 +723,17 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
     mat.metalness    = def.metalness;
 
     // ── Texture maps ──────────────────────────────────────────────────────────
-    mat.map          = albedoTex;
-    mat.normalMap    = normalTex;
+    mat.map              = albedoTex;
+    mat.normalMap        = normalTex;
     mat.normalScale.set(p.normalScale ?? 1, p.normalScale ?? 1);
-    mat.bumpMap      = bumpTex;
-    mat.bumpScale    = p.bumpScale ?? 0.05;
-    mat.roughnessMap = roughTex;
-    mat.metalnessMap = metalTex;
-    mat.aoMap        = aoTex;
+    mat.bumpMap          = bumpTex;
+    mat.bumpScale        = p.bumpScale ?? 0.05;
+    mat.roughnessMap     = roughTex;
+    mat.metalnessMap     = metalTex;
+    mat.aoMap            = aoTex;
     mat.aoMapIntensity   = p.aoIntensity ?? 1;
+    mat.displacementMap   = dispTex;
+    mat.displacementScale = dispTex ? (p.displacementScale ?? 0.05) : 0;
     mat.emissive.set(p.emissiveColor ?? "#000000");
     mat.emissiveIntensity = p.emissiveIntensity ?? 0;
     mat.envMapIntensity  = 1.0;
@@ -1745,19 +1749,21 @@ function PlacedShape({ shape, isSelected, transformMode = "translate", onSelect,
           m.color.set("#ffffff");
           if (brightness !== 1) m.color.multiplyScalar(brightness);
         }
-        if (slot === "normalMap") m.normalScale.set(p.normalScale ?? 1, p.normalScale ?? 1);
-        if (slot === "bumpMap") m.bumpScale = p.bumpScale ?? 0.05;
-        if (slot === "aoMap") m.aoMapIntensity = p.aoIntensity ?? 1;
+        if (slot === "normalMap")       m.normalScale.set(p.normalScale ?? 1, p.normalScale ?? 1);
+        if (slot === "bumpMap")         m.bumpScale = p.bumpScale ?? 0.05;
+        if (slot === "aoMap")           m.aoMapIntensity = p.aoIntensity ?? 1;
+        if (slot === "displacementMap") m.displacementScale = p.displacementScale ?? 0.05;
         m.needsUpdate = true;
       });
     }
 
-    loadTex(p.albedoMapUrl, "map", true);
-    loadTex(p.normalMapUrl, "normalMap");
-    loadTex(p.roughnessMapUrl, "roughnessMap");
-    loadTex(p.metalnessMapUrl, "metalnessMap");
-    loadTex(p.bumpMapUrl, "bumpMap");
-    loadTex(p.aoMapUrl, "aoMap");
+    loadTex(p.albedoMapUrl,        "map",             true);
+    loadTex(p.normalMapUrl,        "normalMap");
+    loadTex(p.roughnessMapUrl,     "roughnessMap");
+    loadTex(p.metalnessMapUrl,     "metalnessMap");
+    loadTex(p.bumpMapUrl,          "bumpMap");
+    loadTex(p.aoMapUrl,            "aoMap");
+    loadTex(p.displacementMapUrl,  "displacementMap");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libEntry?.id]);
 

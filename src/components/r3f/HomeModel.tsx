@@ -131,7 +131,7 @@ function applyGlbOverridesToScene(scene: THREE.Group, overrides: GlbOverrideMap)
       function loadDeferred(
         url: string | null | undefined,
         fallback: THREE.Texture | null | undefined,
-        slot: "map" | "normalMap" | "bumpMap" | "roughnessMap" | "metalnessMap" | "aoMap",
+        slot: "map" | "normalMap" | "bumpMap" | "roughnessMap" | "metalnessMap" | "aoMap" | "displacementMap",
         srgb = false,
         invert = false,
       ) {
@@ -154,9 +154,10 @@ function applyGlbOverridesToScene(scene: THREE.Group, overrides: GlbOverrideMap)
               newMat.color.set(origColorHex);
               if (brightness !== 1) newMat.color.multiplyScalar(brightness);
             }
-            if (slot === "normalMap") newMat.normalScale.set(p.normalScale ?? 1, p.normalScale ?? 1);
-            if (slot === "bumpMap")   newMat.bumpScale = p.bumpScale ?? 0.05;
-            if (slot === "aoMap")     newMat.aoMapIntensity = p.aoIntensity ?? 1;
+            if (slot === "normalMap")       newMat.normalScale.set(p.normalScale ?? 1, p.normalScale ?? 1);
+            if (slot === "bumpMap")         newMat.bumpScale = p.bumpScale ?? 0.05;
+            if (slot === "aoMap")           newMat.aoMapIntensity = p.aoIntensity ?? 1;
+            if (slot === "displacementMap") newMat.displacementScale = p.displacementScale ?? 0.05;
             newMat.needsUpdate = true;
           });
         } else if (fallback) {
@@ -172,6 +173,7 @@ function applyGlbOverridesToScene(scene: THREE.Group, overrides: GlbOverrideMap)
       loadDeferred(p.metalnessMapUrl,                         orig?.metalnessMap, "metalnessMap");
       loadDeferred(p.aoMapUrl,                                orig?.aoMap,        "aoMap");
       loadDeferred(p.bumpMapUrl,                              orig?.bumpMap,      "bumpMap");
+      loadDeferred(p.displacementMapUrl,                      null,               "displacementMap");
 
       // Apply scalar extras for already-set inherited textures
       if (!p.normalMapUrl    && orig?.normalMap)    newMat.normalScale.set(p.normalScale ?? 1, p.normalScale ?? 1);
