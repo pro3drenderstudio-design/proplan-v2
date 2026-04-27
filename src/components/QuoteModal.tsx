@@ -134,23 +134,25 @@ export default function QuoteModal({
       let logoNaturalH: number | null = null;
       if (builder?.logo_url) {
         try {
-          const logoRes = await fetch(builder.logo_url);
-          const blob    = await logoRes.blob();
-          logoBase64    = await new Promise<string>(res => {
-            const reader = new FileReader();
-            reader.onload = () => res(reader.result as string);
-            reader.readAsDataURL(blob);
-          });
-          // Measure natural dimensions
-          const dims = await new Promise<{ w: number; h: number }>(res => {
+          const blob   = await fetch(builder.logo_url).then(r => r.blob());
+          const blobUrl = URL.createObjectURL(blob);
+          const result = await new Promise<{ w: number; h: number; base64: string }>(res => {
             const img = new Image();
-            img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight });
-            img.onerror = () => res({ w: 0, h: 0 });
-            img.src = logoBase64!;
+            img.onload = () => {
+              const canvas = document.createElement("canvas");
+              canvas.width  = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              canvas.getContext("2d")!.drawImage(img, 0, 0);
+              res({ w: img.naturalWidth, h: img.naturalHeight, base64: canvas.toDataURL("image/png") });
+              URL.revokeObjectURL(blobUrl);
+            };
+            img.onerror = () => { URL.revokeObjectURL(blobUrl); res({ w: 0, h: 0, base64: "" }); };
+            img.src = blobUrl;
           });
-          if (dims.w > 0 && dims.h > 0) {
-            logoNaturalW = dims.w;
-            logoNaturalH = dims.h;
+          if (result.w > 0) {
+            logoBase64   = result.base64;
+            logoNaturalW = result.w;
+            logoNaturalH = result.h;
           }
         } catch { /* skip logo if fetch fails */ }
       }
