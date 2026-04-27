@@ -202,6 +202,12 @@ function ViewerShape({ shape, selectedOptions, allOptionNodes }: {
   );
 }
 
+type MeshTransformOverrides = Record<string, {
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  scale?: [number, number, number];
+}>;
+
 interface R3FViewerProps {
   modelUrl: string;
   currentPhase: PhaseId;
@@ -214,6 +220,7 @@ interface R3FViewerProps {
   meshBaseMatMap?: Record<string, string>;
   glbMatOverrides?: Record<string, { base_color: string; roughness: number; metalness: number; properties?: MaterialLibraryEntry["properties"] }>;
   structuralArrays?: StructuralNodeArrays;
+  meshOverrides?: MeshTransformOverrides;
   placedProps?: PlacedPropDef[];
   placedShapes?: PlacedShapeData[];
   placedLights?: PlacedLight[];
@@ -254,6 +261,7 @@ export default function R3FViewer({
   meshBaseMatMap = {},
   glbMatOverrides = {},
   structuralArrays = {},
+  meshOverrides = {},
   placedProps = [],
   placedShapes = [],
   placedLights = [],
@@ -396,6 +404,7 @@ export default function R3FViewer({
             meshBaseMatMap={meshBaseMatMap}
             glbMatOverrides={glbMatOverrides}
             structuralArrays={structuralArrays}
+            meshOverrides={meshOverrides}
             onSceneReady={handleSceneReady}
           />
         </Suspense>

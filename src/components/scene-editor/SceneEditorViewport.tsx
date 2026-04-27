@@ -440,7 +440,10 @@ function EditorScene({
         setTexVersion(v => v + 1);
       },
       undefined,
-      () => texCacheRef.current.set(key, "failed"),
+      (err) => {
+        console.warn("[SceneEditor] texture load FAILED:", url, err);
+        texCacheRef.current.set(key, "failed");
+      },
     );
     return null;
   }
@@ -684,23 +687,25 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
     const aoTex     = aoOv     ?? origMat?.aoMap         ?? null;
     const dispTex   = dispOv   ?? null;
 
-    // Three.js bakes USE_NORMALMAP / USE_BUMPMAP etc. into the compiled shader at
-    // creation time. If we add a texture to an already-compiled material, needsUpdate
-    // alone may not force a recompile with the new defines. To guarantee correct
-    // shader defines, we dispose + recreate whenever the presence of any texture slot
-    // changes (null→texture or texture→null).
-    // Include 'c' flag when both normal+bump are set so the combined-shader variant
-    // gets its own program cache entry, distinct from normal-only or bump-only.
-    const bothNB = !!(normalTex && bumpTex);
+    // Key on URL strings + projection — NOT on texture object presence. This keeps the
+    // material instance stable while textures async-load, so Three.js can mutate the
+    // map slots in-place and recompile the shader via needsUpdate = true. Recreating the
+    // material on every setTexVersion tick (texKey approach) caused race conditions in
+    // R3F's concurrent renderer where the new material instance was never rendered.
+    const bothNB = !!(p.normalMapUrl && p.bumpMapUrl);
     const glossKey = !p.roughnessMapUrl && p.glossinessMapUrl ? "g" : "";
-    const texKey = [albedoTex, normalTex, bumpTex, roughTex, metalTex, aoTex, dispTex]
-      .map(t => (t ? "1" : "0")).join("") + `|${projection}|${bothNB ? "c" : ""}|${glossKey}`;
+    const matKey = [
+      def.color, String(def.roughness), String(def.metalness),
+      p.albedoMapUrl ?? "", p.normalMapUrl ?? "", p.roughnessMapUrl ?? "",
+      p.glossinessMapUrl ?? "", p.metalnessMapUrl ?? "", p.aoMapUrl ?? "",
+      p.bumpMapUrl ?? "", p.displacementMapUrl ?? "", projection, glossKey,
+    ].join("|");
 
     let mat = overrideMatsRef.current.get(meshName);
-    if (!mat || (mat as any).__texKey !== texKey) {
+    if (!mat || (mat as any).__matKey !== matKey) {
       mat?.dispose();
       mat = new THREE.MeshPhysicalMaterial();
-      (mat as any).__texKey = texKey;
+      (mat as any).__matKey = matKey;
       overrideMatsRef.current.set(meshName, mat);
     }
 
@@ -1192,7 +1197,7 @@ vec4 _tp(sampler2D t,float sx,float sy,float sz,float ox,float oy,float oz,float
         <TransformControls
           object={selectedObj}
           mode={transformMode}
-          onMouseDown={() => { isDragging.current = true; onMeshTransformStart?.(); }}
+          onPointerDown={(e) => { e.stopPropagation(); isDragging.current = true; onMeshTransformStart?.(); }}
           onMouseUp={() => { isDragging.current = false; }}
           onChange={handleTransformChange}
           size={0.85}

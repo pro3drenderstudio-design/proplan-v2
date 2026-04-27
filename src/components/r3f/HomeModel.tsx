@@ -74,6 +74,12 @@ type GlbOverrideMap = Record<string, {
   properties?: MaterialLibraryEntry["properties"];
 }>;
 
+type MeshTransformOverrides = Record<string, {
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  scale?: [number, number, number];
+}>;
+
 interface HomeModelProps {
   modelUrl: string;
   currentPhase: PhaseId;
@@ -86,6 +92,7 @@ interface HomeModelProps {
   meshBaseMatMap?: Record<string, string>;
   glbMatOverrides?: GlbOverrideMap;
   structuralArrays?: StructuralNodeArrays;
+  meshOverrides?: MeshTransformOverrides;
   onSceneReady?: (scene: THREE.Group) => void;
 }
 
@@ -210,6 +217,7 @@ export default function HomeModel({
   meshBaseMatMap = {},
   glbMatOverrides = {},
   structuralArrays = {},
+  meshOverrides = {},
   onSceneReady,
 }: HomeModelProps) {
   const { scene }    = useGLTFDraco(modelUrl);
@@ -297,6 +305,21 @@ export default function HomeModel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, currentPhase, currentLevel, nodeGroups, selectedOptions, allOptionNodes, structuralArrays, optionsSeeded]);
 
+
+  // ── Mesh transforms (position / rotation / scale from scene editor) ───────
+  useLayoutEffect(() => {
+    if (!model) return;
+    model.traverse((obj) => {
+      if (!obj.name) return;
+      const ov = meshOverrides[obj.name];
+      if (!ov) return;
+      if (ov.position) obj.position.set(...ov.position);
+      if (ov.rotation) obj.rotation.set(...ov.rotation);
+      if (ov.scale)    obj.scale.set(...ov.scale);
+    });
+    invalidate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, meshOverrides]);
 
   // ── Base material assignments ──────────────────────────────────────────────
   useLayoutEffect(() => {

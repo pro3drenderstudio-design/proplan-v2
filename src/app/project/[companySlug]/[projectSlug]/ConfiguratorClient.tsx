@@ -195,6 +195,10 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     return (project?.camera_defaults as any)?._meshBaseMats ?? {};
   }, [project]);
 
+  const meshOverrides = useMemo<Record<string, { position?: [number,number,number]; rotation?: [number,number,number]; scale?: [number,number,number] }>>(() => {
+    return (project?.camera_defaults as any)?._meshOverrides ?? {};
+  }, [project]);
+
   const glbMatOverrides = useMemo(() => {
     return (project?.camera_defaults as any)?._glbMatOverrides ?? {};
   }, [project]);
@@ -224,16 +228,6 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     };
   }, [project]);
 
-  // Ordered category list for the guided flow: exterior → interior → blueprint
-  const guidedCategories = useMemo(
-    () => [
-      ...categoriesByPhase.exterior,
-      ...categoriesByPhase.interior,
-      ...categoriesByPhase.blueprint,
-    ],
-    [categoriesByPhase]
-  );
-
   const floors     = Math.min(project?.floors ?? 1, 3) as LevelId;
   const phaseIndex = PHASES.findIndex(p => p.id === config.currentPhase);
   const isLastPhase = phaseIndex === PHASES.length - 1;
@@ -245,6 +239,21 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
     : undefined;
 
   const selectedOptionIds = new Set(Object.values(selectedOptions).map(o => o.id));
+
+  // Ordered category list for the guided flow: exterior → interior → blueprint,
+  // filtered by show_when conditional visibility — same rule as free-mode OptionsPanel.
+  // Must be computed after selectedOptionIds so the filter is reactive to selections.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const guidedCategories = useMemo(
+    () => [
+      ...categoriesByPhase.exterior,
+      ...categoriesByPhase.interior,
+      ...categoriesByPhase.blueprint,
+    ].filter(c => !c.show_when || c.show_when.length === 0 || c.show_when.some(id => selectedOptionIds.has(id))),
+    // selectedOptions (not selectedOptionIds) is the stable dep — the Set is recreated each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [categoriesByPhase, selectedOptions]
+  );
 
   const visibleExteriorCats = allCategories.filter(c => {
     if (c.phase?.toLowerCase() !== "exterior") return false;
@@ -578,6 +587,7 @@ export default function ConfiguratorClient({ companySlug, projectSlug }: Props) 
               meshBaseMatMap={meshBaseMatMap}
               glbMatOverrides={glbMatOverrides}
               structuralArrays={structuralArrays}
+              meshOverrides={meshOverrides}
               placedProps={placedProps}
               placedShapes={placedShapes}
               placedLights={placedLights}

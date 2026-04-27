@@ -341,6 +341,14 @@ export default function GuidedPanel({
   const currentCat  = categories[catIdx];
   const selectedOpt = currentCat ? selectedOptions[currentCat.id] : undefined;
 
+  // ── Guard: clamp catIdx when conditional categories are removed mid-flow
+  // (e.g. user goes back and deselects the option that unlocked a category).
+  useEffect(() => {
+    if (step === "category" && categories.length > 0 && catIdx >= categories.length) {
+      setCatIdx(categories.length - 1);
+    }
+  }, [categories.length, catIdx, step]);
+
   // ── Entrance — delay matches Preloader fade (700 ms) so content appears
   // as the Preloader finishes dissolving, not before it starts.
   useEffect(() => {
@@ -1145,7 +1153,7 @@ export default function GuidedPanel({
             style={{
               fontFamily: "var(--font-jost), sans-serif",
               fontWeight: 200,
-              fontSize: 9,
+              fontSize: 15,
               letterSpacing: "0.18em",
               color: "rgba(255,255,255,0.18)",
               marginTop: 40,
@@ -1156,7 +1164,7 @@ export default function GuidedPanel({
             <span
               style={{
                 fontFamily: "var(--font-cormorant), Georgia, serif",
-                fontSize: 15,
+                fontSize: 33,
                 fontWeight: 400,
                 color: "rgba(255,255,255,0.5)",
                 letterSpacing: "0.01em",
