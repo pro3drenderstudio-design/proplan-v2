@@ -170,7 +170,14 @@ export async function getCategoriesWithOptions(
     return [];
   }
 
-  return (data ?? []) as CategoryWithOptions[];
+  const rows = (data ?? []) as CategoryWithOptions[];
+  // PostgREST's embedded-resource ordering can be unreliable — sort explicitly
+  // so category and option order always matches what was set in the scene editor.
+  rows.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  for (const cat of rows) {
+    cat.options?.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  }
+  return rows;
 }
 
 // ---------------------------------------------------------------------------

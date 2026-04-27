@@ -160,7 +160,12 @@ export async function getProjectCategoriesWithOptions(
     .order("sort_order")
     .order("sort_order", { referencedTable: "options" });
   if (error) { console.error("getProjectCategoriesWithOptions:", error.message); return []; }
-  return (data ?? []) as CategoryWithOptions[];
+  const rows = (data ?? []) as CategoryWithOptions[];
+  rows.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  for (const cat of rows) {
+    cat.options?.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  }
+  return rows;
 }
 
 export async function createCategory(

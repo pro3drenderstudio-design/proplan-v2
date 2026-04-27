@@ -24,7 +24,12 @@ export async function getCategoriesWithOptions(projectId: string): Promise<Categ
     .order("sort_order")
     .order("sort_order", { referencedTable: "options" });
   if (error) { console.error("getCategoriesWithOptions:", error.message); return []; }
-  return data as CategoryWithOptions[];
+  const rows = (data ?? []) as CategoryWithOptions[];
+  rows.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  for (const cat of rows) {
+    cat.options?.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  }
+  return rows;
 }
 
 export async function saveOptionMapping(
