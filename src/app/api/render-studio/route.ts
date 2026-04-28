@@ -177,6 +177,7 @@ export async function POST(req: NextRequest) {
   let body: {
     imageBase64?: string;
     imageUrl?: string;
+    mimeType?: string;
     renderType: string;
     style: string;
     lighting: string;
@@ -219,7 +220,7 @@ export async function POST(req: NextRequest) {
 
   // Get image as base64 — either inline or fetched from a URL (revision case)
   let imageBase64: string;
-  let mimeType = "image/png";
+  let mimeType = body.mimeType ?? "image/jpeg";
 
   if (body.imageUrl) {
     try {
@@ -278,17 +279,24 @@ export async function POST(req: NextRequest) {
   const resultBase64 = imagePart.inlineData.data;
   const resultBuffer = Buffer.from(resultBase64, "base64");
 
-  // ── Persist output to R2 ─────────────────────────────────────────────────
+  // ── Persist output to R2 (with retry) ───────────────────────────────────
   let savedImageUrl = "";
-  try {
-    const outputKey = `render-studio-outputs/${Date.now()}-${body.renderType}.jpg`;
-    savedImageUrl = await uploadToR2(outputKey, resultBuffer, "image/jpeg");
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("R2 output upload failed:", msg);
+  let saveError: string | null = null;
+  const outputKey = `render-studio-outputs/${Date.now()}-${body.renderType}.jpg`;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      savedImageUrl = await uploadToR2(outputKey, resultBuffer, "image/jpeg");
+      break; // success
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`R2 upload attempt ${attempt} failed:`, msg);
+      if (attempt === 3) saveError = msg;
+      else await new Promise(r => setTimeout(r, attempt * 300));
+    }
   }
 
-  // Only persist the record when we have a real URL — an empty image_url is useless in the archive
+  // Only persist the DB record when we have a real URL
   let renderRow: { id: string } | null = null;
   if (savedImageUrl) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -305,13 +313,18 @@ export async function POST(req: NextRequest) {
       })
       .select("id")
       .single();
-    if (dbError) console.warn("renders insert failed:", dbError.message);
-    else renderRow = data;
+    if (dbError) {
+      console.warn("renders insert failed:", dbError.message);
+      saveError = saveError ?? dbError.message;
+    } else {
+      renderRow = data;
+    }
   }
 
   return NextResponse.json({
     imageBase64: resultBase64,
     imageUrl:    savedImageUrl,
     renderId:    renderRow?.id ?? null,
+    ...(saveError ? { saveError } : {}),
   });
 }

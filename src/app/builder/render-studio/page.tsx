@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import CreditTopupBanner from "@/components/builder/CreditTopupBanner";
 
+function extractMimeType(dataUrl: string): string {
+  const m = dataUrl.match(/^data:([^;]+);/);
+  return m?.[1] ?? "image/jpeg";
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type View        = "archive" | "studio";
@@ -452,6 +457,7 @@ export default function RenderStudioPage() {
   const [generating,       setGenerating]       = useState(false);
   const [elapsed,          setElapsed]          = useState(0);
   const [error,            setError]            = useState("");
+  const [saveWarning,      setSaveWarning]      = useState<string | null>(null);
 
   // Markup mode
   const [isMarkingUp,      setIsMarkingUp]      = useState(false);
@@ -465,7 +471,6 @@ export default function RenderStudioPage() {
   const fileInputRef   = useRef<HTMLInputElement>(null);
   const dropRef        = useRef<HTMLDivElement>(null);
   const timerRef       = useRef<ReturnType<typeof setInterval> | null>(null);
-  const renderImgRef   = useRef<HTMLImageElement | null>(null);
 
   async function getBuilderIdFromSession(): Promise<string | null> {
     // Impersonation takes priority
@@ -554,13 +559,28 @@ export default function RenderStudioPage() {
   }, [generating]);
 
   function openRecord(r: RenderRecord) {
-    setRenderDataUrl(r.image_url);
     setRenderSavedUrl(r.image_url);
     setReferenceDataUrl(null);
     setRevision("");
     setError("");
+    setSaveWarning(null);
     setHistory([]);
+    // Show the image immediately via the R2 URL, then convert to a data URL
+    // so markup canvas operations (which need same-origin pixel access) work correctly.
+    setRenderDataUrl(r.image_url);
     setView("studio");
+    if (r.image_url) {
+      fetch(r.image_url)
+        .then(res => res.blob())
+        .then(blob => new Promise<string>((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result as string);
+          reader.onerror = rej;
+          reader.readAsDataURL(blob);
+        }))
+        .then(dataUrl => setRenderDataUrl(dataUrl))
+        .catch(() => {}); // keep R2 URL as fallback
+    }
   }
 
   function loadFile(file: File) {
@@ -581,22 +601,27 @@ export default function RenderStudioPage() {
     if (file) loadFile(file);
   }, []);
 
-  function getMarkupMergedBase64(): string | null {
+  async function getMarkupMergedBase64(): Promise<string | null> {
     const canvas = markupCanvasRef.current;
     if (!canvas || !renderDataUrl) return null;
-    const merged = document.createElement("canvas");
-    merged.width  = canvas.width;
-    merged.height = canvas.height;
-    const ctx = merged.getContext("2d")!;
-    const img = new Image();
-    img.src = renderDataUrl;
-    ctx.drawImage(img, 0, 0, merged.width, merged.height);
-    ctx.drawImage(canvas, 0, 0);
-    return merged.toDataURL("image/jpeg", 0.92).split(",")[1];
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        const merged = document.createElement("canvas");
+        merged.width  = img.naturalWidth;
+        merged.height = img.naturalHeight;
+        const ctx = merged.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, merged.width, merged.height);
+        ctx.drawImage(canvas, 0, 0, merged.width, merged.height);
+        resolve(merged.toDataURL("image/jpeg", 0.92).split(",")[1]);
+      };
+      img.onerror = () => resolve(null);
+      img.src = renderDataUrl;
+    });
   }
 
   async function generate(isRevision = false, withMarkup = false) {
-    // Guard: check AI credits before generating
     if (creditInfo && creditInfo.remaining <= 0) {
       setError("You've run out of AI render credits. Buy a top-up pack to continue.");
       return;
@@ -604,6 +629,7 @@ export default function RenderStudioPage() {
 
     setGenerating(true);
     setError("");
+    setSaveWarning(null);
 
     try {
       const builderId = await getBuilderIdFromSession();
@@ -613,11 +639,9 @@ export default function RenderStudioPage() {
         revision:   isRevision ? revision : undefined,
         isRevision,
         builderId,
-        // include elevation colors if set
         ...(renderType === "elevation" ? Object.fromEntries(
           Object.entries(elevColors).filter(([, v]) => v.trim())
         ) : {}),
-        // include floor plan colors + label toggle if set
         ...(renderType === "floor_plan" ? {
           ...Object.fromEntries(Object.entries(fpColors).filter(([, v]) => v.trim())),
           showTextLabels,
@@ -625,17 +649,21 @@ export default function RenderStudioPage() {
       };
 
       if (isRevision && withMarkup) {
-        const merged = getMarkupMergedBase64();
+        const merged = await getMarkupMergedBase64();
         if (merged) {
           requestBody.imageBase64 = merged;
+          requestBody.mimeType    = "image/jpeg";
         } else if (renderSavedUrl) {
           requestBody.imageUrl = renderSavedUrl;
+        } else {
+          throw new Error("No image source available for markup revision.");
         }
       } else if (isRevision && renderSavedUrl) {
         requestBody.imageUrl = renderSavedUrl;
       } else {
         const sourceDataUrl = referenceDataUrl;
-        if (!sourceDataUrl) return;
+        if (!sourceDataUrl) { setGenerating(false); return; }
+        requestBody.mimeType    = extractMimeType(sourceDataUrl);
         requestBody.imageBase64 = sourceDataUrl.includes(",")
           ? sourceDataUrl.split(",")[1]
           : sourceDataUrl;
@@ -652,14 +680,22 @@ export default function RenderStudioPage() {
         throw new Error(`API ${res.status}: ${body}`);
       }
 
-      const { imageBase64, imageUrl } = await res.json() as {
+      const { imageBase64, imageUrl, saveError } = await res.json() as {
         imageBase64: string;
         imageUrl:    string;
         renderId:    string | null;
+        saveError?:  string;
       };
+
       const dataUrl = `data:image/jpeg;base64,${imageBase64}`;
       setRenderDataUrl(dataUrl);
-      setRenderSavedUrl(imageUrl ?? null);
+      // Normalize empty string to null so revision checks work correctly
+      setRenderSavedUrl(imageUrl || null);
+
+      if (saveError) {
+        setSaveWarning("Render generated but couldn't be saved to your archive. Download it now if you need it.");
+      }
+
       if (isRevision) setRevision("");
       if (withMarkup) { setIsMarkingUp(false); markupStrokes.current = []; }
 
@@ -671,7 +707,7 @@ export default function RenderStudioPage() {
           : `${STYLES.find(s => s.id === style)?.label} · ${LIGHTINGS.find(l => l.id === lighting)?.label}`,
       }, ...prev].slice(0, 12));
 
-      // Decrement AI credits
+      // Decrement AI credits locally — server already decremented; this keeps UI in sync
       if (builderId && creditInfo) {
         const newRemaining = Math.max(0, creditInfo.remaining - 1);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1000,6 +1036,9 @@ export default function RenderStudioPage() {
 
           {error && (
             <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">{error}</p>
+          )}
+          {saveWarning && (
+            <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">{saveWarning}</p>
           )}
 
           {/* Revision panel */}
