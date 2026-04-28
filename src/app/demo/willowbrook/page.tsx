@@ -8,6 +8,7 @@ const COMMUNITY_SLUG = "Willowbrook";
 const COMPANY_SLUG   = "pro-home-builders";
 const SITEMAP_URL    = "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/migrated/community-site-maps/61437132-9f2e-423b-8f7e-01a124c0f655/1777072594367.png";
 const CYPRESS_THUMB  = "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/migrated/project-thumbnails/5e6be2dc-4f9d-4e15-bd56-71be14d75c46/1777058558551.png";
+const BUILDER_LOGO   = "https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/builders/pro-home-builders/logo.svg";
 const INTERACTIVE_MAP_URL = `/community/${COMPANY_SLUG}/${COMMUNITY_SLUG}`;
 const CONFIGURATOR_URL    = `/project/${COMPANY_SLUG}/the-cypress`;
 
@@ -34,15 +35,10 @@ export default function WillowbrookPage() {
       <header className="sticky top-0 z-50 bg-white/95 backdrop-blur border-b border-stone-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-5 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            {/* Logo mark */}
-            <div className="flex items-center gap-2.5 flex-shrink-0">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-sm" style={{ background: "linear-gradient(135deg, #2E6B4E 0%, #1B4332 100%)" }}>
-                PHB
-              </div>
-              <div>
-                <p className="text-[13px] font-bold text-stone-800 leading-none">Pro Home Builders</p>
-                <p className="text-[10px] text-stone-400 leading-none mt-0.5">Austin, TX</p>
-              </div>
+            {/* Logo */}
+            <div className="flex items-center flex-shrink-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={BUILDER_LOGO} alt="Pro Home Builders" className="h-8 object-contain" style={{ maxWidth: 160 }} />
             </div>
             <div className="hidden md:block w-px h-6 bg-stone-200" />
             <nav className="hidden md:flex items-center gap-0.5">
@@ -521,11 +517,9 @@ export default function WillowbrookPage() {
       <footer className="bg-stone-900 py-10">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-5">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-bold shadow-sm" style={{ background: "#1B4332" }}>PHB</div>
-            <div>
-              <p className="text-sm font-bold text-white">Pro Home Builders</p>
-              <p className="text-[11px] text-stone-500">5800 Balcones Dr · Austin, TX 78731 · TREC #789456</p>
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={BUILDER_LOGO} alt="Pro Home Builders" className="h-7 object-contain brightness-0 invert" style={{ maxWidth: 140 }} />
+            <p className="text-[11px] text-stone-500">5800 Balcones Dr · Austin, TX 78731 · TREC #789456</p>
           </div>
           <div className="flex flex-col items-center gap-1">
             <p className="text-[11px] text-stone-500 text-center">© 2025 Pro Home Builders · All rights reserved</p>
