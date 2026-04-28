@@ -288,22 +288,26 @@ export async function POST(req: NextRequest) {
     console.warn("R2 output upload failed:", msg);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: renderRow, error: dbError } = await (supabase.from("renders") as any)
-    .insert({
-      render_type: body.renderType,
-      style:       body.style,
-      lighting:    body.lighting,
-      season:      body.season      ?? null,
-      landscape:   body.landscape   ?? null,
-      image_url:   savedImageUrl,
-      is_revision: body.isRevision  ?? false,
-      builder_id:  body.builderId   ?? null,
-    })
-    .select("id")
-    .single();
-
-  if (dbError) console.warn("renders insert failed:", dbError.message);
+  // Only persist the record when we have a real URL — an empty image_url is useless in the archive
+  let renderRow: { id: string } | null = null;
+  if (savedImageUrl) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error: dbError } = await (supabase.from("renders") as any)
+      .insert({
+        render_type: body.renderType,
+        style:       body.style,
+        lighting:    body.lighting,
+        season:      body.season      ?? null,
+        landscape:   body.landscape   ?? null,
+        image_url:   savedImageUrl,
+        is_revision: body.isRevision  ?? false,
+        builder_id:  body.builderId   ?? null,
+      })
+      .select("id")
+      .single();
+    if (dbError) console.warn("renders insert failed:", dbError.message);
+    else renderRow = data;
+  }
 
   return NextResponse.json({
     imageBase64: resultBase64,
