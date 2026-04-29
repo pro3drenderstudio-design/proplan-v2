@@ -1,6 +1,5 @@
 /**
  * Cloudflare R2 client (S3-compatible).
- * Uses the fetch-based HTTP handler to avoid Windows Node.js TLS issues.
  */
 
 import {
@@ -9,7 +8,6 @@ import {
   CompleteMultipartUploadCommand, AbortMultipartUploadCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 
 function getClient() {
   const accountId = process.env.R2_ACCOUNT_ID;
@@ -23,7 +21,6 @@ function getClient() {
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
     },
     forcePathStyle: false,
-    requestHandler: new FetchHttpHandler({ requestTimeout: 60_000 }),
   });
 }
 
