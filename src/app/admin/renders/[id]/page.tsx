@@ -222,11 +222,13 @@ function DeliverPanel({
   adminId,
   adminName,
   onDelivered,
+  isRedelivery = false,
 }: {
   requestId: string;
   adminId: string;
   adminName: string;
   onDelivered: (msg: RenderMessage) => void;
+  isRedelivery?: boolean;
 }) {
   const [open,        setOpen]        = useState(false);
   const [files,       setFiles]       = useState<RenderMessageAttachment[]>([]);
@@ -293,8 +295,8 @@ function DeliverPanel({
         className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/3 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <span className="text-yellow-400 font-bold text-sm">Deliver to Builder</span>
-          <span className="text-xs text-white/30">Upload rendered files and mark as delivered</span>
+          <span className="text-yellow-400 font-bold text-sm">{isRedelivery ? "Re-deliver Files" : "Deliver to Builder"}</span>
+          <span className="text-xs text-white/30">{isRedelivery ? "Send updated or missing files" : "Upload rendered files and mark as delivered"}</span>
         </div>
         <svg className={`w-4 h-4 text-white/30 transition-transform ${open ? "rotate-180" : ""}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -363,7 +365,7 @@ function DeliverPanel({
             disabled={submitting || files.length === 0 || uploading}
             className="w-full py-3 rounded-xl bg-yellow-500/80 hover:bg-yellow-400/80 disabled:opacity-40 disabled:cursor-not-allowed text-black font-bold text-sm transition-colors"
           >
-            {submitting ? "Marking as Delivered…" : `Mark as Delivered · ${files.length} file${files.length !== 1 ? "s" : ""}`}
+            {submitting ? "Sending…" : isRedelivery ? `Re-deliver · ${files.length} file${files.length !== 1 ? "s" : ""}` : `Mark as Delivered · ${files.length} file${files.length !== 1 ? "s" : ""}`}
           </button>
         </div>
       )}
@@ -799,13 +801,14 @@ function AdminRenderDetailContent() {
         <CountdownTimer targetDate={req.proposed_completion_date} />
       )}
 
-      {/* Deliver panel */}
-      {req.status !== "delivered" && req.status !== "completed" && (
+      {/* Deliver panel — visible until builder accepts (completed) */}
+      {req.status !== "completed" && (
         <DeliverPanel
           requestId={id}
           adminId={adminId}
           adminName={adminName}
           onDelivered={handleDelivered}
+          isRedelivery={req.status === "delivered"}
         />
       )}
 
