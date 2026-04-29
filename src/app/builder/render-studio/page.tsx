@@ -503,18 +503,11 @@ export default function RenderStudioPage() {
   async function loadArchive() {
     setArchiveLoading(true);
     const builderId = await getBuilderIdFromSession();
-    const url = builderId
-      ? `/api/render-studio/archive?builderId=${encodeURIComponent(builderId)}`
-      : `/api/render-studio/archive`;
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json() as RenderRecord[];
-        setRecords(data ?? []);
-      }
-    } catch (e) {
-      console.error("loadArchive:", e);
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (supabase.from("renders") as any).select("*").order("created_at", { ascending: false });
+    if (builderId) query = query.eq("builder_id", builderId);
+    const { data } = await query;
+    setRecords((data as RenderRecord[]) ?? []);
     setArchiveLoading(false);
   }
 
