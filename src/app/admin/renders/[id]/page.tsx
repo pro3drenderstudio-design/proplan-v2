@@ -12,6 +12,7 @@ import {
 } from "@/lib/admin-api";
 import { getRenderMessages } from "@/lib/builder-api";
 import { supabase } from "@/lib/supabase";
+import { uploadFiles as uploadFilesToR2 } from "@/lib/upload-file";
 import { RenderMessage, RenderMessageAttachment, RenderRequestStatus } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -242,20 +243,9 @@ function DeliverPanel({
   async function uploadFiles(rawFiles: File[]) {
     setUploading(true);
     setUploadError("");
-    const results = await Promise.all(rawFiles.map(async (file) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/upload/render-attachment", { method: "POST", body: fd });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        return { error: (err as { error?: string }).error ?? `HTTP ${res.status}` };
-      }
-      return res.json() as Promise<RenderMessageAttachment>;
-    }));
-    const valid  = results.filter((r): r is RenderMessageAttachment => !("error" in r));
-    const errors = results.filter((r): r is { error: string } => "error" in r);
+    const { valid, errors } = await uploadFilesToR2(rawFiles);
     if (errors.length > 0) {
-      setUploadError(`${errors.length} file(s) failed: ${errors[0].error}`);
+      setUploadError(`${errors.length} file(s) failed: ${errors[0]}`);
     }
     setFiles(prev => [...prev, ...valid]);
     setUploading(false);
@@ -592,24 +582,13 @@ function AdminRenderDetailContent() {
   }, [messages]);
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? []);
-    if (files.length === 0) return;
+    const rawFiles = Array.from(e.target.files ?? []);
+    if (rawFiles.length === 0) return;
     setUploading(true);
     setChatUploadErr("");
-    const results = await Promise.all(files.map(async (file) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/upload/render-attachment", { method: "POST", body: fd });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        return { error: (err as { error?: string }).error ?? `HTTP ${res.status}` };
-      }
-      return res.json() as Promise<RenderMessageAttachment>;
-    }));
-    const valid  = results.filter((r): r is RenderMessageAttachment => !("error" in r));
-    const errors = results.filter((r): r is { error: string } => "error" in r);
+    const { valid, errors } = await uploadFilesToR2(rawFiles);
     if (errors.length > 0) {
-      setChatUploadErr(`Upload failed: ${errors[0].error}`);
+      setChatUploadErr(`Upload failed: ${errors[0]}`);
       setTimeout(() => setChatUploadErr(""), 8000);
     }
     setAttachments(prev => [...prev, ...valid]);

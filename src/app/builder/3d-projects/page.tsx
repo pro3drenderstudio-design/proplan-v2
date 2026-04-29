@@ -13,6 +13,7 @@ import {
   RenderRequestPriority,
 } from "@/lib/builder-api";
 import { Project, RenderMessageAttachment } from "@/types/database";
+import { uploadFiles as uploadFilesToR2 } from "@/lib/upload-file";
 
 export const dynamic = "force-dynamic";
 
@@ -272,23 +273,12 @@ function NewRequestForm({
   const insufficient = remaining !== null && remaining < creditCost;
 
   async function handleRefFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? []);
-    if (files.length === 0) return;
+    const rawFiles = Array.from(e.target.files ?? []);
+    if (rawFiles.length === 0) return;
     setUploading(true);
-    const results = await Promise.all(files.map(async (file) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/upload/render-attachment", { method: "POST", body: fd });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Upload failed" }));
-        return { error: err.error ?? "Upload failed" };
-      }
-      return res.json() as Promise<RenderMessageAttachment>;
-    }));
-    const valid  = results.filter((r): r is RenderMessageAttachment => !("error" in r));
-    const errors = results.filter((r): r is { error: string } => "error" in r);
+    const { valid, errors } = await uploadFilesToR2(rawFiles);
     if (errors.length > 0) {
-      setRefUploadError(`${errors.length} file(s) failed to upload. Make sure the storage bucket exists.`);
+      setRefUploadError(`${errors.length} file(s) failed: ${errors[0]}`);
       setTimeout(() => setRefUploadError(""), 6000);
     }
     setRefFiles(prev => [...prev, ...valid]);

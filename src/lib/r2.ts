@@ -136,3 +136,13 @@ export async function abortMultipartUpload(key: string, uploadId: string): Promi
   const client = getClient();
   await client.send(new AbortMultipartUploadCommand({ Bucket: BUCKET(), Key: key, UploadId: uploadId })).catch(() => {});
 }
+
+export async function presignPutObject(key: string, contentType: string, expiresIn = 3600): Promise<string> {
+  const client = getClient();
+  const cmd = new PutObjectCommand({ Bucket: BUCKET(), Key: key, ContentType: contentType });
+  return getSignedUrl(client, cmd, { expiresIn });
+}
+
+export function getPublicUrl(key: string): string {
+  return `${PUBLIC()}/${key}`;
+}
