@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
     "@gltf-transform/core",
     "@gltf-transform/extensions",
     "@gltf-transform/functions",
+    "@aws-sdk/client-s3",
+    "@aws-sdk/s3-request-presigner",
   ],
 };
 
