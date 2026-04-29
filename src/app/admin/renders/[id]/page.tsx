@@ -234,18 +234,27 @@ function DeliverPanel({
   const [uploading,   setUploading]   = useState(false);
   const [submitting,  setSubmitting]  = useState(false);
   const [dragOver,    setDragOver]    = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const fileInputRef                  = useRef<HTMLInputElement>(null);
 
   async function uploadFiles(rawFiles: File[]) {
     setUploading(true);
-    const uploads = await Promise.all(rawFiles.map(async (file) => {
+    setUploadError("");
+    const results = await Promise.all(rawFiles.map(async (file) => {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/upload/render-attachment", { method: "POST", body: fd });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        return { error: (err as { error?: string }).error ?? `HTTP ${res.status}` };
+      }
       return res.json() as Promise<RenderMessageAttachment>;
     }));
-    const valid = uploads.filter(Boolean) as RenderMessageAttachment[];
+    const valid  = results.filter((r): r is RenderMessageAttachment => !("error" in r));
+    const errors = results.filter((r): r is { error: string } => "error" in r);
+    if (errors.length > 0) {
+      setUploadError(`${errors.length} file(s) failed: ${errors[0].error}`);
+    }
     setFiles(prev => [...prev, ...valid]);
     setUploading(false);
   }
@@ -317,6 +326,9 @@ function DeliverPanel({
 
           {uploading && (
             <p className="text-xs text-yellow-400/70 text-center">Uploading…</p>
+          )}
+          {uploadError && (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{uploadError}</p>
           )}
 
           {/* Uploaded files */}
@@ -519,8 +531,9 @@ function AdminRenderDetailContent() {
   const [messages,    setMessages]    = useState<RenderMessage[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [msgBody,     setMsgBody]     = useState("");
-  const [attachments, setAttachments] = useState<RenderMessageAttachment[]>([]);
-  const [uploading,   setUploading]   = useState(false);
+  const [attachments,  setAttachments]  = useState<RenderMessageAttachment[]>([]);
+  const [uploading,    setUploading]    = useState(false);
+  const [chatUploadErr, setChatUploadErr] = useState("");
   const [sending,     setSending]     = useState(false);
   const [adminId,     setAdminId]     = useState<string>("");
   const [adminName,   setAdminName]   = useState<string>("Admin");
@@ -580,14 +593,23 @@ function AdminRenderDetailContent() {
     const files = Array.from(e.target.files ?? []);
     if (files.length === 0) return;
     setUploading(true);
-    const uploads = await Promise.all(files.map(async (file) => {
+    setChatUploadErr("");
+    const results = await Promise.all(files.map(async (file) => {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/upload/render-attachment", { method: "POST", body: fd });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        return { error: (err as { error?: string }).error ?? `HTTP ${res.status}` };
+      }
       return res.json() as Promise<RenderMessageAttachment>;
     }));
-    const valid = uploads.filter(Boolean) as RenderMessageAttachment[];
+    const valid  = results.filter((r): r is RenderMessageAttachment => !("error" in r));
+    const errors = results.filter((r): r is { error: string } => "error" in r);
+    if (errors.length > 0) {
+      setChatUploadErr(`Upload failed: ${errors[0].error}`);
+      setTimeout(() => setChatUploadErr(""), 8000);
+    }
     setAttachments(prev => [...prev, ...valid]);
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -807,6 +829,9 @@ function AdminRenderDetailContent() {
 
         {/* Compose */}
         <div className="border-t border-white/8 p-4 flex-shrink-0">
+          {chatUploadErr && (
+            <p className="text-xs text-red-400 mb-2">{chatUploadErr}</p>
+          )}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-3">
               {attachments.map((att, i) => (
