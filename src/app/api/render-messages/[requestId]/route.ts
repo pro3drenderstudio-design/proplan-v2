@@ -65,10 +65,17 @@ export async function POST(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // If this is a delivery message, also update render_request status
+  // If this is a delivery message, update status and populate deliverable_urls
   if (body.is_delivery) {
+    const imageUrls = (body.attachments as Array<{ url: string; type: string }>)
+      .filter(a => a.type?.startsWith("image/"))
+      .map(a => a.url);
     const { error: updateErr } = await (supabase.from("render_requests") as AnyQuery)
-      .update({ status: "delivered", delivered_at: new Date().toISOString() })
+      .update({
+        status:           "delivered",
+        delivered_at:     new Date().toISOString(),
+        deliverable_urls: imageUrls,
+      })
       .eq("id", requestId);
     if (updateErr) {
       console.warn("render-messages: failed to update request status:", updateErr.message);
