@@ -202,7 +202,7 @@ export default function SummaryPage({
           // Fetch the logo and draw it through a canvas so we always get a PNG
           // data URI — jsPDF's addImage only reliably handles PNG/JPEG, and the
           // hardcoded "PNG" format string fails silently for JPEG/WebP sources.
-          const blob = await fetch(builder.logo_url).then(r => r.blob());
+          const blob = await fetch(`/api/proxy-image?url=${encodeURIComponent(builder.logo_url)}`).then(r => r.blob());
           const blobUrl = URL.createObjectURL(blob);
           const result = await new Promise<{ w: number; h: number; base64: string }>(res => {
             const img = new Image();

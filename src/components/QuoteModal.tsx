@@ -134,7 +134,7 @@ export default function QuoteModal({
       let logoNaturalH: number | null = null;
       if (builder?.logo_url) {
         try {
-          const blob   = await fetch(builder.logo_url).then(r => r.blob());
+          const blob   = await fetch(`/api/proxy-image?url=${encodeURIComponent(builder.logo_url)}`).then(r => r.blob());
           const blobUrl = URL.createObjectURL(blob);
           const result = await new Promise<{ w: number; h: number; base64: string }>(res => {
             const img = new Image();
