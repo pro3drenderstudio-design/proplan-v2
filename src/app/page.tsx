@@ -4,7 +4,7 @@ import Footer         from "@/components/landing/Footer";
 import AIRenderSlider  from "@/components/landing/AIRenderSlider";
 import RenderCarousel  from "@/components/landing/RenderCarousel";
 import CalendlyButton  from "@/components/CalendlyButton";
-import HomepageVideo   from "@/components/landing/HomepageVideo";
+import HeroActions     from "@/components/landing/HeroActions";
 import { fetchActivePlans, buildPlanFeatures, fmtUSD as fmtPlanUSD } from "@/lib/plans";
 
 // ── Image constants ───────────────────────────────────────────────────────────
@@ -98,16 +98,7 @@ export default async function LandingPage() {
             Every tool your team needs. One subscription. Built for builders who want to close more and spend less.
           </p>
 
-          <div className="flex justify-center mb-4">
-            <CalendlyButton className="flex items-center justify-center gap-2 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white text-[15px] font-semibold rounded-xl transition-colors shadow-2xl shadow-blue-600/25">
-              Schedule a Demo <Arrow />
-            </CalendlyButton>
-          </div>
-          <p className="text-xs text-white/20 mb-10">No commitment · Live demo in 30 minutes · Cancel anytime</p>
-
-          <div className="max-w-4xl mx-auto">
-            <HomepageVideo />
-          </div>
+          <HeroActions />
         </div>
       </section>
 
