@@ -1,7 +1,6 @@
 import Link from "next/link";
 import Nav            from "@/components/landing/Nav";
 import Footer         from "@/components/landing/Footer";
-import VideoPlaceholder from "@/components/landing/VideoPlaceholder";
 import AIRenderSlider  from "@/components/landing/AIRenderSlider";
 import RenderCarousel  from "@/components/landing/RenderCarousel";
 import CalendlyButton  from "@/components/CalendlyButton";
@@ -105,11 +104,14 @@ export default async function LandingPage() {
           </div>
           <p className="text-xs text-white/20 mb-10">No commitment · Live demo in 30 minutes · Cancel anytime</p>
 
-          <div className="max-w-4xl mx-auto">
-            <VideoPlaceholder
-              title="ProPlan Studio — The Complete Buyer Journey"
-              duration="1:45"
-              subtitle="Platform Overview"
+          <div className="max-w-4xl mx-auto rounded-2xl overflow-hidden border border-white/8">
+            <video
+              src="https://pub-771cb4534de742a8876353182e3b5c47.r2.dev/Site%20Assets/Homepage%20Demo%20video(2k).mp4"
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="w-full aspect-video object-cover"
             />
           </div>
         </div>
