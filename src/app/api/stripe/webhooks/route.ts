@@ -48,6 +48,28 @@ async function resetMonthlyCredits(builderId: string) {
   }).eq("id", builderId);
 }
 
+async function resetAddonCredits(builderId: string) {
+  const { data: builderAddons } = await supabase
+    .from("builder_addons")
+    .select("addon_slug")
+    .eq("builder_id", builderId)
+    .eq("status", "active");
+  if (!builderAddons?.length) return;
+
+  const slugs = builderAddons.map(a => a.addon_slug);
+  const { data: addons } = await supabase
+    .from("addons").select("slug, included_units").in("slug", slugs);
+  if (!addons) return;
+
+  for (const addon of addons) {
+    if (addon.included_units === null) continue; // unlimited — no reset needed
+    await supabase.from("builder_addons").update({
+      credits_remaining: addon.included_units,
+      credits_reset_at:  new Date().toISOString(),
+    }).eq("builder_id", builderId).eq("addon_slug", addon.slug);
+  }
+}
+
 export async function POST(req: NextRequest) {
   const body      = await req.text();
   const signature = req.headers.get("stripe-signature");
@@ -88,6 +110,24 @@ export async function POST(req: NextRequest) {
             ai_credits_remaining: newRemaining,
             ai_credits_total:     (builder.ai_credits_total ?? 0) + qty,
           }).eq("id", builderId);
+          break;
+        }
+
+        // ── Site map request setup fee ────────────────────────────────────────
+        if (session.mode === "payment" && session.metadata?.site_map_request_id) {
+          const smRequestId = session.metadata.site_map_request_id;
+          const builderId   = session.metadata.builder_id;
+          if (!smRequestId || !builderId) break;
+
+          await supabase.from("site_map_requests")
+            .update({ status: "pending_review" })
+            .eq("id", smRequestId);
+
+          // Notify admins (best-effort)
+          try {
+            const { notifyAdminsSiteMapRequest } = await import("@/lib/notify");
+            await notifyAdminsSiteMapRequest(smRequestId);
+          } catch { /* notify is optional */ }
           break;
         }
 
@@ -145,7 +185,77 @@ export async function POST(req: NextRequest) {
           break;
         }
 
-        // ── Subscription checkout ─────────────────────────────────────────────
+        // ── Addon subscription checkout ───────────────────────────────────────
+        if (session.metadata?.addon_slugs) {
+          const builderId  = session.metadata.builder_id;
+          const addonSlugs = JSON.parse(session.metadata.addon_slugs) as string[];
+          const crmConfig  = session.metadata.crm_config ? JSON.parse(session.metadata.crm_config) : null;
+          if (!builderId || !addonSlugs.length) break;
+
+          const subId = typeof session.subscription === "string"
+            ? session.subscription
+            : (session.subscription as Stripe.Subscription | null)?.id;
+
+          // Fetch subscription items to get per-addon Stripe item IDs
+          const sub = subId ? await stripe.subscriptions.retrieve(subId) : null;
+          const itemMap: Record<string, string> = {};
+          if (sub) {
+            for (const item of sub.items.data) {
+              const productId = typeof item.price.product === "string" ? item.price.product : item.price.product?.id;
+              if (!productId) continue;
+              // Match via product metadata
+              try {
+                const product = await stripe.products.retrieve(productId);
+                const slug = product.metadata?.addon_slug;
+                if (slug) itemMap[slug] = item.id;
+              } catch { /* skip */ }
+            }
+          }
+
+          // Fetch addon credit defaults
+          const { data: addonRows } = await supabase
+            .from("addons").select("slug, included_units").in("slug", addonSlugs);
+
+          const creditMap: Record<string, number | null> = {};
+          for (const a of (addonRows ?? [])) creditMap[a.slug] = a.included_units;
+
+          // Upsert builder_addons rows
+          for (const slug of addonSlugs) {
+            await supabase.from("builder_addons").upsert({
+              builder_id:                  builderId,
+              addon_slug:                  slug,
+              stripe_subscription_item_id: itemMap[slug] ?? null,
+              status:                      "active",
+              credits_remaining:           creditMap[slug] ?? null,
+              credits_reset_at:            sub ? new Date((sub as any).current_period_end * 1000).toISOString() : null,
+            }, { onConflict: "builder_id,addon_slug" });
+          }
+
+          // Save CRM config if provided
+          if (crmConfig?.crm_type && crmConfig.crm_type !== "skip") {
+            await supabase.from("crm_integrations").upsert({
+              builder_id:  builderId,
+              crm_type:    crmConfig.crm_type,
+              api_key:     crmConfig.api_key   ?? null,
+              portal_id:   crmConfig.portal_id ?? null,
+              webhook_url: crmConfig.webhook_url ?? null,
+              enabled:     true,
+            }, { onConflict: "builder_id" });
+          }
+
+          // Update builder subscription state
+          const customerId = typeof session.customer === "string" ? session.customer : (session.customer as Stripe.Customer | null)?.id ?? null;
+          await supabase.from("builders").update({
+            stripe_subscription_id:     subId ?? null,
+            stripe_subscription_status: sub?.status ?? "active",
+            stripe_customer_id:         customerId ?? undefined,
+            current_period_end:         sub ? new Date((sub as any).current_period_end * 1000).toISOString() : null,
+            status:                     "active",
+          }).eq("id", builderId);
+          break;
+        }
+
+        // ── Legacy plan subscription checkout ─────────────────────────────────
         const builderId = session.metadata?.builder_id;
         const planId    = session.metadata?.plan_id;
         if (!builderId || !planId) break;
@@ -234,6 +344,7 @@ export async function POST(req: NextRequest) {
 
         // Reset credits on each successful billing cycle
         await resetMonthlyCredits(builder.id);
+        await resetAddonCredits(builder.id);
 
         await supabase.from("builders").update({
           stripe_subscription_status: "active",
