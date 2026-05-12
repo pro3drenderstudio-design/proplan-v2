@@ -651,6 +651,9 @@ export interface Lot {
   label_x: number | null;
   label_y: number | null;
   label_font_size: number | null;
+  cta_type:  "configurator" | "external" | "contact" | "none";
+  cta_label: string | null;
+  cta_url:   string | null;
   created_at: string;
   updated_at: string;
 }

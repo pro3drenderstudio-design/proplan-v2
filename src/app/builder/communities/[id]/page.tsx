@@ -36,7 +36,7 @@ export default function BuilderCommunityEditorPage() {
 
   // Selection / editing
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
-  const [lotForm,     setLotForm]     = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number } | null>(null);
+  const [lotForm,     setLotForm]     = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number; cta_type: "configurator" | "external" | "contact" | "none"; cta_label: string; cta_url: string } | null>(null);
   const [savingLot,   setSavingLot]   = useState(false);
   const [deletingLot, setDeletingLot] = useState(false);
 
@@ -184,7 +184,7 @@ export default function BuilderCommunityEditorPage() {
     if (drawingPoints.length < 3) return;
     setIsDrawing(false); setMousePos(null);
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11 });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11, cta_type: "configurator", cta_label: "", cta_url: "" });
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
   }
@@ -195,7 +195,7 @@ export default function BuilderCommunityEditorPage() {
     if (isDrawing) return;
     setPendingPolygon(null);
     setSelectedLot(lot);
-    setLotForm({ lot_number: lot.lot_number, status: lot.status, project_id: lot.project_id ?? "", price_modifier: String(lot.price_modifier ?? 0), notes: lot.notes ?? "", text_color: lot.text_color ?? "#ffffff", label_x: lot.label_x ?? null, label_y: lot.label_y ?? null, label_font_size: lot.label_font_size ?? 11 });
+    setLotForm({ lot_number: lot.lot_number, status: lot.status, project_id: lot.project_id ?? "", price_modifier: String(lot.price_modifier ?? 0), notes: lot.notes ?? "", text_color: lot.text_color ?? "#ffffff", label_x: lot.label_x ?? null, label_y: lot.label_y ?? null, label_font_size: lot.label_font_size ?? 11, cta_type: lot.cta_type ?? "configurator", cta_label: lot.cta_label ?? "", cta_url: lot.cta_url ?? "" });
   }
 
   async function handleSaveLot() {
@@ -204,7 +204,7 @@ export default function BuilderCommunityEditorPage() {
     if (selectedLot) {
       const res = await fetch(`/api/communities/${community.id}/lots/${selectedLot.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lot_number: lotForm.lot_number, status: lotForm.status, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), notes: lotForm.notes || null, text_color: lotForm.text_color || null, label_x: lotForm.label_x, label_y: lotForm.label_y, label_font_size: lotForm.label_font_size }),
+        body: JSON.stringify({ lot_number: lotForm.lot_number, status: lotForm.status, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), notes: lotForm.notes || null, text_color: lotForm.text_color || null, label_x: lotForm.label_x, label_y: lotForm.label_y, label_font_size: lotForm.label_font_size, cta_type: lotForm.cta_type, cta_label: lotForm.cta_label || null, cta_url: lotForm.cta_url || null }),
       });
       if (res.ok) {
         setCommunity(prev => prev ? { ...prev, lots: prev.lots.map(l => l.id === selectedLot.id ? { ...l, ...lotForm, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier) } : l) } : null);
@@ -213,7 +213,7 @@ export default function BuilderCommunityEditorPage() {
     } else if (pendingPolygon) {
       const res = await fetch(`/api/communities/${community.id}/lots`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lot_number: lotForm.lot_number, polygon: pendingPolygon, status: lotForm.status, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), notes: lotForm.notes || null, text_color: lotForm.text_color || null, label_x: lotForm.label_x, label_y: lotForm.label_y, label_font_size: lotForm.label_font_size }),
+        body: JSON.stringify({ lot_number: lotForm.lot_number, polygon: pendingPolygon, status: lotForm.status, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), notes: lotForm.notes || null, text_color: lotForm.text_color || null, label_x: lotForm.label_x, label_y: lotForm.label_y, label_font_size: lotForm.label_font_size, cta_type: lotForm.cta_type, cta_label: lotForm.cta_label || null, cta_url: lotForm.cta_url || null }),
       });
       if (res.ok) {
         const newLot = await res.json() as Lot;
@@ -542,6 +542,45 @@ export default function BuilderCommunityEditorPage() {
                   onChange={e => setLotForm(f => f && ({ ...f, notes: e.target.value }))}
                   rows={2} className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
               </div>
+              {/* CTA configuration */}
+              <div className="pt-2 border-t border-white/8 space-y-3">
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25">Call to Action</label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {([
+                    { value: "configurator", label: "Configurator" },
+                    { value: "external",     label: "External Link" },
+                    { value: "contact",      label: "Lead Form" },
+                    { value: "none",         label: "No CTA" },
+                  ] as const).map(opt => (
+                    <button key={opt.value}
+                      onClick={() => setLotForm(f => f && ({ ...f, cta_type: opt.value }))}
+                      className={`py-1.5 px-2 rounded-lg text-[10px] font-semibold border transition-colors text-left
+                        ${lotForm.cta_type === opt.value
+                          ? "bg-blue-600/20 border-blue-500/50 text-blue-300"
+                          : "bg-white/4 border-white/10 text-white/40 hover:text-white/60"}`}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {(lotForm.cta_type === "configurator" || lotForm.cta_type === "external" || lotForm.cta_type === "contact") && (
+                  <input value={lotForm.cta_label}
+                    onChange={e => setLotForm(f => f && ({ ...f, cta_label: e.target.value }))}
+                    placeholder={
+                      lotForm.cta_type === "configurator" ? "Configure this home (default)" :
+                      lotForm.cta_type === "contact"      ? "Request Info (default)" :
+                      "Button label"
+                    }
+                    className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                )}
+                {lotForm.cta_type === "external" && (
+                  <input value={lotForm.cta_url}
+                    onChange={e => setLotForm(f => f && ({ ...f, cta_url: e.target.value }))}
+                    placeholder="https://…"
+                    type="url"
+                    className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                )}
+              </div>
+
               <div>
                 <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Label Text Color</label>
                 <div className="flex items-center gap-2">
