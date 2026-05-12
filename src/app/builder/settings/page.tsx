@@ -6,12 +6,13 @@ import { supabase } from "@/lib/supabase";
 import { getBuilderSubscription } from "@/lib/builder-api";
 import type { Plan } from "@/types/database";
 
-type Tab = "company" | "billing" | "notifications";
+type Tab = "company" | "billing" | "notifications" | "integrations";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "company",       label: "Company Profile" },
   { id: "billing",       label: "Billing & Plan"  },
   { id: "notifications", label: "Notifications"   },
+  { id: "integrations",  label: "Integrations"    },
 ];
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -69,6 +70,13 @@ function SettingsContent() {
     weekly_report:  false,
   });
 
+  // CRM integration
+  const [crm, setCrm] = useState({ crm_type: "none", api_key: "", webhook_url: "", portal_id: "", enabled: true });
+  const [crmTesting,  setCrmTesting]  = useState(false);
+  const [crmTestResult, setCrmTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [crmSaving,   setCrmSaving]   = useState(false);
+  const [crmSaved,    setCrmSaved]    = useState(false);
+
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -117,6 +125,16 @@ function SettingsContent() {
 
       // Load subscription info
       getBuilderSubscription().then(sub => { if (sub) setSubscription(sub as typeof subscription); });
+
+      // Load CRM config
+      fetch(`/api/builder/crm?builderId=${profile.builder_id}`)
+        .then(r => r.ok ? r.json() : null)
+        .then((data: { crm_type?: string; api_key?: string; webhook_url?: string; portal_id?: string; enabled?: boolean } | null) => {
+          if (data?.crm_type) {
+            setCrm({ crm_type: data.crm_type, api_key: data.api_key ?? "", webhook_url: data.webhook_url ?? "", portal_id: data.portal_id ?? "", enabled: data.enabled ?? true });
+          }
+        })
+        .catch(() => {});
     }
     load();
   }, []);
@@ -446,6 +464,144 @@ function SettingsContent() {
               }`}>
               {saved ? "✓ Saved" : saving ? "Saving…" : "Save Preferences"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Integrations ── */}
+      {tab === "integrations" && (
+        <div className="max-w-2xl space-y-6">
+          <div>
+            <h2 className="text-sm font-bold text-white mb-0.5">CRM Integration</h2>
+            <p className="text-xs text-white/35">Connect your CRM to automatically sync leads from site map inquiries and configurator submissions.</p>
+          </div>
+
+          {/* Provider selector */}
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">CRM Provider</label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {[
+                { key: "hubspot",      label: "HubSpot" },
+                { key: "followupboss", label: "Follow Up Boss" },
+                { key: "lasso",        label: "Lasso" },
+                { key: "zapier",       label: "Zapier" },
+                { key: "csv",          label: "CSV / Manual" },
+                { key: "none",         label: "Not connected" },
+              ].map(p => (
+                <button key={p.key} onClick={() => { setCrm(c => ({ ...c, crm_type: p.key })); setCrmTestResult(null); }}
+                  className="px-3 py-2.5 rounded-xl text-sm font-medium transition-all text-left"
+                  style={crm.crm_type === p.key
+                    ? { background: "rgba(37,99,235,0.2)", border: "1px solid rgba(59,130,246,0.5)", color: "rgba(147,197,253,1)" }
+                    : { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)" }}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Credential fields */}
+          {(crm.crm_type === "hubspot" || crm.crm_type === "followupboss" || crm.crm_type === "lasso") && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">
+                  {crm.crm_type === "hubspot" ? "Private App Token" : "API Key"}
+                </label>
+                <input type="password" value={crm.api_key}
+                  onChange={e => setCrm(c => ({ ...c, api_key: e.target.value }))}
+                  placeholder={crm.crm_type === "hubspot" ? "pat-na1-…" : "Your API key"}
+                  className={INPUT} />
+              </div>
+              {crm.crm_type === "hubspot" && (
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Portal ID (optional)</label>
+                  <input value={crm.portal_id} onChange={e => setCrm(c => ({ ...c, portal_id: e.target.value }))}
+                    placeholder="12345678" className={INPUT} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {crm.crm_type === "zapier" && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Webhook URL</label>
+              <input value={crm.webhook_url} onChange={e => setCrm(c => ({ ...c, webhook_url: e.target.value }))}
+                placeholder="https://hooks.zapier.com/hooks/catch/…" className={INPUT} />
+            </div>
+          )}
+
+          {crm.crm_type === "csv" && (
+            <div className="rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <p className="text-sm text-white/50">Leads are stored in your dashboard and available for CSV export. No external sync needed.</p>
+            </div>
+          )}
+
+          {crm.crm_type !== "none" && crm.crm_type !== "csv" && (
+            <div className="flex items-center gap-3">
+              <button onClick={async () => {
+                setCrmTesting(true); setCrmTestResult(null);
+                const res = await fetch("/api/builder/crm/test", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ crm_type: crm.crm_type, api_key: crm.api_key || undefined, webhook_url: crm.webhook_url || undefined, portal_id: crm.portal_id || undefined }),
+                });
+                const j = await res.json().catch(() => ({ ok: false, error: "Request failed" }));
+                setCrmTestResult(j as { ok: boolean; error?: string });
+                setCrmTesting(false);
+              }} disabled={crmTesting}
+                className="px-4 py-2 rounded-xl text-sm font-medium border border-white/12 text-white/50 hover:text-white hover:border-white/25 disabled:opacity-40 transition-colors">
+                {crmTesting ? "Testing…" : "Test Connection"}
+              </button>
+              {crmTestResult && (
+                <span className={`text-sm font-medium ${crmTestResult.ok ? "text-green-400" : "text-red-400"}`}>
+                  {crmTestResult.ok ? "✓ Connected" : `✗ ${crmTestResult.error ?? "Failed"}`}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Enable toggle */}
+          {crm.crm_type !== "none" && (
+            <label className="flex items-center gap-3 cursor-pointer">
+              <Toggle checked={crm.enabled} onChange={v => setCrm(c => ({ ...c, enabled: v }))} />
+              <span className="text-sm text-white/60">Enable CRM sync</span>
+            </label>
+          )}
+
+          {/* Save / Disconnect */}
+          <div className="flex items-center gap-3 pt-2">
+            {crm.crm_type !== "none" && (
+              <button onClick={async () => {
+                setCrmSaving(true);
+                await fetch("/api/builder/crm", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ builderId, ...crm }),
+                });
+                setCrmSaving(false); setCrmSaved(true);
+                setTimeout(() => setCrmSaved(false), 2500);
+              }} disabled={crmSaving || !builderId}
+                className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition-colors shadow-lg disabled:opacity-50 ${
+                  crmSaved ? "bg-emerald-600 text-white" : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/20"
+                }`}>
+                {crmSaved ? "✓ Saved" : crmSaving ? "Saving…" : "Save Integration"}
+              </button>
+            )}
+            {crm.crm_type !== "none" && (
+              <button onClick={async () => {
+                if (!confirm("Disconnect CRM integration?")) return;
+                await fetch(`/api/builder/crm?builderId=${builderId}`, { method: "DELETE" });
+                setCrm({ crm_type: "none", api_key: "", webhook_url: "", portal_id: "", enabled: true });
+              }} className="text-xs text-red-400/60 hover:text-red-400 transition-colors">
+                Disconnect
+              </button>
+            )}
+          </div>
+
+          <div className="pt-4 border-t border-white/6">
+            <p className="text-[10px] text-white/20 uppercase tracking-widest font-semibold mb-3">Coming Soon</p>
+            <div className="flex items-center gap-3 text-sm text-white/25">
+              <span className="px-3 py-1.5 rounded-lg border border-white/8 text-xs">Salesforce</span>
+              <span className="px-3 py-1.5 rounded-lg border border-white/8 text-xs">Realtor.com</span>
+              <span className="px-3 py-1.5 rounded-lg border border-white/8 text-xs">BuildTopia</span>
+            </div>
           </div>
         </div>
       )}
