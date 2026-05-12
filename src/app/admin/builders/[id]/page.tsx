@@ -92,6 +92,10 @@ export default function BuilderDetailPage() {
   const [saving,         setSaving]         = useState(false);
   const [syncing,        setSyncing]        = useState(false);
   const [logoUploading, setLogoUploading] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirm,   setDeleteConfirm]   = useState("");
+  const [deleting,        setDeleting]        = useState(false);
+  const [deleteError,     setDeleteError]     = useState<string | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const loadData = useCallback(async () => {
@@ -156,6 +160,20 @@ export default function BuilderDetailPage() {
       alert(`Sync failed: ${body.error ?? res.statusText}`);
     }
     setSyncing(false);
+  }
+
+  async function handleDelete() {
+    if (!builder) return;
+    setDeleting(true);
+    setDeleteError(null);
+    const res = await fetch(`/api/admin/builders/${builder.id}`, { method: "DELETE" });
+    if (res.ok) {
+      router.push("/admin/builders");
+    } else {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      setDeleteError(body.error ?? "Failed to delete builder. Please try again.");
+      setDeleting(false);
+    }
   }
 
   if (loading) {
@@ -1031,9 +1049,83 @@ export default function BuilderDetailPage() {
                 </button>
               </div>
             )}
+
+            {/* Danger Zone */}
+            <div className="bg-[#1a1a1a] border border-red-500/20 rounded-xl p-5">
+              <h3 className="text-xs font-bold text-red-400 mb-1">Danger Zone</h3>
+              <p className="text-xs text-white/35 mb-4">Permanently delete this builder account and all associated data. This cannot be undone.</p>
+              <button
+                onClick={() => { setShowDeleteModal(true); setDeleteConfirm(""); setDeleteError(null); }}
+                className="px-4 py-2 rounded-lg border border-red-500/40 text-xs font-semibold text-red-400 hover:bg-red-500/10 transition-colors">
+                Delete Builder Account
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {showDeleteModal && builder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-[#111] border border-red-500/30 rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/12 border border-red-500/25 flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-white">Delete Builder Account</h2>
+                <p className="text-xs text-white/40 mt-0.5">This action is permanent and cannot be undone.</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl px-4 py-3 mb-4 space-y-1" style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)" }}>
+              <p className="text-xs text-white/60">The following will be permanently deleted:</p>
+              <ul className="text-xs text-white/40 space-y-0.5 mt-1 pl-3">
+                <li>• Builder account and all settings</li>
+                <li>• All communities and lot data</li>
+                <li>• All projects and uploaded files</li>
+                <li>• All leads and quotes</li>
+                <li>• Site map requests and CRM config</li>
+                <li>• Auth user account</li>
+              </ul>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">
+                Type <span className="text-red-400 font-mono">{builder.company_name}</span> to confirm
+              </label>
+              <input
+                value={deleteConfirm}
+                onChange={e => setDeleteConfirm(e.target.value)}
+                placeholder={builder.company_name}
+                className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-red-500/50 transition-colors"
+                autoFocus
+              />
+            </div>
+
+            {deleteError && (
+              <p className="text-xs text-red-400 bg-red-400/8 border border-red-400/20 rounded-lg px-3 py-2 mb-3">{deleteError}</p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setShowDeleteModal(false); setDeleteConfirm(""); setDeleteError(null); }}
+                disabled={deleting}
+                className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm text-white/40 hover:text-white transition-colors disabled:opacity-50">
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting || deleteConfirm !== builder.company_name}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-sm font-semibold transition-colors">
+                {deleting ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
