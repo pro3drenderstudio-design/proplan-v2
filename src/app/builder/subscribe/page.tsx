@@ -257,27 +257,12 @@ function SubscribeContent() {
               Choose only the tools you need. Add more anytime from your dashboard.
             </p>
 
-            {/* Billing toggle */}
-            <div className="inline-flex items-center bg-white/5 border border-white/10 rounded-xl p-1 gap-1 mb-8">
-              <button onClick={() => setBilling("monthly")}
-                className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${billing === "monthly" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}>
-                Monthly
-              </button>
-              <button onClick={() => setBilling("annually")}
-                className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 ${billing === "annually" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}>
-                Annual
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  Save 15%
-                </span>
-              </button>
-            </div>
-
             <div className="grid grid-cols-2 gap-3 text-left mb-10">
               {[
                 ["Interactive site maps", "Let buyers explore your community"],
                 ["3D home configurator", "Buyers design in real time"],
                 ["AI render studio", "Instant renders from selections"],
-                ["Lead capture & CRM sync", "Every buyer interaction tracked"],
+                ["Traditional 3D renders", "Professional studio renders on demand"],
               ].map(([title, desc]) => (
                 <div key={title} className="bg-white/4 border border-white/8 rounded-xl p-4 flex gap-3">
                   <CheckIcon />
@@ -301,7 +286,20 @@ function SubscribeContent() {
           <div>
             <div className="text-center mb-8">
               <h2 className="text-2xl font-extrabold text-white mb-2">Choose your tools</h2>
-              <p className="text-white/40 text-sm">Select the services you want. Pricing is per workspace, not per community.</p>
+              <p className="text-white/40 text-sm mb-5">Select the services you want. Pricing is per workspace, not per community.</p>
+              <div className="inline-flex items-center bg-white/5 border border-white/10 rounded-xl p-1 gap-1">
+                <button onClick={() => setBilling("monthly")}
+                  className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${billing === "monthly" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}>
+                  Monthly
+                </button>
+                <button onClick={() => setBilling("annually")}
+                  className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 ${billing === "annually" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}>
+                  Annual
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    Save 15%
+                  </span>
+                </button>
+              </div>
             </div>
 
             {loading ? (
