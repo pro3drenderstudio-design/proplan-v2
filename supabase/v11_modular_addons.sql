@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS site_map_requests (
   estimated_lot_count INT,
   phases              INT  NOT NULL DEFAULT 1,
   plat_map_files      JSONB NOT NULL DEFAULT '[]',
+  reference_links     JSONB NOT NULL DEFAULT '[]',
   style_notes         TEXT,
   target_date         DATE,
   status              TEXT NOT NULL DEFAULT 'awaiting_payment',

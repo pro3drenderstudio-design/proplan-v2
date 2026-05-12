@@ -59,6 +59,190 @@ function fmtDate(d: string) {
   return new Date(d).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
+// ── Builder Account Notifications ─────────────────────────────────────────────
+
+export async function notifyBuilderWelcome(builderId: string) {
+  const email = await builderEmailFromId(builderId);
+  if (!email) return;
+  await sendEmail({
+    to:      email,
+    subject: "Welcome to ProPlan Studio",
+    title:   "Welcome to ProPlan Studio 🎉",
+    body: `
+      <p>Thanks for joining ProPlan Studio — the platform built for home builders who want to sell smarter.</p>
+      <p>Here's what you can do from your dashboard:</p>
+      <ul style="margin:12px 0;padding-left:20px;color:#aaa;">
+        <li style="margin:6px 0;">Request interactive site maps for your communities</li>
+        <li style="margin:6px 0;">Submit 3D render requests and track progress</li>
+        <li style="margin:6px 0;">Capture and manage buyer leads</li>
+        <li style="margin:6px 0;">Configure your CRM integration</li>
+      </ul>
+      <p style="margin-top:20px;">
+        <a href="${APP_URL}/builder/dashboard"
+           style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">
+          Go to Dashboard →
+        </a>
+      </p>`,
+  });
+}
+
+export async function notifyAdminNewBuilder(builderId: string, builderName: string, builderEmail: string) {
+  if (!ADMIN_EMAIL) return;
+  await sendEmail({
+    to:      ADMIN_EMAIL,
+    subject: `New Builder Signed Up: ${builderName}`,
+    title:   "New Builder Account",
+    body: `<p>A new builder account has been created.</p>
+      <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+        <tr><td style="padding:6px 0;color:#999;width:130px;">Name</td><td style="color:#eee;font-weight:600;">${builderName}</td></tr>
+        <tr><td style="padding:6px 0;color:#999;">Email</td><td style="color:#eee;">${builderEmail}</td></tr>
+      </table>
+      <p><a href="${APP_URL}/admin/builders/${builderId}" style="color:#3b82f6;">View Builder →</a></p>`,
+  });
+}
+
+// ── Subscription Notifications ─────────────────────────────────────────────────
+
+export async function notifySubscriptionActivated(builderId: string, addonNames: string[]) {
+  const email = await builderEmailFromId(builderId);
+  if (!email) return;
+  const listHtml = addonNames
+    .map(n => `<li style="margin:6px 0;color:#aaa;">${n}</li>`)
+    .join("");
+  await sendEmail({
+    to:      email,
+    subject: "Your ProPlan Studio Subscription Is Active",
+    title:   "Subscription Activated ✓",
+    body: `
+      <p>Your ProPlan Studio subscription is now active. Here's what you have access to:</p>
+      <ul style="margin:12px 0;padding-left:20px;">${listHtml}</ul>
+      <p style="color:#aaa;font-size:13px;">
+        Your subscription renews monthly. You can manage it at any time from your settings.
+      </p>
+      <p style="margin-top:20px;">
+        <a href="${APP_URL}/builder/dashboard"
+           style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">
+          Go to Dashboard →
+        </a>
+      </p>`,
+  });
+}
+
+export async function notifyAddonAdded(builderId: string, addonName: string) {
+  const email = await builderEmailFromId(builderId);
+  if (!email) return;
+  await sendEmail({
+    to:      email,
+    subject: `${addonName} Added to Your Plan`,
+    title:   `${addonName} Activated ✓`,
+    body: `
+      <p><strong>${addonName}</strong> has been added to your ProPlan Studio plan and is ready to use.</p>
+      <p style="margin-top:20px;">
+        <a href="${APP_URL}/builder/dashboard"
+           style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">
+          Go to Dashboard →
+        </a>
+      </p>`,
+  });
+}
+
+export async function notifySubscriptionCanceled(builderId: string) {
+  const email = await builderEmailFromId(builderId);
+  if (!email) return;
+  await sendEmail({
+    to:      email,
+    subject: "Your ProPlan Studio Subscription Has Been Canceled",
+    title:   "Subscription Canceled",
+    body: `
+      <p>Your ProPlan Studio subscription has been canceled. You will retain access until the end of your current billing period.</p>
+      <p style="color:#aaa;font-size:13px;">
+        If this was a mistake or you'd like to resubscribe, you can do so at any time from your dashboard.
+      </p>
+      <p style="margin-top:20px;">
+        <a href="${APP_URL}/builder/subscribe"
+           style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">
+          Resubscribe →
+        </a>
+      </p>`,
+  });
+}
+
+export async function notifySubscriptionPaymentFailed(builderId: string) {
+  const email = await builderEmailFromId(builderId);
+  if (!email) return;
+  await sendEmail({
+    to:      email,
+    subject: "⚠️ Payment Failed — Action Required",
+    title:   "Payment Failed",
+    body: `
+      <p>We were unable to process payment for your ProPlan Studio subscription.</p>
+      <p style="color:#f59e0b;">Please update your payment method to avoid service interruption. We will retry the charge automatically.</p>
+      <p style="margin-top:20px;">
+        <a href="${APP_URL}/builder/settings?tab=billing"
+           style="display:inline-block;background:#dc2626;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">
+          Update Payment Method →
+        </a>
+      </p>`,
+  });
+}
+
+export async function notifyCreditsLow(
+  builderId: string,
+  addonName:  string,
+  remaining:  number,
+  total:      number,
+  pct:        number,
+) {
+  const email = await builderEmailFromId(builderId);
+  if (!email) return;
+  const isExhausted = remaining === 0;
+  await sendEmail({
+    to:      email,
+    subject: isExhausted
+      ? `${addonName} Credits Exhausted`
+      : `${addonName} Credits Running Low (${pct}% remaining)`,
+    title: isExhausted ? `${addonName} Credits Exhausted` : `${addonName} Credits Running Low`,
+    body: `
+      <p>Your <strong>${addonName}</strong> credits are ${isExhausted ? "fully exhausted" : "running low"}.</p>
+      <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+        <tr>
+          <td style="padding:6px 0;color:#999;width:130px;">Remaining</td>
+          <td style="color:${isExhausted ? "#ef4444" : "#f59e0b"};font-weight:700;">${remaining} / ${total}</td>
+        </tr>
+      </table>
+      ${isExhausted
+        ? "<p style=\"color:#ef4444;\">You have no credits left. Purchase more to continue using this service.</p>"
+        : "<p>Your credits will reset at the start of your next billing cycle. You can also purchase additional credits now.</p>"}
+      <p style="margin-top:20px;">
+        <a href="${APP_URL}/builder/settings?tab=billing"
+           style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">
+          Manage Plan →
+        </a>
+      </p>`,
+  });
+}
+
+export async function notifyRenewalReminder(builderId: string, daysLeft: number, renewalDate: string) {
+  const email = await builderEmailFromId(builderId);
+  if (!email) return;
+  await sendEmail({
+    to:      email,
+    subject: `Your ProPlan Studio Subscription Renews in ${daysLeft} Days`,
+    title:   `Subscription Renews in ${daysLeft} Days`,
+    body: `
+      <p>This is a reminder that your ProPlan Studio subscription will automatically renew on <strong>${fmtDate(renewalDate)}</strong>.</p>
+      <p style="color:#aaa;font-size:13px;">
+        No action is needed. To make changes to your plan or update your payment method, visit your billing settings.
+      </p>
+      <p style="margin-top:20px;">
+        <a href="${APP_URL}/builder/settings?tab=billing"
+           style="display:inline-block;background:#1a1a1a;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;border:1px solid #333;">
+          View Billing Settings →
+        </a>
+      </p>`,
+  });
+}
+
 // ── Render Notifications ───────────────────────────────────────────────────────
 
 export async function notifyAdminsNewRenderRequest(requestId: string) {

@@ -720,7 +720,8 @@ export interface SiteMapRequest {
   community_address:    string | null;
   estimated_lot_count:  number | null;
   phases:               number;
-  plat_map_files:       { name: string; url: string; type: string }[];
+  plat_map_files:       { name: string; url: string; size: number }[];
+  reference_links:      string[];
   style_notes:          string | null;
   target_date:          string | null;
   status:               SiteMapRequestStatus;

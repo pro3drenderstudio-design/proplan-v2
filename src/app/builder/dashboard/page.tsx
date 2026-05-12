@@ -143,7 +143,7 @@ function SubscriptionCard({
             </span>
           </div>
           {monthlyTotal > 0 && (
-            <p className="text-xs text-white/35 mt-0.5">{fmt(monthlyTotal)} / month</p>
+            <p className="text-xs text-white/35 mt-0.5">{fmt(monthlyTotal / 100)} / month</p>
           )}
         </div>
         <div className="text-right">

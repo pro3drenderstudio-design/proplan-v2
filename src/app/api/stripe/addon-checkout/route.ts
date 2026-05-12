@@ -69,23 +69,30 @@ export async function POST(req: NextRequest) {
         ? addon.stripe_price_id_annually
         : addon.stripe_price_id_monthly;
 
-      if (!storedId) {
-        return NextResponse.json(
-          { error: `Stripe price not configured for addon: ${addon.slug}` },
-          { status: 400 }
-        );
+      // Try stored price ID first; fall back to inline price_data if missing or invalid in current Stripe mode
+      let resolvedPriceId: string | null = null;
+      if (storedId) {
+        try {
+          const price = await stripe.prices.retrieve(storedId);
+          if (price.active) resolvedPriceId = price.id;
+        } catch { /* not found in this mode — fall through to price_data */ }
       }
 
-      // Verify price is active
-      try {
-        const price = await stripe.prices.retrieve(storedId);
-        if (!price.active) throw new Error("archived");
-        lineItems.push({ price: price.id, quantity: 1 });
-      } catch {
-        return NextResponse.json(
-          { error: `Stripe price for "${addon.name}" is not active. Re-save in admin.` },
-          { status: 400 }
-        );
+      if (resolvedPriceId) {
+        lineItems.push({ price: resolvedPriceId, quantity: 1 });
+      } else {
+        const unitAmount = billingCycle === "annually"
+          ? Math.round(addon.monthly_price_cents * 12 * 0.85)
+          : addon.monthly_price_cents;
+        lineItems.push({
+          quantity: 1,
+          price_data: {
+            currency:    "usd",
+            unit_amount: unitAmount,
+            recurring:   { interval: billingCycle === "annually" ? "year" as const : "month" as const },
+            product_data: { name: addon.name, metadata: { addon_slug: addon.slug } },
+          },
+        });
       }
     }
 

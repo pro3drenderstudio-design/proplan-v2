@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getBuilderCommunities, getBuilderProfile, getBuilderProjects } from "@/lib/builder-api";
-import { Project, SiteMapRequest } from "@/types/database";
+import { getBuilderCommunities, getBuilderProfile } from "@/lib/builder-api";
+import { SiteMapRequest } from "@/types/database";
 
 interface CommunityStats {
   id: string; name: string; slug: string; description: string | null;
@@ -51,16 +51,6 @@ export default function BuilderCommunitiesPage() {
   const [creating,  setCreating]  = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
 
-  // Request design slide-over
-  const [showRequest,  setShowRequest]  = useState(false);
-  const [projects,     setProjects]     = useState<Project[]>([]);
-  const [reqForm,      setReqForm]      = useState({
-    community_name: "", location: "", lot_count: "", phases: "1",
-    style_notes: "", reference_links: [""], model_ids: [] as string[], notes: "",
-  });
-  const [submitting,  setSubmitting]  = useState(false);
-  const [reqSuccess,  setReqSuccess]  = useState(false);
-
   // Copied link state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -68,22 +58,23 @@ export default function BuilderCommunitiesPage() {
   const [activeTab,   setActiveTab]   = useState<"communities" | "requests">("communities");
   const [siteMapReqs, setSiteMapReqs] = useState<SiteMapRequest[]>([]);
   const [smSetupFee,  setSmSetupFee]  = useState<number | null>(null);
-  const [showSmReq,   setShowSmReq]   = useState(false);
-  const [smReqForm,   setSmReqForm]   = useState({ community_name: "", community_address: "", estimated_lot_count: "", phases: "1", style_notes: "", target_date: "" });
+  const [showSmReq,    setShowSmReq]    = useState(false);
+  const [smReqForm,    setSmReqForm]    = useState({ community_name: "", community_address: "", estimated_lot_count: "", phases: "1", style_notes: "", target_date: "" });
+  const [smFiles,      setSmFiles]      = useState<{ name: string; url: string; size: number }[]>([]);
+  const [smLinks,      setSmLinks]      = useState<string[]>([""]);
+  const [smUploading,  setSmUploading]  = useState(false);
   const [smSubmitting, setSmSubmitting] = useState(false);
-  const [smErr,       setSmErr]       = useState("");
+  const [smErr,        setSmErr]        = useState("");
 
   useEffect(() => {
     Promise.all([
       getBuilderCommunities(),
       getBuilderProfile(),
-      getBuilderProjects(),
       fetch("/api/site-map-requests").then(r => r.ok ? r.json() : []).catch(() => []),
       fetch("/api/addons?slug=site-maps").then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([c, p, projs, smrs, addon]) => {
+    ]).then(([c, p, smrs, addon]) => {
       setCommunities(c);
       setProfile(p);
-      setProjects(projs);
       setSiteMapReqs(Array.isArray(smrs) ? smrs : (smrs?.data ?? []));
       if (addon?.setup_fee_cents) setSmSetupFee(addon.setup_fee_cents);
       setLoading(false);
@@ -109,17 +100,20 @@ export default function BuilderCommunitiesPage() {
     setCreating(false);
   }
 
-  async function handleRequest(e: React.FormEvent) {
-    e.preventDefault();
-    if (!profile) return;
-    setSubmitting(true);
-    await fetch("/api/community-design-requests", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...reqForm, company_slug: profile.company_slug }),
-    });
-    setSubmitting(false);
-    setReqSuccess(true);
+  async function handleSmFileUpload(files: FileList) {
+    setSmUploading(true);
+    const uploaded: { name: string; url: string; size: number }[] = [];
+    for (const file of Array.from(files)) {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/site-map-requests/upload", { method: "POST", body: fd });
+      if (res.ok) {
+        const data = await res.json() as { url: string; name: string; size: number };
+        uploaded.push(data);
+      }
+    }
+    setSmFiles(prev => [...prev, ...uploaded]);
+    setSmUploading(false);
   }
 
   async function handleSmReq(e: React.FormEvent) {
@@ -139,6 +133,8 @@ export default function BuilderCommunitiesPage() {
           phases:               parseInt(smReqForm.phases, 10),
           style_notes:          smReqForm.style_notes || null,
           target_date:          smReqForm.target_date || null,
+          plat_map_files:       smFiles.length > 0 ? smFiles : undefined,
+          reference_links:      smLinks.filter(l => l.trim()),
         }),
       });
       if (!res.ok) {
@@ -146,6 +142,7 @@ export default function BuilderCommunitiesPage() {
         throw new Error((j as { error?: string }).error ?? "Failed to submit request");
       }
       const { id: requestId } = await res.json() as { id: string };
+      setSmFiles([]); setSmLinks([""]);
 
       // Redirect to Stripe for setup fee payment
       const checkoutRes = await fetch("/api/stripe/sitemap-setup-fee", {
@@ -184,14 +181,7 @@ export default function BuilderCommunitiesPage() {
           <p className="text-sm text-white/30 mt-0.5 hidden sm:block">Manage interactive site maps and lot availability for your communities.</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <button onClick={() => setShowRequest(true)}
-            className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/12 text-white/50 text-sm font-medium hover:text-white hover:border-white/25 transition-colors">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-            </svg>
-            Request Design
-          </button>
-          <button onClick={() => { setShowSmReq(true); setSmErr(""); }}
+          <button onClick={() => { setShowSmReq(true); setSmErr(""); setSmFiles([]); setSmLinks([""]); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-blue-500/30 text-blue-400 text-sm font-medium hover:bg-blue-500/10 hover:border-blue-400/50 transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
@@ -327,9 +317,9 @@ export default function BuilderCommunitiesPage() {
               className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
               Create community
             </button>
-            <button onClick={() => setShowRequest(true)}
+            <button onClick={() => { setShowSmReq(true); setSmErr(""); setSmFiles([]); setSmLinks([""]); }}
               className="px-4 py-2 rounded-xl border border-white/12 text-white/50 text-sm font-medium hover:text-white hover:border-white/20 transition-colors">
-              Request design →
+              Request site map →
             </button>
           </div>
         </div>
@@ -529,11 +519,54 @@ export default function BuilderCommunitiesPage() {
                     className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
                 </div>
 
-                <div className="rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                  <p className="text-xs text-white/40 leading-relaxed">
-                    <span className="font-semibold text-white/60">Have plat maps or reference files?</span> Email them to{" "}
-                    <span className="text-blue-400">support@proplanstudio.com</span> after submitting with your community name in the subject line.
-                  </p>
+                {/* File upload */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Plat Maps & Reference Files</label>
+                  <label className={`flex flex-col items-center justify-center gap-2 w-full py-5 rounded-xl border-2 border-dashed cursor-pointer transition-colors
+                    ${smUploading ? "opacity-50 cursor-not-allowed border-white/10" : "border-white/15 hover:border-blue-500/50 hover:bg-blue-500/5"}`}>
+                    <svg className="w-6 h-6 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                    </svg>
+                    <span className="text-xs text-white/40">{smUploading ? "Uploading…" : "Click to upload PDF or images"}</span>
+                    <span className="text-[10px] text-white/20">PDF, JPG, PNG, TIFF · up to 30 MB each</span>
+                    <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.tiff" className="hidden"
+                      disabled={smUploading}
+                      onChange={e => { if (e.target.files?.length) handleSmFileUpload(e.target.files); }} />
+                  </label>
+                  {smFiles.length > 0 && (
+                    <div className="mt-2 space-y-1.5">
+                      {smFiles.map((f, i) => (
+                        <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                          <svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                          </svg>
+                          <span className="text-xs text-white/60 flex-1 truncate">{f.name}</span>
+                          <button type="button" onClick={() => setSmFiles(prev => prev.filter((_, j) => j !== i))}
+                            className="text-white/25 hover:text-red-400 transition-colors text-sm leading-none">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Reference links */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Reference Links <span className="text-white/20 normal-case font-normal">(optional)</span></label>
+                  <div className="space-y-2">
+                    {smLinks.map((link, i) => (
+                      <div key={i} className="flex gap-2">
+                        <input type="url" value={link} placeholder="https://example.com/plat-map"
+                          onChange={e => setSmLinks(prev => prev.map((l, j) => j === i ? e.target.value : l))}
+                          className="flex-1 bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                        {smLinks.length > 1 && (
+                          <button type="button" onClick={() => setSmLinks(prev => prev.filter((_, j) => j !== i))}
+                            className="px-2.5 py-2 rounded-xl border border-white/10 text-white/30 hover:text-red-400 transition-colors text-sm">×</button>
+                        )}
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => setSmLinks(prev => [...prev, ""])}
+                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors">+ Add another link</button>
+                  </div>
                 </div>
 
                 {smErr && <p className="text-xs text-red-400 bg-red-400/8 border border-red-400/20 rounded-lg px-3 py-2">{smErr}</p>}
@@ -560,134 +593,6 @@ export default function BuilderCommunitiesPage() {
         </div>
       )}
 
-      {/* ── Request design slide-over ── */}
-      {showRequest && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={() => { if (!submitting) { setShowRequest(false); setReqSuccess(false); } }} />
-          <div className="w-full sm:w-[520px] bg-[#0a0a0a] border-l border-white/8 shadow-2xl flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-5 border-b border-white/8 flex-shrink-0">
-              <div>
-                <h2 className="font-bold text-white text-lg" style={{ fontFamily: "var(--font-syne), sans-serif" }}>Request Community Design</h2>
-                <p className="text-xs text-white/30 mt-0.5">Our team will build out your interactive site map.</p>
-              </div>
-              <button onClick={() => { setShowRequest(false); setReqSuccess(false); }} className="text-white/25 hover:text-white/60 text-xl leading-none transition-colors">×</button>
-            </div>
-
-            {reqSuccess ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-emerald-500/12 border border-emerald-500/20 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="font-bold text-white text-xl" style={{ fontFamily: "var(--font-syne), sans-serif" }}>Request Submitted</p>
-                  <p className="text-white/40 text-sm mt-2 leading-relaxed max-w-xs">Our team will review your request and reach out within 1–2 business days to discuss your community design.</p>
-                </div>
-                <button onClick={() => { setShowRequest(false); setReqSuccess(false); }}
-                  className="mt-2 px-5 py-2.5 rounded-xl bg-white/8 border border-white/12 text-sm text-white/60 hover:text-white transition-colors">Done</button>
-              </div>
-            ) : (
-              <form onSubmit={handleRequest} className="flex-1 flex flex-col overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="sm:col-span-2">
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Community Name *</label>
-                      <input required value={reqForm.community_name}
-                        onChange={e => setReqForm(f => ({ ...f, community_name: e.target.value }))}
-                        placeholder="e.g. Willow Creek Estates"
-                        className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Location</label>
-                      <input value={reqForm.location}
-                        onChange={e => setReqForm(f => ({ ...f, location: e.target.value }))}
-                        placeholder="City, State"
-                        className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Approx. Lots</label>
-                      <input type="number" min={1} value={reqForm.lot_count}
-                        onChange={e => setReqForm(f => ({ ...f, lot_count: e.target.value }))}
-                        placeholder="42"
-                        className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Number of Phases</label>
-                      <select value={reqForm.phases}
-                        onChange={e => setReqForm(f => ({ ...f, phases: e.target.value }))}
-                        className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/70 focus:outline-none focus:border-blue-500/60 transition-colors">
-                        {["1", "2", "3", "4", "5+"].map(p => <option key={p} value={p}>Phase {p}</option>)}
-                      </select>
-                    </div>
-                    {projects.length > 0 && (
-                      <div className="sm:col-span-2">
-                        <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Home Models to Include</label>
-                        <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                          {projects.map(p => (
-                            <label key={p.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-white/3 hover:bg-white/6 cursor-pointer border border-transparent hover:border-white/8 transition-colors">
-                              <input type="checkbox"
-                                checked={reqForm.model_ids.includes(p.id)}
-                                onChange={e => setReqForm(f => ({
-                                  ...f,
-                                  model_ids: e.target.checked
-                                    ? [...f.model_ids, p.id]
-                                    : f.model_ids.filter(id => id !== p.id),
-                                }))}
-                                className="accent-blue-500 flex-shrink-0" />
-                              <span className="text-sm text-white/60">{p.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="sm:col-span-2">
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Style & Theme Notes</label>
-                      <textarea value={reqForm.style_notes} rows={3}
-                        onChange={e => setReqForm(f => ({ ...f, style_notes: e.target.value }))}
-                        placeholder="Modern farmhouse aesthetic, wooded lots along the north side, cul-de-sac at the end…"
-                        className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Reference Links (site plans, inspiration)</label>
-                      {reqForm.reference_links.map((link, i) => (
-                        <div key={i} className="flex gap-2 mb-2">
-                          <input value={link}
-                            onChange={e => setReqForm(f => ({ ...f, reference_links: f.reference_links.map((l, j) => j === i ? e.target.value : l) }))}
-                            placeholder="https://…"
-                            className="flex-1 bg-[#141414] border border-white/10 rounded-xl px-3 py-2 text-sm text-white/70 font-mono focus:outline-none focus:border-blue-500/60 transition-colors" />
-                          {reqForm.reference_links.length > 1 && (
-                            <button type="button" onClick={() => setReqForm(f => ({ ...f, reference_links: f.reference_links.filter((_, j) => j !== i) }))}
-                              className="text-white/20 hover:text-red-400 text-sm transition-colors px-1">✕</button>
-                          )}
-                        </div>
-                      ))}
-                      <button type="button"
-                        onClick={() => setReqForm(f => ({ ...f, reference_links: [...f.reference_links, ""] }))}
-                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors">+ Add link</button>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Additional Notes</label>
-                      <textarea value={reqForm.notes} rows={2}
-                        onChange={e => setReqForm(f => ({ ...f, notes: e.target.value }))}
-                        placeholder="Any other details, timeline requirements, or special requests…"
-                        className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
-                    </div>
-                  </div>
-                </div>
-                <div className="px-6 py-4 border-t border-white/8 flex gap-3 flex-shrink-0">
-                  <button type="button" onClick={() => setShowRequest(false)}
-                    className="px-4 py-2.5 rounded-xl border border-white/10 text-sm text-white/40 hover:text-white/70 hover:bg-white/5 transition-colors">Cancel</button>
-                  <button type="submit" disabled={submitting || !reqForm.community_name}
-                    className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20">
-                    {submitting ? "Submitting…" : "Submit Request"}
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

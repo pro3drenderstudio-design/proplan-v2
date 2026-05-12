@@ -202,7 +202,10 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
         {NAV_ITEMS.map(item => {
           const isActive   = pathname.startsWith(item.href);
           const addonSlug  = ADDON_REQUIRED[item.href];
-          const isLocked   = !legacyPlan && addonSlug != null && activeAddons != null && (
+          // Treat as legacy ONLY if plan_tier is set AND no addon records exist.
+          // If they have addon records they're on the modular system even if plan_tier is stale.
+          const effectiveLegacy = legacyPlan && (activeAddons === null || activeAddons.size === 0);
+          const isLocked   = !effectiveLegacy && addonSlug != null && activeAddons != null && (
             addonSlug === "any" ? activeAddons.size === 0 : !activeAddons.has(addonSlug)
           );
 
@@ -249,8 +252,8 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
         })}
       </nav>
 
-      {/* New Model CTA — only shown when subscribed to configurator */}
-      {(legacyPlan || (activeAddons !== null && activeAddons.has("configurator"))) && (
+      {/* New Model CTA — only shown when subscribed to configurator (or legacy plan) */}
+      {((legacyPlan && (activeAddons === null || activeAddons.size === 0)) || (activeAddons !== null && activeAddons.has("configurator"))) && (
         <div className="px-2.5 pb-3">
           <Link
             href="/builder/projects?new=1"

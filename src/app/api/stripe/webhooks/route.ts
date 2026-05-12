@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { stripe } from "@/lib/stripe";
 import Stripe from "stripe";
-import { notifyAdminsNewProjectRequest } from "@/lib/notify";
+import {
+  notifyAdminsNewProjectRequest,
+  notifySubscriptionActivated,
+  notifyAddonAdded,
+  notifySubscriptionCanceled,
+  notifySubscriptionPaymentFailed,
+  notifyCreditsLow,
+} from "@/lib/notify";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -252,6 +259,15 @@ export async function POST(req: NextRequest) {
             current_period_end:         sub ? new Date((sub as any).current_period_end * 1000).toISOString() : null,
             status:                     "active",
           }).eq("id", builderId);
+
+          // Notify builder of new subscription (best-effort)
+          try {
+            // Fetch addon display names for the email
+            const { data: addonRows } = await supabase
+              .from("addons").select("slug, name").in("slug", addonSlugs);
+            const addonNames = (addonRows ?? []).map((a: { name: string }) => a.name);
+            await notifySubscriptionActivated(builderId, addonNames);
+          } catch { /* non-critical */ }
           break;
         }
 
@@ -330,6 +346,13 @@ export async function POST(req: NextRequest) {
           stripe_subscription_status: "canceled",
           status: "inactive",
         }).eq("id", builderId);
+
+        // Mark all addons as canceled
+        await supabase.from("builder_addons")
+          .update({ status: "canceled", canceled_at: new Date().toISOString() })
+          .eq("builder_id", builderId).eq("status", "active");
+
+        try { await notifySubscriptionCanceled(builderId); } catch { /* non-critical */ }
         break;
       }
 
@@ -349,12 +372,30 @@ export async function POST(req: NextRequest) {
         await supabase.from("builders").update({
           stripe_subscription_status: "active",
         }).eq("id", builder.id);
+
+        // Check post-reset credit levels and warn if unexpectedly low (e.g. top-up didn't apply)
+        try {
+          const { data: addons } = await supabase
+            .from("builder_addons")
+            .select("addon_slug, credits_remaining, addons(name, included_units)")
+            .eq("builder_id", builder.id)
+            .eq("status", "active");
+          for (const row of (addons ?? [])) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const r = row as any;
+            const included = r.addons?.included_units;
+            const remaining = r.credits_remaining;
+            if (included && remaining !== null && remaining / included <= 0.2) {
+              await notifyCreditsLow(builder.id, r.addons?.name ?? r.addon_slug, remaining, included, Math.round((remaining / included) * 100));
+            }
+          }
+        } catch { /* non-critical */ }
         break;
       }
 
       case "invoice.payment_failed": {
         const invoice    = event.data.object as Stripe.Invoice;
-        const customerId = typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
+        const customerId = typeof invoice.customer === "string" ? invoice.customer : (invoice.customer as Stripe.Customer | null)?.id;
         if (!customerId) break;
 
         const { data: builder } = await supabase
@@ -364,6 +405,8 @@ export async function POST(req: NextRequest) {
         await supabase.from("builders").update({
           stripe_subscription_status: "past_due",
         }).eq("id", builder.id);
+
+        try { await notifySubscriptionPaymentFailed(builder.id); } catch { /* non-critical */ }
         break;
       }
 

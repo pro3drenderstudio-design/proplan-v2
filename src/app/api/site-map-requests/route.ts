@@ -52,6 +52,8 @@ export async function POST(req: NextRequest) {
       phases?:             number;
       style_notes?:        string | null;
       target_date?:        string | null;
+      plat_map_files?:     { name: string; url: string; size: number }[];
+      reference_links?:    string[];
     };
 
     if (!body.community_name?.trim()) {
@@ -76,6 +78,8 @@ export async function POST(req: NextRequest) {
       phases:               body.phases ?? 1,
       style_notes:          body.style_notes ?? null,
       target_date:          body.target_date ?? null,
+      plat_map_files:       body.plat_map_files ?? [],
+      reference_links:      (body.reference_links ?? []).filter(l => l.trim()),
       status:               "awaiting_payment",
       setup_fee_cents:      setupFeeCents,
     }).select("id, setup_fee_cents").single();
