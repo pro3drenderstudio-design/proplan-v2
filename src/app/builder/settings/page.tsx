@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { getBuilderSubscription } from "@/lib/builder-api";
-import type { Plan } from "@/types/database";
+import type { Plan, Addon } from "@/types/database";
+import AddonUpgradeModal, { type AddonInfo } from "@/components/builder/AddonUpgradeModal";
 
 type Tab = "company" | "billing" | "notifications" | "integrations";
 
@@ -77,6 +78,11 @@ function SettingsContent() {
   const [crmSaving,   setCrmSaving]   = useState(false);
   const [crmSaved,    setCrmSaved]    = useState(false);
 
+  // Addon cards
+  const [allAddons,       setAllAddons]       = useState<Addon[]>([]);
+  const [activeAddonSlugs, setActiveAddonSlugs] = useState<Set<string>>(new Set());
+  const [upgradeAddon,    setUpgradeAddon]    = useState<AddonInfo | null>(null);
+
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -133,6 +139,19 @@ function SettingsContent() {
           if (data?.crm_type) {
             setCrm({ crm_type: data.crm_type, api_key: data.api_key ?? "", webhook_url: data.webhook_url ?? "", portal_id: data.portal_id ?? "", enabled: data.enabled ?? true });
           }
+        })
+        .catch(() => {});
+
+      // Load addons catalog + builder's active addons
+      fetch("/api/addons")
+        .then(r => r.json())
+        .then((data: Addon[]) => { if (Array.isArray(data)) setAllAddons(data.sort((a, b) => a.sort_order - b.sort_order)); })
+        .catch(() => {});
+
+      fetch(`/api/builder/addons?builderId=${profile.builder_id}`)
+        .then(r => r.json())
+        .then((data: { addon_slug: string }[]) => {
+          if (Array.isArray(data)) setActiveAddonSlugs(new Set(data.map(d => d.addon_slug)));
         })
         .catch(() => {});
     }
@@ -317,6 +336,66 @@ function SettingsContent() {
                 if (url) window.location.href = url;
               }} className="mt-3 text-xs text-red-300 underline">Update payment method →</button>
             </div>
+          )}
+
+          {/* Addon cards */}
+          {allAddons.length > 0 && (
+            <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 p-6">
+              <h2 className="text-sm font-bold text-white/80 mb-4">Your Add-ons</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {allAddons.map(addon => {
+                  const active = activeAddonSlugs.has(addon.slug);
+                  const price  = (addon.monthly_price_cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+                  return (
+                    <div key={addon.slug}
+                      className={`rounded-xl border p-4 flex items-center justify-between gap-3 ${active ? "bg-blue-600/8 border-blue-500/25" : "bg-white/3 border-white/8"}`}>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-white truncate">{addon.name}</p>
+                        <p className="text-xs text-white/35 mt-0.5">{active ? `${price}/mo · Active` : `${price}/mo`}</p>
+                      </div>
+                      {active ? (
+                        <button onClick={async () => {
+                          if (!builderId) return;
+                          setPortalLoading(true);
+                          const res = await fetch("/api/stripe/portal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ builderId }) });
+                          const { url } = await res.json();
+                          setPortalLoading(false);
+                          if (url) window.location.href = url;
+                        }}
+                          className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-white/6 hover:bg-white/10 border border-white/10 text-xs text-white/60 hover:text-white transition-colors">
+                          Manage
+                        </button>
+                      ) : (
+                        <button onClick={() => {
+                          if (!builderId) return;
+                          setUpgradeAddon({
+                            slug:        addon.slug,
+                            name:        addon.name,
+                            description: addon.description ?? "",
+                            price:       `${price}/mo`,
+                            included:    addon.included_units != null
+                              ? `${addon.included_units} ${addon.unit_label ?? "units"}/mo`
+                              : "Unlimited",
+                          });
+                        }}
+                          className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white transition-colors">
+                          Add
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {upgradeAddon && builderId && (
+            <AddonUpgradeModal
+              addon={upgradeAddon}
+              builderId={builderId}
+              cancelPath="/builder/settings?tab=billing"
+              onClose={() => setUpgradeAddon(null)}
+            />
           )}
         </div>
       )}

@@ -11,12 +11,13 @@ export interface AddonInfo {
 }
 
 interface Props {
-  addon:    AddonInfo;
-  builderId: string;
-  onClose: () => void;
+  addon:       AddonInfo;
+  builderId:   string;
+  onClose:     () => void;
+  cancelPath?: string;   // where Stripe sends the user if they click Back (defaults to /builder/dashboard)
 }
 
-export default function AddonUpgradeModal({ addon, builderId, onClose }: Props) {
+export default function AddonUpgradeModal({ addon, builderId, onClose, cancelPath }: Props) {
   const [loading, setLoading] = useState(false);
   const [err,     setErr]     = useState("");
 
@@ -24,10 +25,13 @@ export default function AddonUpgradeModal({ addon, builderId, onClose }: Props) 
     setLoading(true);
     setErr("");
     try {
+      const cancelUrl = cancelPath
+        ? `${window.location.origin}${cancelPath}`
+        : undefined;
       const res = await fetch("/api/stripe/addon-upgrade", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ builderId, addonSlug: addon.slug }),
+        body:    JSON.stringify({ builderId, addonSlug: addon.slug, cancelUrl }),
       });
       const json = await res.json() as { url?: string; error?: string };
       if (!res.ok) throw new Error(json.error ?? "Failed to create checkout");

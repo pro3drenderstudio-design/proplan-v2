@@ -12,7 +12,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL
 
 export async function POST(req: NextRequest) {
   try {
-    const { builderId, addonSlug } = await req.json() as { builderId: string; addonSlug: string };
+    const { builderId, addonSlug, cancelUrl } = await req.json() as { builderId: string; addonSlug: string; cancelUrl?: string };
     if (!builderId || !addonSlug) {
       return NextResponse.json({ error: "builderId and addonSlug required" }, { status: 400 });
     }
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
           }],
           metadata:    { builder_id: builderId, addon_slugs: JSON.stringify([addonSlug]) },
           success_url: `${APP_URL}/builder/dashboard?addon=success`,
-          cancel_url:  `${APP_URL}/builder/dashboard`,
+          cancel_url:  cancelUrl ?? `${APP_URL}/builder/dashboard`,
         });
         return NextResponse.json({ url: session.url });
       }
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
       }],
       metadata:    { builder_id: builderId, addon_slugs: JSON.stringify([addonSlug]) },
       success_url: `${APP_URL}/builder/dashboard?addon=success`,
-      cancel_url:  `${APP_URL}/builder/dashboard`,
+      cancel_url:  cancelUrl ?? `${APP_URL}/builder/dashboard`,
     });
 
     return NextResponse.json({ url: session.url });
