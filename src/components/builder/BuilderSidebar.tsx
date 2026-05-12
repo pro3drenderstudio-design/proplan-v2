@@ -52,12 +52,15 @@ const ICONS: Record<string, string[]> = {
   ],
 };
 
-// Map nav items to the addon slug required to access them
+// Map nav items to the addon slug required to access them.
+// "any" = requires at least one active addon (no specific one)
 const ADDON_REQUIRED: Partial<Record<string, string>> = {
   "/builder/projects":      "configurator",
   "/builder/3d-projects":   "traditional-renders",
   "/builder/communities":   "site-maps",
   "/builder/render-studio": "ai-renders",
+  "/builder/leads":         "any",
+  "/builder/analytics":     "any",
 };
 
 // Addon info for the upgrade modal
@@ -66,6 +69,7 @@ const ADDON_INFO: Record<string, AddonInfo> = {
   "traditional-renders": { slug: "traditional-renders", name: "Traditional 3D Renders",  description: "High-quality still renders of your floor plans and elevations.",   price: "$500/mo", included: "10 renders/mo" },
   "site-maps":           { slug: "site-maps",           name: "Interactive Site Maps",   description: "Interactive plat maps with lot availability and buyer links.",    price: "$499/mo", included: "Unlimited communities" },
   "ai-renders":          { slug: "ai-renders",          name: "AI Render Studio",        description: "Generate AI-powered renders in seconds using your 3D scenes.",   price: "$150/mo", included: "250 AI credits/mo" },
+  "any":                 { slug: "any",                 name: "Subscribe to get access", description: "This feature is included with any ProPlan Studio subscription.", price: "From $150/mo", included: "Choose your tools" },
 };
 
 const NAV_ITEMS = [
@@ -103,42 +107,55 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
   const [upgradeAddon, setUpgradeAddon] = useState<AddonInfo | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
-      setUserEmail(user.email ?? "");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from("profiles") as any)
-        .select("full_name, builder_id")
-        .eq("id", user.id)
-        .single()
-        .then(({ data: profile }: { data: { full_name: string; builder_id: string | null } | null }) => {
-          if (profile?.full_name) {
-            setUserName(profile.full_name);
-            const parts = profile.full_name.split(" ");
-            setUserInitials(((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "B");
-          }
-          if (profile?.builder_id) {
-            setBuilderId(profile.builder_id);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (supabase.from("builders") as any)
-              .select("company_name, plan_tier")
-              .eq("id", profile.builder_id)
-              .single()
-              .then(({ data: builder }: { data: { company_name: string; plan_tier: string | null } | null }) => {
-                if (builder?.company_name) setCompanyName(builder.company_name);
-                if (builder?.plan_tier) setLegacyPlan(true);
-              });
+    async function loadUser() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setActiveAddons(new Set()); return; }
 
-            // Load active addons
-            fetch(`/api/builder/addons?builderId=${profile.builder_id}`)
-              .then(r => r.ok ? r.json() : [])
-              .then((data: { addon_slug: string }[]) => {
-                setActiveAddons(new Set(data.map(d => d.addon_slug)));
-              })
-              .catch(() => setActiveAddons(new Set()));
-          }
-        });
-    });
+      setUserEmail(user.email ?? "");
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: profile } = await (supabase.from("profiles") as any)
+        .select("full_name, builder_id").eq("id", user.id).single();
+
+      if (profile?.full_name) {
+        setUserName(profile.full_name);
+        const parts = profile.full_name.split(" ");
+        setUserInitials(((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "B");
+      }
+
+      let bid: string | null = profile?.builder_id ?? null;
+
+      // Email fallback — profile might not have builder_id yet
+      if (!bid && user.email) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: builder } = await (supabase.from("builders") as any)
+          .select("id").eq("contact_email", user.email).maybeSingle();
+        if (builder?.id) {
+          bid = builder.id;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from("profiles") as any).update({ builder_id: bid }).eq("id", user.id);
+        }
+      }
+
+      if (!bid) { setActiveAddons(new Set()); return; }
+
+      setBuilderId(bid);
+
+      // Load builder info + addons in parallel
+      const [builderRes, addonsRes] = await Promise.all([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (supabase.from("builders") as any).select("company_name, plan_tier").eq("id", bid).single(),
+        fetch(`/api/builder/addons?builderId=${bid}`).then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+
+      const builder = builderRes.data as { company_name: string; plan_tier: string | null } | null;
+      if (builder?.company_name) setCompanyName(builder.company_name);
+      if (builder?.plan_tier) setLegacyPlan(true);
+
+      const addonData = addonsRes as { addon_slug: string }[];
+      setActiveAddons(new Set(addonData.map(d => d.addon_slug)));
+    }
+    loadUser();
   }, []);
 
   useEffect(() => {
@@ -185,7 +202,9 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
         {NAV_ITEMS.map(item => {
           const isActive   = pathname.startsWith(item.href);
           const addonSlug  = ADDON_REQUIRED[item.href];
-          const isLocked   = !legacyPlan && addonSlug != null && activeAddons != null && !activeAddons.has(addonSlug);
+          const isLocked   = !legacyPlan && addonSlug != null && activeAddons != null && (
+            addonSlug === "any" ? activeAddons.size === 0 : !activeAddons.has(addonSlug)
+          );
 
           if (isLocked && addonSlug) {
             const addonInfo = ADDON_INFO[addonSlug];
@@ -230,16 +249,18 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
         })}
       </nav>
 
-      {/* New project CTA */}
-      <div className="px-2.5 pb-3">
-        <Link
-          href="/builder/projects?new=1"
-          className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20"
-        >
-          <span className="text-base leading-none">+</span>
-          New Model
-        </Link>
-      </div>
+      {/* New Model CTA — only shown when subscribed to configurator */}
+      {(legacyPlan || (activeAddons !== null && activeAddons.has("configurator"))) && (
+        <div className="px-2.5 pb-3">
+          <Link
+            href="/builder/projects?new=1"
+            className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20"
+          >
+            <span className="text-base leading-none">+</span>
+            New Model
+          </Link>
+        </div>
+      )}
 
       {/* User profile */}
       <div className="px-2.5 py-3 border-t border-white/6 relative" ref={menuRef}>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 import { getBuilderProjects, getLeads, getBuilderSubscription, Lead } from "@/lib/builder-api";
 import { Project, Plan } from "@/types/database";
 
@@ -39,56 +40,58 @@ const LEAD_STATUS_STYLE: Record<string, string> = {
   new:       "bg-blue-500/12 text-blue-400 border border-blue-500/20",
   contacted: "bg-amber-500/12 text-amber-400 border border-amber-500/20",
   qualified: "bg-violet-500/12 text-violet-400 border border-violet-500/20",
-  converted: "bg-emerald-500/12 text-emerald-400 border border-emerald-500/20",
+  converted: "bg-emerald-500/12 text-emerald-400 border border-violet-500/20",
   lost:      "bg-white/5 text-white/25 border border-white/8",
 };
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface ActiveAddon {
+  addon_slug:        string;
+  credits_remaining: number | null;
+  name:              string;
+  included_units:    number | null;
+  unit_label:        string | null;
+  monthly_price_cents: number;
+}
+
 // ── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({
-  label, value, sub, accent,
-}: { label: string; value: string; sub: string; accent: string }) {
+function StatCard({ label, value, sub, accent }: { label: string; value: string; sub: string; accent: string }) {
   return (
     <div className="bg-[#0e0e0e] rounded-2xl border border-white/8 p-5 hover:border-white/14 transition-colors">
       <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest mb-3">{label}</p>
-      <p
-        className={`text-3xl font-extrabold tracking-tight mb-1 ${accent}`}
-        style={{ fontFamily: "var(--font-syne), sans-serif" }}
-      >
-        {value}
-      </p>
+      <p className={`text-3xl font-extrabold tracking-tight mb-1 ${accent}`}
+        style={{ fontFamily: "var(--font-syne), sans-serif" }}>{value}</p>
       <p className="text-xs text-white/30">{sub}</p>
     </div>
   );
 }
 
 // ── Credit bar ────────────────────────────────────────────────────────────────
-function CreditBar({ label, used, total, remaining, color }: { label: string; used: number; total: number | null; remaining?: number; color: string }) {
-  const unlimited = total === null || total === -1 || total >= 9999;
-  const pct = unlimited ? 0 : Math.min(100, Math.round((used / (total ?? 1)) * 100));
-  const displayRemaining = remaining ?? ((total ?? 0) - used);
+function CreditBar({ label, remaining, total, color }: { label: string; remaining: number; total: number; color: string }) {
+  const pct = total > 0 ? Math.min(100, Math.round(((total - remaining) / total) * 100)) : 0;
+  const isLow = remaining / total <= 0.2;
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-xs text-white/50">{label}</span>
-        <span className="text-xs font-semibold text-white/70">
-          {unlimited ? `${used} used · ∞` : `${displayRemaining} / ${total} remaining`}
+        <span className={`text-xs font-semibold ${isLow ? "text-orange-400" : "text-white/70"}`}>
+          {remaining} / {total} remaining
         </span>
       </div>
-      {!unlimited && (
-        <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
-          <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
-        </div>
-      )}
+      <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${isLow ? "bg-orange-500" : color}`} style={{ width: `${pct}%` }} />
+      </div>
     </div>
   );
 }
 
 // ── Subscription card ─────────────────────────────────────────────────────────
 function SubscriptionCard({
-  builder, plan,
+  builder, plan, activeAddons,
 }: {
-  builder: { stripe_subscription_status: string | null; current_period_end: string | null; rendering_credits: number; rendering_credits_total: number; plan_tier: string; ai_credits_remaining: number; ai_credits_total: number };
+  builder: { stripe_subscription_status: string | null; current_period_end: string | null; plan_tier: string };
   plan: Plan | null;
+  activeAddons: ActiveAddon[];
 }) {
   const status   = builder.stripe_subscription_status;
   const isActive = status === "active";
@@ -97,17 +100,36 @@ function SubscriptionCard({
     ? Math.max(0, Math.ceil((new Date(builder.current_period_end).getTime() - Date.now()) / 86400000))
     : null;
 
-  const rendersUsed      = Math.max(0, (builder.rendering_credits_total ?? 0) - (builder.rendering_credits ?? 0));
-  const rendersTotal     = builder.rendering_credits_total;
-  const aiRemaining      = builder.ai_credits_remaining ?? 0;
-  const aiTotal          = builder.ai_credits_total ?? plan?.ai_credits_monthly ?? null;
-  const aiUsed           = Math.max(0, (aiTotal ?? 0) - aiRemaining);
+  // Calculate monthly total from active addons (modular plan)
+  const monthlyTotal = activeAddons.reduce((s, a) => s + a.monthly_price_cents, 0);
+
+  // Credit-based addons only (those with included_units set)
+  const creditAddons = activeAddons.filter(a => a.included_units !== null && a.included_units > 0);
+
+  const CREDIT_COLORS: Record<string, string> = {
+    "traditional-renders": "bg-violet-500",
+    "ai-renders":          "bg-amber-400",
+  };
 
   const statusStyle = isActive
     ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20"
     : status === "past_due"
       ? "text-red-400 bg-red-400/10 border-red-400/20"
       : "text-amber-400 bg-amber-400/10 border-amber-400/20";
+
+  const hasSubscription = activeAddons.length > 0 || isActive;
+
+  if (!hasSubscription) {
+    return (
+      <div className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-5 mb-6">
+        <p className="text-sm text-white/40 mb-3">No active subscription.</p>
+        <Link href="/builder/subscribe"
+          className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
+          Choose your tools →
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-[#0e0e0e] border border-white/8 rounded-2xl p-5 mb-6">
@@ -120,15 +142,15 @@ function SubscriptionCard({
               {status ?? "inactive"}
             </span>
           </div>
-          <p className="text-xs text-white/35 mt-0.5">$1,500 / month</p>
+          {monthlyTotal > 0 && (
+            <p className="text-xs text-white/35 mt-0.5">{fmt(monthlyTotal)} / month</p>
+          )}
         </div>
         <div className="text-right">
           {daysLeft !== null ? (
             <>
               <p className={`text-2xl font-extrabold ${daysLeft <= 5 ? "text-red-400" : daysLeft <= 10 ? "text-amber-400" : "text-white"}`}
-                style={{ fontFamily: "var(--font-syne), sans-serif" }}>
-                {daysLeft}d
-              </p>
+                style={{ fontFamily: "var(--font-syne), sans-serif" }}>{daysLeft}d</p>
               <p className="text-[10px] text-white/30">until renewal</p>
             </>
           ) : (
@@ -137,10 +159,31 @@ function SubscriptionCard({
         </div>
       </div>
 
-      <div className="space-y-3 pt-3 border-t border-white/8">
-        <CreditBar label="Traditional Renders" used={rendersUsed} total={rendersTotal} color="bg-violet-500" />
-        <CreditBar label="AI Render Credits"    used={aiUsed}      total={aiTotal}      remaining={aiRemaining} color="bg-amber-400" />
-      </div>
+      {/* Active addons list */}
+      {activeAddons.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          {activeAddons.map(a => (
+            <span key={a.addon_slug} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 font-medium">
+              {a.name}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Credit bars — only for credit-based addons */}
+      {creditAddons.length > 0 && (
+        <div className="space-y-3 pt-3 border-t border-white/8">
+          {creditAddons.map(a => (
+            <CreditBar
+              key={a.addon_slug}
+              label={`${a.name} ${a.unit_label ? `(${a.unit_label})` : "Credits"}`}
+              remaining={a.credits_remaining ?? a.included_units ?? 0}
+              total={a.included_units ?? 0}
+              color={CREDIT_COLORS[a.addon_slug] ?? "bg-blue-500"}
+            />
+          ))}
+        </div>
+      )}
 
       {!isActive && (
         <div className="mt-4 pt-3 border-t border-white/8">
@@ -156,25 +199,69 @@ function SubscriptionCard({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [leads, setLeads]       = useState<Lead[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [subscription, setSubscription] = useState<{ builder: Parameters<typeof SubscriptionCard>[0]["builder"]; plan: Plan | null } | null>(null);
+  const [projects,      setProjects]      = useState<Project[]>([]);
+  const [leads,         setLeads]         = useState<Lead[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [subscription,  setSubscription]  = useState<{ builder: Parameters<typeof SubscriptionCard>[0]["builder"]; plan: Plan | null } | null>(null);
+  const [activeAddons,  setActiveAddons]  = useState<ActiveAddon[]>([]);
+  const [builderId,     setBuilderId]     = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getBuilderProjects(), getLeads(), getBuilderSubscription()]).then(([p, l, sub]) => {
+    // Resolve builder ID first, then load everything in parallel
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setLoading(false); return; }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: profile } = await (supabase as any)
+        .from("profiles").select("builder_id").eq("id", user.id).single();
+
+      let bid: string | null = profile?.builder_id ?? null;
+
+      // Email fallback
+      if (!bid && user.email) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: builder } = await (supabase as any)
+          .from("builders").select("id").eq("contact_email", user.email).maybeSingle();
+        if (builder?.id) {
+          bid = builder.id;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase as any).from("profiles").update({ builder_id: bid }).eq("id", user.id);
+        }
+      }
+
+      setBuilderId(bid);
+
+      const [p, l, sub] = await Promise.all([
+        getBuilderProjects(),
+        getLeads(),
+        getBuilderSubscription(),
+      ]);
       setProjects(p);
       setLeads(l);
       if (sub) setSubscription(sub);
+
+      if (bid) {
+        const res = await fetch(`/api/builder/addons?builderId=${bid}&details=1`);
+        if (res.ok) {
+          const data: ActiveAddon[] = await res.json();
+          setActiveAddons(Array.isArray(data) ? data : []);
+        }
+      }
+
       setLoading(false);
-    });
+    }
+    load();
   }, []);
 
-  const liveProjects   = projects.filter(p => (p as any).status === "live");
+  const liveProjects   = projects.filter(p => (p as unknown as { status: string }).status === "live");
   const newLeads       = leads.filter(l => l.status === "new").length;
   const totalLeadValue = leads.reduce((s, l) => s + l.total_value, 0);
   const avgValue       = leads.length ? totalLeadValue / leads.length : 0;
   const recentLeads    = leads.slice(0, 6);
+
+  const hasConfigurator = activeAddons.some(a => a.addon_slug === "configurator");
+  const hasLeads        = activeAddons.length > 0; // any addon gives access to leads
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto">
@@ -185,52 +272,34 @@ export default function DashboardPage() {
           <p className="text-xs font-medium text-white/25 uppercase tracking-widest mb-1">
             {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
           </p>
-          <h1
-            className="text-2xl font-extrabold text-white tracking-tight"
-            style={{ fontFamily: "var(--font-syne), sans-serif" }}
-          >
+          <h1 className="text-2xl font-extrabold text-white tracking-tight"
+            style={{ fontFamily: "var(--font-syne), sans-serif" }}>
             Dashboard
           </h1>
         </div>
-        <Link
-          href="/builder/projects?new=1"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20"
-        >
-          <span className="text-base leading-none">+</span> New Project
-        </Link>
+        {hasConfigurator && (
+          <Link href="/builder/projects?new=1"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20">
+            <span className="text-base leading-none">+</span> New Project
+          </Link>
+        )}
       </div>
 
       {/* Subscription */}
-      {subscription && (
-        <SubscriptionCard builder={subscription.builder} plan={subscription.plan} />
+      {(subscription || !loading) && (
+        <SubscriptionCard
+          builder={subscription?.builder ?? { stripe_subscription_status: null, current_period_end: null, plan_tier: "" }}
+          plan={subscription?.plan ?? null}
+          activeAddons={activeAddons}
+        />
       )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <StatCard
-          label="Total Projects"
-          value={String(projects.length)}
-          sub={`${liveProjects.length} live`}
-          accent="text-white"
-        />
-        <StatCard
-          label="New Leads"
-          value={String(newLeads)}
-          sub={`${leads.length} total leads`}
-          accent="text-blue-400"
-        />
-        <StatCard
-          label="Configurator Views"
-          value="—"
-          sub="Analytics coming soon"
-          accent="text-white/30"
-        />
-        <StatCard
-          label="Avg Config Value"
-          value={avgValue ? fmt(avgValue) : "—"}
-          sub={leads.length ? `${leads.length} configurations` : "No leads yet"}
-          accent="text-emerald-400"
-        />
+        <StatCard label="Total Projects"    value={String(projects.length)} sub={`${liveProjects.length} live`} accent="text-white" />
+        <StatCard label="New Leads"         value={String(newLeads)}        sub={`${leads.length} total leads`} accent="text-blue-400" />
+        <StatCard label="Configurator Views" value="—"                       sub="Analytics coming soon"         accent="text-white/30" />
+        <StatCard label="Avg Config Value"  value={avgValue ? fmt(avgValue) : "—"} sub={leads.length ? `${leads.length} configurations` : "No leads yet"} accent="text-emerald-400" />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-5 gap-5">
@@ -238,15 +307,9 @@ export default function DashboardPage() {
         {/* Projects overview */}
         <div className="md:col-span-3 bg-[#0e0e0e] rounded-2xl border border-white/8">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/6">
-            <h2
-              className="font-bold text-white text-sm"
-              style={{ fontFamily: "var(--font-syne), sans-serif" }}
-            >
-              My Projects
-            </h2>
-            <Link href="/builder/projects" className="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">
-              View all →
-            </Link>
+            <h2 className="font-bold text-white text-sm"
+              style={{ fontFamily: "var(--font-syne), sans-serif" }}>My Projects</h2>
+            <Link href="/builder/projects" className="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">View all →</Link>
           </div>
           <div className="divide-y divide-white/5">
             {loading ? (
@@ -259,20 +322,20 @@ export default function DashboardPage() {
                   </svg>
                 </div>
                 <p className="text-sm text-white/30 mb-3">No projects yet.</p>
-                <Link href="/builder/projects?new=1" className="text-sm text-blue-400 hover:text-blue-300 font-medium transition-colors">
-                  Request your first project →
-                </Link>
+                {hasConfigurator && (
+                  <Link href="/builder/projects?new=1" className="text-sm text-blue-400 hover:text-blue-300 font-medium transition-colors">
+                    Request your first project →
+                  </Link>
+                )}
               </div>
             ) : (
               projects.slice(0, 5).map(project => {
-                const status = (project as any).status ?? "live";
+                const status = (project as unknown as { status: string }).status ?? "live";
                 return (
                   <div key={project.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-white/3 transition-colors">
                     <div className="w-9 h-9 rounded-xl bg-blue-600/10 border border-blue-500/15 flex items-center justify-center flex-shrink-0">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-                        stroke="#60a5fa" strokeWidth="1.5" className="w-4.5 h-4.5">
-                        <path strokeLinecap="round" strokeLinejoin="round"
-                          d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21" />
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="1.5" className="w-4.5 h-4.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21" />
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
@@ -283,10 +346,7 @@ export default function DashboardPage() {
                       {STATUS_LABEL[status] ?? "Live"}
                     </span>
                     {project.slug && project.company_slug && (
-                      <a
-                        href={`/project/${project.company_slug}/${project.slug}`}
-                        target="_blank"
-                        rel="noreferrer"
+                      <a href={`/project/${project.company_slug}/${project.slug}`} target="_blank" rel="noreferrer"
                         onClick={e => e.stopPropagation()}
                         className="text-xs text-blue-400 hover:text-blue-300 font-medium flex-shrink-0 transition-colors">
                         Preview →
@@ -302,15 +362,11 @@ export default function DashboardPage() {
         {/* Recent leads */}
         <div className="md:col-span-2 bg-[#0e0e0e] rounded-2xl border border-white/8">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/6">
-            <h2
-              className="font-bold text-white text-sm"
-              style={{ fontFamily: "var(--font-syne), sans-serif" }}
-            >
-              Recent Leads
-            </h2>
-            <Link href="/builder/leads" className="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">
-              View all →
-            </Link>
+            <h2 className="font-bold text-white text-sm"
+              style={{ fontFamily: "var(--font-syne), sans-serif" }}>Recent Leads</h2>
+            {hasLeads && (
+              <Link href="/builder/leads" className="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">View all →</Link>
+            )}
           </div>
           <div className="divide-y divide-white/5">
             {loading ? (
@@ -328,9 +384,7 @@ export default function DashboardPage() {
                     {lead.first_name?.[0]}{lead.last_name?.[0]}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-white/70 truncate">
-                      {lead.first_name} {lead.last_name}
-                    </p>
+                    <p className="text-sm font-semibold text-white/70 truncate">{lead.first_name} {lead.last_name}</p>
                     <p className="text-xs text-white/25">{lead.total_value ? fmt(lead.total_value) : "—"} · {timeAgo(lead.created_at)}</p>
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${LEAD_STATUS_STYLE[lead.status]}`}>
@@ -347,44 +401,43 @@ export default function DashboardPage() {
       {/* Quick actions */}
       <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          {
+          hasConfigurator && {
             label: "Request New Project",
-            desc: "Submit a new home model request",
-            href: "/builder/projects?new=1",
+            desc:  "Submit a new home model request",
+            href:  "/builder/projects?new=1",
             accent: "from-blue-600 to-blue-500",
             border: "border-blue-500/20",
             textDesc: "text-blue-200/60",
           },
-          {
+          hasLeads && {
             label: "View All Leads",
-            desc: "Manage and follow up on leads",
-            href: "/builder/leads",
+            desc:  "Manage and follow up on leads",
+            href:  "/builder/leads",
             accent: null,
             border: "border-white/8",
             textDesc: "text-white/30",
           },
           {
-            label: "Analytics",
-            desc: "Track configurator performance",
-            href: "/builder/analytics",
+            label: "Settings",
+            desc:  "Manage your plan and integrations",
+            href:  "/builder/settings?tab=billing",
             accent: null,
             border: "border-white/8",
             textDesc: "text-white/30",
           },
-        ].map(action => (
-          <Link key={action.label} href={action.href}
-            className={`rounded-2xl p-5 flex flex-col gap-1.5 border ${action.border} transition-all hover:border-white/14 hover:bg-white/3 ${
-              action.accent ? `bg-gradient-to-br ${action.accent} shadow-lg shadow-blue-600/15` : "bg-[#0e0e0e]"
-            }`}>
-            <p
-              className={`font-bold text-sm ${action.accent ? "text-white" : "text-white/70"}`}
-              style={{ fontFamily: "var(--font-syne), sans-serif" }}
-            >
-              {action.label}
-            </p>
-            <p className={`text-xs ${action.textDesc}`}>{action.desc}</p>
-          </Link>
-        ))}
+        ].filter(Boolean).map(action => {
+          const a = action as { label: string; desc: string; href: string; accent: string | null; border: string; textDesc: string };
+          return (
+            <Link key={a.label} href={a.href}
+              className={`rounded-2xl p-5 flex flex-col gap-1.5 border ${a.border} transition-all hover:border-white/14 hover:bg-white/3 ${
+                a.accent ? `bg-gradient-to-br ${a.accent} shadow-lg shadow-blue-600/15` : "bg-[#0e0e0e]"
+              }`}>
+              <p className={`font-bold text-sm ${a.accent ? "text-white" : "text-white/70"}`}
+                style={{ fontFamily: "var(--font-syne), sans-serif" }}>{a.label}</p>
+              <p className={`text-xs ${a.textDesc}`}>{a.desc}</p>
+            </Link>
+          );
+        })}
       </div>
 
     </div>

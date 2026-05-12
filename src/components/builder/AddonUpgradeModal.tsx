@@ -22,6 +22,11 @@ export default function AddonUpgradeModal({ addon, builderId, onClose, cancelPat
   const [err,     setErr]     = useState("");
 
   async function handleAdd() {
+    // "any" slug means the builder has no subscription — redirect to the wizard
+    if (addon.slug === "any") {
+      window.location.href = "/builder/subscribe";
+      return;
+    }
     setLoading(true);
     setErr("");
     try {
@@ -83,7 +88,7 @@ export default function AddonUpgradeModal({ addon, builderId, onClose, cancelPat
             <button onClick={handleAdd} disabled={loading}
               className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50 transition-all"
               style={{ background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" }}>
-              {loading ? "Loading…" : "Add to Plan →"}
+              {loading ? "Loading…" : addon.slug === "any" ? "Choose a Plan →" : "Add to Plan →"}
             </button>
           </div>
         </div>
