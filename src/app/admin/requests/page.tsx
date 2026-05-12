@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getAllProjects, getAllBuildersBySlug, getAwaitingPaymentRequests, deleteProjectRequest } from "@/lib/admin-api";
-import { Project, Builder, ProjectRequest } from "@/types/database";
+import { Project, Builder, ProjectRequest, SiteMapRequest } from "@/types/database";
 
 const STATUS_MAP: Record<NonNullable<Project["status"]>, { label: string; style: string }> = {
   pending_review: { label: "New Request",   style: "text-amber-400 bg-amber-400/10 border-amber-400/30" },
@@ -86,6 +86,11 @@ export default function ProductionQueuePage() {
   const exportRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
 
+  // Admin section tabs
+  const [adminTab,      setAdminTab]      = useState<"3d-models" | "site-maps">("3d-models");
+  const [smRequests,    setSmRequests]    = useState<SiteMapRequest[]>([]);
+  const [smUpdating,    setSmUpdating]    = useState<string | null>(null);
+
   useEffect(() => {
     Promise.all([getAllProjects(), getAllBuildersBySlug(), getAwaitingPaymentRequests()]).then(([p, b, u]) => {
       setProjects(p);
@@ -94,6 +99,28 @@ export default function ProductionQueuePage() {
       setLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (adminTab !== "site-maps") return;
+    fetch("/api/admin/site-map-requests")
+      .then(r => r.ok ? r.json() : [])
+      .then((data: SiteMapRequest[]) => setSmRequests(data))
+      .catch(() => {});
+  }, [adminTab]);
+
+  async function updateSmStatus(id: string, status: string, notes?: string) {
+    setSmUpdating(id);
+    try {
+      await fetch(`/api/admin/site-map-requests/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, admin_notes: notes }),
+      });
+      setSmRequests(prev => prev.map(r => r.id === id ? { ...r, status: status as SiteMapRequest["status"] } : r));
+    } catch { /* ignore */ } finally {
+      setSmUpdating(null);
+    }
+  }
 
   async function handleDeleteRequest(id: string) {
     if (!confirm("Remove this unpaid request? This cannot be undone.")) return;
@@ -165,9 +192,25 @@ export default function ProductionQueuePage() {
 
       {/* Header */}
       <div className="px-4 md:px-6 py-4 border-b border-white/8 flex-shrink-0 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-base font-bold text-white">Production Pipeline</h1>
-          <p className="text-xs text-white/35 mt-0.5 hidden sm:block">Manage active floor plan conversions and mapping tasks.</p>
+        <div className="min-w-0 flex items-center gap-4">
+          <div>
+            <h1 className="text-base font-bold text-white">Production Pipeline</h1>
+            <p className="text-xs text-white/35 mt-0.5 hidden sm:block">Manage active floor plan conversions and mapping tasks.</p>
+          </div>
+          <div className="flex gap-1 p-0.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            {([
+              { key: "3d-models" as const, label: "3D Models" },
+              { key: "site-maps" as const, label: "Site Maps" },
+            ] as const).map(t => (
+              <button key={t.key} onClick={() => setAdminTab(t.key)}
+                className="px-3 py-1 rounded-md text-xs font-medium transition-all"
+                style={adminTab === t.key
+                  ? { background: "rgba(59,130,246,0.25)", color: "rgba(147,197,253,1)" }
+                  : { color: "rgba(255,255,255,0.35)" }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
 
@@ -268,7 +311,67 @@ export default function ProductionQueuePage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-5">
+      {/* ── Site Maps tab ────────────────────────────────────────────────────── */}
+      {adminTab === "site-maps" && (
+        <div className="flex-1 overflow-y-auto p-6">
+          {smRequests.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <p className="text-white/40 font-semibold">No site map requests yet</p>
+              <p className="text-white/20 text-sm mt-1">Requests submitted by builders will appear here after payment.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {smRequests.map(req => {
+                const statusConfig: Record<string, { label: string; dot: string }> = {
+                  pending_review: { label: "Pending Review", dot: "#60a5fa" },
+                  in_progress:    { label: "In Progress",    dot: "#a78bfa" },
+                  complete:       { label: "Complete",       dot: "#34d399" },
+                  archived:       { label: "Archived",       dot: "#6b7280" },
+                };
+                const s = statusConfig[req.status] ?? statusConfig.pending_review;
+                return (
+                  <div key={req.id} className="bg-[#1a1a1a] border border-white/8 rounded-xl p-4">
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-semibold text-white text-sm">{req.community_name}</h3>
+                          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                            style={{ background: `${s.dot}18`, border: `1px solid ${s.dot}44`, color: s.dot }}>
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.dot }} />{s.label}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-3 mt-1">
+                          {req.community_address && <span className="text-xs text-white/25">{req.community_address}</span>}
+                          {req.estimated_lot_count && <span className="text-xs text-white/25">{req.estimated_lot_count} lots</span>}
+                          <span className="text-xs text-white/20">{new Date(req.created_at).toLocaleDateString()}</span>
+                          <span className="text-xs text-white/25">Fee: ${(req.setup_fee_cents / 100).toLocaleString()}</span>
+                        </div>
+                        {req.style_notes && <p className="text-xs text-white/35 mt-2 max-w-lg leading-relaxed">{req.style_notes}</p>}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {req.status === "pending_review" && (
+                          <button onClick={() => updateSmStatus(req.id, "in_progress")} disabled={smUpdating === req.id}
+                            className="text-xs px-3 py-1.5 rounded-lg bg-purple-600/20 border border-purple-500/30 text-purple-300 hover:bg-purple-600/30 disabled:opacity-50 transition-colors">
+                            {smUpdating === req.id ? "…" : "Start"}
+                          </button>
+                        )}
+                        {req.status === "in_progress" && (
+                          <button onClick={() => updateSmStatus(req.id, "complete")} disabled={smUpdating === req.id}
+                            className="text-xs px-3 py-1.5 rounded-lg bg-green-600/20 border border-green-500/30 text-green-300 hover:bg-green-600/30 disabled:opacity-50 transition-colors">
+                            {smUpdating === req.id ? "…" : "Mark Complete"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {adminTab === "3d-models" && <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
         {/* Stat Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -522,7 +625,7 @@ export default function ProductionQueuePage() {
             </div>
           )}
         </div>
-      </div>
+      </div> /* end 3d-models tab */}
     </div>
   );
 }

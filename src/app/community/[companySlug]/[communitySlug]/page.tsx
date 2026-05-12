@@ -76,6 +76,11 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
   const [panOffset,     setPanOffset]     = useState({ x: 0, y: 0 });
   const [isDragging,    setIsDragging]    = useState(false);
   const [isMobile,      setIsMobile]      = useState(false);
+  const [contactLot,    setContactLot]    = useState<LotWithProject | null>(null);
+  const [contactForm,   setContactForm]   = useState({ firstName: "", lastName: "", email: "", phone: "", message: "" });
+  const [contactBusy,   setContactBusy]   = useState(false);
+  const [contactDone,   setContactDone]   = useState(false);
+  const [contactErr,    setContactErr]    = useState("");
 
   const imgRef       = useRef<HTMLImageElement>(null);
   const mapWrapRef   = useRef<HTMLDivElement>(null);
@@ -197,6 +202,49 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
       setLoading(false);
     })();
   }, [companySlug, communitySlug]);
+
+  function closeContactModal() {
+    setContactLot(null);
+    setContactForm({ firstName: "", lastName: "", email: "", phone: "", message: "" });
+    setContactBusy(false);
+    setContactDone(false);
+    setContactErr("");
+  }
+
+  async function submitContact(e: React.FormEvent) {
+    e.preventDefault();
+    if (!contactLot) return;
+    setContactBusy(true);
+    setContactErr("");
+    try {
+      const res = await fetch("/api/community-leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          community_id:   community?.id,
+          community_name: community?.name,
+          community_slug: communitySlug,
+          lot_id:         contactLot.id,
+          lot_number:     contactLot.lot_number,
+          project_id:     contactLot.project_id ?? null,
+          first_name:     contactForm.firstName,
+          last_name:      contactForm.lastName,
+          email:          contactForm.email,
+          phone:          contactForm.phone || null,
+          message:        contactForm.message || null,
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error ?? "Submission failed");
+      }
+      setContactDone(true);
+    } catch (err) {
+      setContactErr(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setContactBusy(false);
+    }
+  }
 
   function measureImgRect() {
     const el = imgRef.current;
@@ -357,19 +405,47 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                 </div>
               )}
 
-              {lot.status === "available" && (
-                <Link
-                  href={`/project/${proj.company_slug}/${proj.slug}?lotId=${encodeURIComponent(lot.id)}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${encodeURIComponent(comm.slug)}&communityName=${encodeURIComponent(comm.name)}&lotPriceModifier=${lot.price_modifier ?? 0}`}
-                  target="_top"
-                  className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110"
-                  style={{ background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" }}
-                >
-                  Configure this home
+              {lot.status === "available" && (() => {
+                const ctaType  = lot.cta_type  ?? "configurator";
+                const ctaLabel = lot.cta_label || null;
+                const ctaUrl   = lot.cta_url   || null;
+                const btnStyle = { background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" };
+                const btnClass = "flex items-center justify-center gap-2 w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110";
+                const Arrow = () => (
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                   </svg>
-                </Link>
-              )}
+                );
+
+                if (ctaType === "none") return null;
+
+                if (ctaType === "external" && ctaUrl) {
+                  return (
+                    <a href={ctaUrl} target="_blank" rel="noopener noreferrer" className={btnClass} style={btnStyle}>
+                      {ctaLabel ?? "Learn More"} <Arrow />
+                    </a>
+                  );
+                }
+
+                if (ctaType === "contact") {
+                  return (
+                    <button onClick={() => setContactLot(lot)} className={btnClass} style={btnStyle}>
+                      {ctaLabel ?? "Request Info"} <Arrow />
+                    </button>
+                  );
+                }
+
+                // Default: configurator
+                if (!proj) return null;
+                return (
+                  <Link
+                    href={`/project/${proj.company_slug}/${proj.slug}?lotId=${encodeURIComponent(lot.id)}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${encodeURIComponent(comm.slug)}&communityName=${encodeURIComponent(comm.name)}&lotPriceModifier=${lot.price_modifier ?? 0}`}
+                    target="_top" className={btnClass} style={btnStyle}
+                  >
+                    {ctaLabel ?? "Configure this home"} <Arrow />
+                  </Link>
+                );
+              })()}
               {lot.status === "reserved" && (
                 <div className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-semibold text-amber-400/70"
                   style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)" }}>
@@ -787,6 +863,142 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
           className="sm:hidden fixed inset-0 z-30 bg-black/40"
           onClick={() => setSelectedLot(null)}
         />
+      )}
+
+      {/* ── Contact / Request Info modal ───────────────────────────────────── */}
+      {contactLot && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeContactModal} />
+          <div
+            className="relative w-full sm:max-w-md flex flex-col overflow-hidden"
+            style={{ background: "rgba(10,10,16,0.97)", backdropFilter: "blur(32px)", WebkitBackdropFilter: "blur(32px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: isMobile ? "20px 20px 0 0" : 20 }}
+          >
+            {/* Drag handle (mobile) */}
+            <div className="sm:hidden flex justify-center pt-3 pb-0.5 flex-shrink-0">
+              <div className="w-10 h-1 rounded-full bg-white/20" />
+            </div>
+
+            {/* Header */}
+            <div className="flex items-start justify-between px-5 py-4 border-b border-white/8">
+              <div>
+                <h2 className="text-base font-bold text-white">Request Information</h2>
+                <p className="text-xs text-white/40 mt-0.5">Lot {contactLot.lot_number}{community?.name ? ` · ${community.name}` : ""}</p>
+              </div>
+              <button onClick={closeContactModal} className="w-8 h-8 flex items-center justify-center rounded-xl text-white/30 hover:text-white hover:bg-white/8 transition-colors flex-shrink-0 mt-0.5">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-5 py-5">
+              {contactDone ? (
+                <div className="flex flex-col items-center py-8 text-center">
+                  <div className="w-14 h-14 rounded-full flex items-center justify-center mb-4" style={{ background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)" }}>
+                    <svg className="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <h3 className="text-base font-bold text-white mb-2">Message Sent!</h3>
+                  <p className="text-sm text-white/45 leading-relaxed max-w-xs">
+                    {"We've received your inquiry and will be in touch shortly."}
+                  </p>
+                  <button onClick={closeContactModal} className="mt-6 px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors" style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}>
+                    Close
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={submitContact} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">First Name <span className="text-red-400">*</span></label>
+                      <input
+                        required
+                        type="text"
+                        value={contactForm.firstName}
+                        onChange={e => setContactForm(f => ({ ...f, firstName: e.target.value }))}
+                        placeholder="Jane"
+                        className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
+                        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">Last Name <span className="text-red-400">*</span></label>
+                      <input
+                        required
+                        type="text"
+                        value={contactForm.lastName}
+                        onChange={e => setContactForm(f => ({ ...f, lastName: e.target.value }))}
+                        placeholder="Smith"
+                        className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
+                        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">Email <span className="text-red-400">*</span></label>
+                    <input
+                      required
+                      type="email"
+                      value={contactForm.email}
+                      onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))}
+                      placeholder="jane@example.com"
+                      className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">Phone</label>
+                    <input
+                      type="tel"
+                      value={contactForm.phone}
+                      onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))}
+                      placeholder="(555) 000-0000"
+                      className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">Message</label>
+                    <textarea
+                      rows={3}
+                      value={contactForm.message}
+                      onChange={e => setContactForm(f => ({ ...f, message: e.target.value }))}
+                      placeholder="Any questions about this lot…"
+                      className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all resize-none"
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    />
+                  </div>
+
+                  {contactErr && (
+                    <p className="text-xs text-red-400 text-center">{contactErr}</p>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={contactBusy}
+                    className="w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" }}
+                  >
+                    {contactBusy ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                        </svg>
+                        Sending…
+                      </span>
+                    ) : "Send Request"}
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

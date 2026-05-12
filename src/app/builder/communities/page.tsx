@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getBuilderCommunities, getBuilderProfile, getBuilderProjects } from "@/lib/builder-api";
-import { Project } from "@/types/database";
+import { Project, SiteMapRequest } from "@/types/database";
 
 interface CommunityStats {
   id: string; name: string; slug: string; description: string | null;
@@ -64,11 +64,28 @@ export default function BuilderCommunitiesPage() {
   // Copied link state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Site map request flow
+  const [activeTab,   setActiveTab]   = useState<"communities" | "requests">("communities");
+  const [siteMapReqs, setSiteMapReqs] = useState<SiteMapRequest[]>([]);
+  const [smSetupFee,  setSmSetupFee]  = useState<number | null>(null);
+  const [showSmReq,   setShowSmReq]   = useState(false);
+  const [smReqForm,   setSmReqForm]   = useState({ community_name: "", community_address: "", estimated_lot_count: "", phases: "1", style_notes: "", target_date: "" });
+  const [smSubmitting, setSmSubmitting] = useState(false);
+  const [smErr,       setSmErr]       = useState("");
+
   useEffect(() => {
-    Promise.all([getBuilderCommunities(), getBuilderProfile(), getBuilderProjects()]).then(([c, p, projs]) => {
+    Promise.all([
+      getBuilderCommunities(),
+      getBuilderProfile(),
+      getBuilderProjects(),
+      fetch("/api/site-map-requests").then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch("/api/addons?slug=site-maps").then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([c, p, projs, smrs, addon]) => {
       setCommunities(c);
       setProfile(p);
       setProjects(projs);
+      setSiteMapReqs(Array.isArray(smrs) ? smrs : (smrs?.data ?? []));
+      if (addon?.setup_fee_cents) setSmSetupFee(addon.setup_fee_cents);
       setLoading(false);
     });
   }, []);
@@ -105,6 +122,46 @@ export default function BuilderCommunitiesPage() {
     setReqSuccess(true);
   }
 
+  async function handleSmReq(e: React.FormEvent) {
+    e.preventDefault();
+    if (!profile) return;
+    setSmSubmitting(true);
+    setSmErr("");
+    try {
+      // Create the site map request
+      const res = await fetch("/api/site-map-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          community_name:       smReqForm.community_name,
+          community_address:    smReqForm.community_address || null,
+          estimated_lot_count:  smReqForm.estimated_lot_count ? parseInt(smReqForm.estimated_lot_count, 10) : null,
+          phases:               parseInt(smReqForm.phases, 10),
+          style_notes:          smReqForm.style_notes || null,
+          target_date:          smReqForm.target_date || null,
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error ?? "Failed to submit request");
+      }
+      const { id: requestId } = await res.json() as { id: string };
+
+      // Redirect to Stripe for setup fee payment
+      const checkoutRes = await fetch("/api/stripe/sitemap-setup-fee", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId }),
+      });
+      if (!checkoutRes.ok) throw new Error("Failed to create checkout session");
+      const { url } = await checkoutRes.json() as { url: string };
+      window.location.href = url;
+    } catch (err) {
+      setSmErr(err instanceof Error ? err.message : "Something went wrong");
+      setSmSubmitting(false);
+    }
+  }
+
   function copyLink(c: CommunityStats) {
     const url = `${window.location.origin}/community/${c.company_slug}/${c.slug}`;
     navigator.clipboard.writeText(url);
@@ -128,11 +185,18 @@ export default function BuilderCommunitiesPage() {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button onClick={() => setShowRequest(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/12 text-white/50 text-sm font-medium hover:text-white hover:border-white/25 transition-colors">
+            className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/12 text-white/50 text-sm font-medium hover:text-white hover:border-white/25 transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
             </svg>
             Request Design
+          </button>
+          <button onClick={() => { setShowSmReq(true); setSmErr(""); }}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-blue-500/30 text-blue-400 text-sm font-medium hover:bg-blue-500/10 hover:border-blue-400/50 transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
+            </svg>
+            Request Site Map
           </button>
           <button onClick={() => setShowNew(true)}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20">
@@ -140,6 +204,91 @@ export default function BuilderCommunitiesPage() {
           </button>
         </div>
       </div>
+
+      {/* Tab switcher */}
+      <div className="flex gap-1 mb-6 p-1 rounded-xl w-fit" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+        {([
+          { key: "communities" as const, label: "Communities", count: communities.length },
+          { key: "requests"    as const, label: "Site Map Requests", count: siteMapReqs.length },
+        ] as const).map(tab => (
+          <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
+            style={activeTab === tab.key
+              ? { background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.9)" }
+              : { color: "rgba(255,255,255,0.35)" }}>
+            {tab.label}
+            {tab.count > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold"
+                style={activeTab === tab.key
+                  ? { background: "rgba(59,130,246,0.25)", color: "rgba(147,197,253,1)" }
+                  : { background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.3)" }}>
+                {tab.count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Requests tab ─────────────────────────────────────────────────────── */}
+      {activeTab === "requests" && (
+        <div>
+          {siteMapReqs.length === 0 ? (
+            <div className="bg-[#0e0e0e] border border-white/8 rounded-2xl py-16 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-white/4 border border-white/8 flex items-center justify-center mx-auto mb-4">
+                <svg className="w-7 h-7 text-white/15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
+                </svg>
+              </div>
+              <h3 className="text-white/50 font-semibold text-base mb-1">No site map requests</h3>
+              <p className="text-white/25 text-sm mb-6 max-w-xs mx-auto">Request a new interactive site map for your community and our team will build it out.</p>
+              <button onClick={() => { setShowSmReq(true); setSmErr(""); }}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
+                Request Site Map
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {siteMapReqs.map(req => {
+                const statusConfig: Record<string, { label: string; dot: string; bg: string; border: string }> = {
+                  awaiting_payment: { label: "Awaiting Payment", dot: "#fbbf24", bg: "rgba(251,191,36,0.08)", border: "rgba(251,191,36,0.2)" },
+                  pending_review:   { label: "Pending Review",   dot: "#60a5fa", bg: "rgba(96,165,250,0.08)", border: "rgba(96,165,250,0.2)" },
+                  in_progress:      { label: "In Progress",      dot: "#a78bfa", bg: "rgba(167,139,250,0.08)", border: "rgba(167,139,250,0.2)" },
+                  complete:         { label: "Complete",          dot: "#34d399", bg: "rgba(52,211,153,0.08)", border: "rgba(52,211,153,0.2)" },
+                  archived:         { label: "Archived",          dot: "#6b7280", bg: "rgba(107,114,128,0.06)", border: "rgba(107,114,128,0.15)" },
+                };
+                const s = statusConfig[req.status] ?? statusConfig.pending_review;
+                return (
+                  <div key={req.id} className="bg-[#0e0e0e] border border-white/8 rounded-2xl px-5 py-4 flex items-center justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-semibold text-white/85 text-sm" style={{ fontFamily: "var(--font-syne), sans-serif" }}>{req.community_name}</h3>
+                        <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex-shrink-0"
+                          style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.dot }}>
+                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: s.dot }} />
+                          {s.label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 flex-wrap">
+                        {req.community_address && <span className="text-xs text-white/30">{req.community_address}</span>}
+                        {req.estimated_lot_count && <span className="text-xs text-white/25">{req.estimated_lot_count} lots</span>}
+                        {req.phases > 1 && <span className="text-xs text-white/25">{req.phases} phases</span>}
+                        <span className="text-xs text-white/20">{new Date(req.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0 text-right">
+                      <p className="text-xs text-white/25">Setup fee</p>
+                      <p className="text-sm font-bold text-white/60">${(req.setup_fee_cents / 100).toLocaleString()}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Communities tab ───────────────────────────────────────────────────── */}
+      {activeTab === "communities" && <>
 
       {/* Stats */}
       {!loading && communities.length > 0 && (
@@ -258,6 +407,8 @@ export default function BuilderCommunitiesPage() {
         </div>
       )}
 
+      </> /* end communities tab */}
+
       {/* ── New community modal ── */}
       {showNew && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -295,6 +446,113 @@ export default function BuilderCommunitiesPage() {
                 <button type="submit" disabled={creating}
                   className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-sm text-white font-semibold transition-colors disabled:opacity-50">
                   {creating ? "Creating…" : "Create"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Site map request slide-over ── */}
+      {showSmReq && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={() => { if (!smSubmitting) setShowSmReq(false); }} />
+          <div className="w-full sm:w-[520px] bg-[#0a0a0a] border-l border-white/8 shadow-2xl flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-5 border-b border-white/8 flex-shrink-0">
+              <div>
+                <h2 className="font-bold text-white text-lg" style={{ fontFamily: "var(--font-syne), sans-serif" }}>Request Interactive Site Map</h2>
+                <p className="text-xs text-white/30 mt-0.5">Our team will build your interactive plat map. Setup fee applies.</p>
+              </div>
+              <button onClick={() => setShowSmReq(false)} className="text-white/25 hover:text-white/60 text-xl leading-none transition-colors">×</button>
+            </div>
+            <form onSubmit={handleSmReq} className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {/* Setup fee callout */}
+                {smSetupFee !== null && (
+                  <div className="rounded-xl px-4 py-3.5 flex items-center gap-3" style={{ background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.2)" }}>
+                    <svg className="w-5 h-5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75" />
+                    </svg>
+                    <div>
+                      <p className="text-sm font-semibold text-white/80">One-time setup fee: <span className="text-blue-400">${(smSetupFee / 100).toLocaleString()}</span></p>
+                      <p className="text-xs text-white/35 mt-0.5">You will be redirected to checkout after submitting this form.</p>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Community Name *</label>
+                  <input required value={smReqForm.community_name}
+                    onChange={e => setSmReqForm(f => ({ ...f, community_name: e.target.value }))}
+                    placeholder="e.g. Willow Creek Estates"
+                    className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Community Address</label>
+                  <input value={smReqForm.community_address}
+                    onChange={e => setSmReqForm(f => ({ ...f, community_address: e.target.value }))}
+                    placeholder="123 Main St, Austin, TX 78701"
+                    className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Estimated Lots</label>
+                    <input type="number" min={1} value={smReqForm.estimated_lot_count}
+                      onChange={e => setSmReqForm(f => ({ ...f, estimated_lot_count: e.target.value }))}
+                      placeholder="42"
+                      className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Phases</label>
+                    <select value={smReqForm.phases}
+                      onChange={e => setSmReqForm(f => ({ ...f, phases: e.target.value }))}
+                      className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/70 focus:outline-none focus:border-blue-500/60 transition-colors">
+                      {["1", "2", "3", "4", "5"].map(p => <option key={p} value={p}>{p} phase{p !== "1" ? "s" : ""}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Target Go-Live Date</label>
+                  <input type="date" value={smReqForm.target_date}
+                    onChange={e => setSmReqForm(f => ({ ...f, target_date: e.target.value }))}
+                    className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1.5">Style Notes</label>
+                  <textarea value={smReqForm.style_notes} rows={3}
+                    onChange={e => setSmReqForm(f => ({ ...f, style_notes: e.target.value }))}
+                    placeholder="Modern aesthetic, wooded lots along the north side, custom lot numbering format…"
+                    className="w-full bg-[#141414] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
+                </div>
+
+                <div className="rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                  <p className="text-xs text-white/40 leading-relaxed">
+                    <span className="font-semibold text-white/60">Have plat maps or reference files?</span> Email them to{" "}
+                    <span className="text-blue-400">support@proplanstudio.com</span> after submitting with your community name in the subject line.
+                  </p>
+                </div>
+
+                {smErr && <p className="text-xs text-red-400 bg-red-400/8 border border-red-400/20 rounded-lg px-3 py-2">{smErr}</p>}
+              </div>
+
+              <div className="px-6 py-4 border-t border-white/8 flex gap-3 flex-shrink-0">
+                <button type="button" onClick={() => setShowSmReq(false)} disabled={smSubmitting}
+                  className="px-4 py-2.5 rounded-xl border border-white/10 text-sm text-white/40 hover:text-white/70 hover:bg-white/5 transition-colors">Cancel</button>
+                <button type="submit" disabled={smSubmitting || !smReqForm.community_name}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20">
+                  {smSubmitting ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      Redirecting to checkout…
+                    </>
+                  ) : "Continue to Payment →"}
                 </button>
               </div>
             </form>

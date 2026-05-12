@@ -337,3 +337,39 @@ export async function notifyProjectMessageToBuilder(projectId: string, senderNam
       <p><a href="${APP_URL}/builder/projects/requests/${projectId}" style="color:#3b82f6;">View Conversation →</a></p>`,
   });
 }
+
+// ── Site Map Request Notifications ────────────────────────────────────────────
+
+export async function notifyAdminsSiteMapRequest(requestId: string) {
+  if (!ADMIN_EMAIL) return;
+  const { data: req } = await (db.from("site_map_requests") as AQ)
+    .select("community_name, builder_id, builders(company_name)")
+    .eq("id", requestId)
+    .single();
+  if (!req) return;
+  const builderName = (req.builders as { company_name?: string } | null)?.company_name ?? "A builder";
+  await sendEmail({
+    to: ADMIN_EMAIL,
+    subject: `New Site Map Request: ${req.community_name}`,
+    title: "New Interactive Site Map Request",
+    body: `<p><strong>${builderName}</strong> submitted a new Interactive Site Map request for <strong>${req.community_name}</strong>. Setup fee has been paid.</p>
+      <p><a href="${APP_URL}/admin/requests?tab=site-maps" style="color:#3b82f6;">Review Request →</a></p>`,
+  });
+}
+
+export async function notifySiteMapComplete(requestId: string) {
+  const { data: req } = await (db.from("site_map_requests") as AQ)
+    .select("community_name, builder_id")
+    .eq("id", requestId)
+    .single();
+  if (!req) return;
+  const email = await builderEmailFromId(req.builder_id);
+  if (!email) return;
+  await sendEmail({
+    to: email,
+    subject: `Your Site Map Is Ready: ${req.community_name}`,
+    title: "Interactive Site Map Complete 🎉",
+    body: `<p>Your interactive site map for <strong>${req.community_name}</strong> has been completed and is ready to use.</p>
+      <p><a href="${APP_URL}/builder/communities" style="color:#3b82f6;">View in Communities →</a></p>`,
+  });
+}
