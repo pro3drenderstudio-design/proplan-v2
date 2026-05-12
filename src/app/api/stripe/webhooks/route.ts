@@ -9,6 +9,9 @@ import {
   notifySubscriptionCanceled,
   notifySubscriptionPaymentFailed,
   notifyCreditsLow,
+  notifyAdminNewSubscription,
+  notifyAdminSubscriptionCanceled,
+  notifyAdminPaymentFailed,
 } from "@/lib/notify";
 
 const supabase = createClient(
@@ -260,13 +263,17 @@ export async function POST(req: NextRequest) {
             status:                     "active",
           }).eq("id", builderId);
 
-          // Notify builder of new subscription (best-effort)
+          // Notify builder + admin of new subscription (best-effort)
           try {
-            // Fetch addon display names for the email
             const { data: addonRows } = await supabase
-              .from("addons").select("slug, name").in("slug", addonSlugs);
+              .from("addons").select("slug, name, monthly_price_cents").in("slug", addonSlugs);
             const addonNames = (addonRows ?? []).map((a: { name: string }) => a.name);
-            await notifySubscriptionActivated(builderId, addonNames);
+            const monthlyTotal = (addonRows ?? []).reduce((sum: number, a: { monthly_price_cents: number }) => sum + (a.monthly_price_cents ?? 0), 0);
+            const { data: builder } = await supabase.from("builders").select("company_name").eq("id", builderId).single();
+            await Promise.all([
+              notifySubscriptionActivated(builderId, addonNames),
+              notifyAdminNewSubscription(builderId, builder?.company_name ?? "Unknown Builder", addonNames, monthlyTotal),
+            ]);
           } catch { /* non-critical */ }
           break;
         }
@@ -352,7 +359,12 @@ export async function POST(req: NextRequest) {
           .update({ status: "canceled", canceled_at: new Date().toISOString() })
           .eq("builder_id", builderId).eq("status", "active");
 
-        try { await notifySubscriptionCanceled(builderId); } catch { /* non-critical */ }
+        try {
+          await Promise.all([
+            notifySubscriptionCanceled(builderId),
+            notifyAdminSubscriptionCanceled(builderId),
+          ]);
+        } catch { /* non-critical */ }
         break;
       }
 
@@ -406,7 +418,12 @@ export async function POST(req: NextRequest) {
           stripe_subscription_status: "past_due",
         }).eq("id", builder.id);
 
-        try { await notifySubscriptionPaymentFailed(builder.id); } catch { /* non-critical */ }
+        try {
+          await Promise.all([
+            notifySubscriptionPaymentFailed(builder.id),
+            notifyAdminPaymentFailed(builder.id),
+          ]);
+        } catch { /* non-critical */ }
         break;
       }
 

@@ -92,11 +92,68 @@ export async function notifyAdminNewBuilder(builderId: string, builderName: stri
     to:      ADMIN_EMAIL,
     subject: `New Builder Signed Up: ${builderName}`,
     title:   "New Builder Account",
-    body: `<p>A new builder account has been created.</p>
+    body: `<p>A new builder account has been created on ProPlan Studio.</p>
       <table style="width:100%;border-collapse:collapse;margin:12px 0;">
         <tr><td style="padding:6px 0;color:#999;width:130px;">Name</td><td style="color:#eee;font-weight:600;">${builderName}</td></tr>
         <tr><td style="padding:6px 0;color:#999;">Email</td><td style="color:#eee;">${builderEmail}</td></tr>
+        <tr><td style="padding:6px 0;color:#999;">Status</td><td style="color:#f59e0b;font-weight:600;">Trial — awaiting subscription</td></tr>
       </table>
+      <p><a href="${APP_URL}/admin/builders/${builderId}" style="color:#3b82f6;">View Builder →</a></p>`,
+  });
+}
+
+export async function notifyAdminNewSubscription(builderId: string, builderName: string, addonNames: string[], monthlyTotal: number) {
+  if (!ADMIN_EMAIL) return;
+  const fmtUSD = (n: number) => `$${(n / 100).toLocaleString("en-US", { minimumFractionDigits: 0 })}`;
+  const listHtml = addonNames.map(n => `<li style="margin:4px 0;color:#aaa;">${n}</li>`).join("");
+  await sendEmail({
+    to:      ADMIN_EMAIL,
+    subject: `New Subscription: ${builderName} — ${fmtUSD(monthlyTotal)}/mo`,
+    title:   "New Subscription Activated",
+    body: `<p><strong>${builderName}</strong> just subscribed to ProPlan Studio.</p>
+      <ul style="margin:12px 0;padding-left:20px;">${listHtml}</ul>
+      <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+        <tr><td style="padding:6px 0;color:#999;width:130px;">Monthly Revenue</td><td style="color:#34d399;font-weight:700;font-size:16px;">${fmtUSD(monthlyTotal)}/mo</td></tr>
+      </table>
+      <p><a href="${APP_URL}/admin/builders/${builderId}" style="color:#3b82f6;">View Builder →</a></p>`,
+  });
+}
+
+export async function notifyAdminSubscriptionCanceled(builderId: string) {
+  if (!ADMIN_EMAIL) return;
+  const { data: builder } = await (db.from("builders") as AQ)
+    .select("company_name, contact_email").eq("id", builderId).single();
+  const name  = builder?.company_name ?? "A builder";
+  const email = builder?.contact_email ?? "";
+  await sendEmail({
+    to:      ADMIN_EMAIL,
+    subject: `Subscription Canceled: ${name}`,
+    title:   "Subscription Canceled",
+    body: `<p><strong>${name}</strong> has canceled their ProPlan Studio subscription.</p>
+      <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+        <tr><td style="padding:6px 0;color:#999;width:130px;">Email</td><td style="color:#eee;">${email}</td></tr>
+      </table>
+      <p style="color:#f59e0b;font-size:13px;">Consider reaching out to understand why and offer assistance.</p>
+      <p><a href="${APP_URL}/admin/builders/${builderId}" style="color:#3b82f6;">View Builder →</a></p>`,
+  });
+}
+
+export async function notifyAdminPaymentFailed(builderId: string) {
+  if (!ADMIN_EMAIL) return;
+  const { data: builder } = await (db.from("builders") as AQ)
+    .select("company_name, contact_email").eq("id", builderId).single();
+  const name  = builder?.company_name ?? "A builder";
+  const email = builder?.contact_email ?? "";
+  await sendEmail({
+    to:      ADMIN_EMAIL,
+    subject: `⚠️ Payment Failed: ${name}`,
+    title:   "Payment Failed — Action May Be Required",
+    body: `<p>A subscription payment has failed for <strong>${name}</strong>.</p>
+      <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+        <tr><td style="padding:6px 0;color:#999;width:130px;">Email</td><td style="color:#eee;">${email}</td></tr>
+        <tr><td style="padding:6px 0;color:#999;">Status</td><td style="color:#ef4444;font-weight:600;">Past Due</td></tr>
+      </table>
+      <p style="color:#aaa;font-size:13px;">Stripe will retry automatically. If payment continues to fail, the builder will lose access.</p>
       <p><a href="${APP_URL}/admin/builders/${builderId}" style="color:#3b82f6;">View Builder →</a></p>`,
   });
 }

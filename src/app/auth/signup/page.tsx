@@ -50,40 +50,26 @@ export default function SignupPage() {
     if (authErr) { setError(authErr.message); setLoading(false); return; }
     if (!authData.user) { setError("Signup failed — please try again."); setLoading(false); return; }
 
-    // Create builder record
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: builderData } = await (supabase.from("builders") as any).insert({
-      company_name:           form.company_name,
-      company_slug:           form.company_slug,
-      primary_contact_name:   form.full_name,
-      contact_email:          form.email,
-      phone:                  form.phone || null,
-      location:               form.location || null,
-      plan_tier:              "starter",
-      billing_cycle:          "monthly",
-      status:                 "trial",
-      accent_color:           "#3B82F6",
-      seats_included:         10,
-      seats_used:             1,
-      rendering_credits:      250,
-      rendering_credits_total: 250,
-      max_projects:           5,
-      max_monthly_quotes:     25,
-      max_storage_gb:         10,
-      active_projects_count:  0,
-      monthly_quotes_count:   0,
-      storage_used_gb:        0,
-    }).select().single();
-
-    // Create profile
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from("profiles") as any).insert({
-      id:         authData.user.id,
-      email:      form.email,
-      full_name:  form.full_name,
-      role:       "builder_admin",
-      builder_id: builderData?.id ?? null,
+    // Create builder record + profile via server route (also fires welcome + admin notifications)
+    const builderRes = await fetch("/api/builders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id:      authData.user.id,
+        email:        form.email,
+        full_name:    form.full_name,
+        company_name: form.company_name,
+        company_slug: form.company_slug,
+        phone:        form.phone || null,
+        location:     form.location || null,
+      }),
     });
+    if (!builderRes.ok) {
+      const j = await builderRes.json().catch(() => ({})) as { error?: string };
+      setError(j.error ?? "Failed to create your account. Please try again.");
+      setLoading(false);
+      return;
+    }
 
     setLoading(false);
     // New builders must subscribe before accessing the dashboard
