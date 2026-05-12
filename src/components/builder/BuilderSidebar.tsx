@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import AddonUpgradeModal, { type AddonInfo } from "./AddonUpgradeModal";
 
 function SvgIcon({ paths }: { paths: string[] }) {
   return (
@@ -51,6 +52,22 @@ const ICONS: Record<string, string[]> = {
   ],
 };
 
+// Map nav items to the addon slug required to access them
+const ADDON_REQUIRED: Partial<Record<string, string>> = {
+  "/builder/projects":      "configurator",
+  "/builder/3d-projects":   "traditional-renders",
+  "/builder/communities":   "site-maps",
+  "/builder/render-studio": "ai-renders",
+};
+
+// Addon info for the upgrade modal
+const ADDON_INFO: Record<string, AddonInfo> = {
+  "configurator":        { slug: "configurator",        name: "3D Home Configurator",    description: "Interactive 3D configurator for buyers to explore home options.", price: "$499/mo", included: "Unlimited models" },
+  "traditional-renders": { slug: "traditional-renders", name: "Traditional 3D Renders",  description: "High-quality still renders of your floor plans and elevations.",   price: "$500/mo", included: "10 renders/mo" },
+  "site-maps":           { slug: "site-maps",           name: "Interactive Site Maps",   description: "Interactive plat maps with lot availability and buyer links.",    price: "$499/mo", included: "Unlimited communities" },
+  "ai-renders":          { slug: "ai-renders",          name: "AI Render Studio",        description: "Generate AI-powered renders in seconds using your 3D scenes.",   price: "$150/mo", included: "250 AI credits/mo" },
+};
+
 const NAV_ITEMS = [
   { href: "/builder/dashboard",     label: "Dashboard",        icon: "dashboard"      },
   { href: "/builder/projects",      label: "Home Models",      icon: "projects"       },
@@ -79,6 +96,12 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
   const [companyName,  setCompanyName]  = useState("");
   const [showMenu,     setShowMenu]     = useState(false);
 
+  // Addon locking
+  const [builderId,    setBuilderId]    = useState<string | null>(null);
+  const [activeAddons, setActiveAddons] = useState<Set<string> | null>(null); // null = not loaded yet
+  const [legacyPlan,   setLegacyPlan]   = useState(false); // true = legacy tier plan, skip locking
+  const [upgradeAddon, setUpgradeAddon] = useState<AddonInfo | null>(null);
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
@@ -95,14 +118,24 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
             setUserInitials(((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "B");
           }
           if (profile?.builder_id) {
+            setBuilderId(profile.builder_id);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (supabase.from("builders") as any)
-              .select("company_name")
+              .select("company_name, plan_tier")
               .eq("id", profile.builder_id)
               .single()
-              .then(({ data: builder }: { data: { company_name: string } | null }) => {
+              .then(({ data: builder }: { data: { company_name: string; plan_tier: string | null } | null }) => {
                 if (builder?.company_name) setCompanyName(builder.company_name);
+                if (builder?.plan_tier) setLegacyPlan(true);
               });
+
+            // Load active addons
+            fetch(`/api/builder/addons?builderId=${profile.builder_id}`)
+              .then(r => r.ok ? r.json() : [])
+              .then((data: { addon_slug: string }[]) => {
+                setActiveAddons(new Set(data.map(d => d.addon_slug)));
+              })
+              .catch(() => setActiveAddons(new Set()));
           }
         });
     });
@@ -150,7 +183,32 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
       {/* Navigation */}
       <nav className="flex-1 px-2.5 py-4 space-y-0.5 overflow-y-auto">
         {NAV_ITEMS.map(item => {
-          const isActive = pathname.startsWith(item.href);
+          const isActive   = pathname.startsWith(item.href);
+          const addonSlug  = ADDON_REQUIRED[item.href];
+          const isLocked   = !legacyPlan && addonSlug != null && activeAddons != null && !activeAddons.has(addonSlug);
+
+          if (isLocked && addonSlug) {
+            const addonInfo = ADDON_INFO[addonSlug];
+            return (
+              <button
+                key={item.href}
+                onClick={() => { if (addonInfo) setUpgradeAddon(addonInfo); onClose?.(); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all text-white/25 hover:text-white/45 hover:bg-white/4 border border-transparent relative"
+              >
+                <span className="text-white/15">
+                  <SvgIcon paths={ICONS[item.icon]} />
+                </span>
+                <span className="flex-1 text-left">{item.label}</span>
+                <span className="flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
+                  style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)" }}>
+                  <svg className="w-3 h-3 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                </span>
+              </button>
+            );
+          }
+
           return (
             <Link
               key={item.href}
@@ -240,6 +298,15 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
       </div>
 
       </aside>
+
+      {/* Addon upgrade modal */}
+      {upgradeAddon && builderId && (
+        <AddonUpgradeModal
+          addon={upgradeAddon}
+          builderId={builderId}
+          onClose={() => setUpgradeAddon(null)}
+        />
+      )}
     </>
   );
 }
