@@ -662,6 +662,95 @@ export interface CommunityWithLots extends Community {
 // =============================================================================
 // plans
 // =============================================================================
+// =============================================================================
+// addons + builder_addons
+// =============================================================================
+export type AddonSlug = "configurator" | "ai-renders" | "site-maps" | "traditional-renders";
+
+export interface Addon {
+  id:                         string;
+  slug:                       AddonSlug;
+  name:                       string;
+  description:                string | null;
+  monthly_price_cents:        number;
+  included_units:             number | null;   // null = unlimited
+  unit_label:                 string | null;   // 'renders' | 'AI credits'
+  overage_block_size:         number | null;
+  overage_block_price_cents:  number | null;
+  setup_fee_cents:            number;          // per-community-request fee (site-maps)
+  stripe_price_id_monthly:    string | null;
+  stripe_price_id_annually:   string | null;
+  show_when_locked:           boolean;
+  sort_order:                 number;
+  is_active:                  boolean;
+  created_at:                 string;
+  updated_at:                 string;
+}
+
+export interface BuilderAddon {
+  id:                           string;
+  builder_id:                   string;
+  addon_slug:                   AddonSlug;
+  stripe_subscription_item_id:  string | null;
+  status:                       "active" | "canceled" | "past_due";
+  credits_remaining:            number | null;
+  credits_reset_at:             string | null;
+  activated_at:                 string;
+  canceled_at:                  string | null;
+  created_at:                   string;
+}
+
+// =============================================================================
+// site_map_requests
+// =============================================================================
+export type SiteMapRequestStatus =
+  | "awaiting_payment"
+  | "pending_review"
+  | "in_progress"
+  | "complete"
+  | "archived";
+
+export interface SiteMapRequest {
+  id:                   string;
+  builder_id:           string;
+  community_name:       string;
+  community_address:    string | null;
+  estimated_lot_count:  number | null;
+  phases:               number;
+  plat_map_files:       { name: string; url: string; type: string }[];
+  style_notes:          string | null;
+  target_date:          string | null;
+  status:               SiteMapRequestStatus;
+  setup_fee_cents:      number;
+  stripe_session_id:    string | null;
+  community_id:         string | null;
+  admin_notes:          string | null;
+  created_at:           string;
+  updated_at:           string;
+}
+
+// =============================================================================
+// crm_integrations
+// =============================================================================
+export type CrmType = "hubspot" | "followupboss" | "zapier" | "lasso" | "csv";
+
+export interface CrmIntegration {
+  id:           string;
+  builder_id:   string;
+  crm_type:     CrmType;
+  api_key:      string | null;
+  webhook_url:  string | null;
+  portal_id:    string | null;
+  config:       Record<string, unknown>;
+  enabled:      boolean;
+  last_sync_at: string | null;
+  created_at:   string;
+  updated_at:   string;
+}
+
+// =============================================================================
+// Plan (legacy tiered plans — kept for existing builders)
+// =============================================================================
 export interface Plan {
   id:                         string;
   name:                       string;   // 'launch' | 'studio' | 'scale'
