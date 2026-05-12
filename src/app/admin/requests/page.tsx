@@ -90,6 +90,9 @@ export default function ProductionQueuePage() {
   const [adminTab,      setAdminTab]      = useState<"3d-models" | "site-maps">("3d-models");
   const [smRequests,    setSmRequests]    = useState<SiteMapRequest[]>([]);
   const [smUpdating,    setSmUpdating]    = useState<string | null>(null);
+  const [smNotes,       setSmNotes]       = useState<Record<string, string>>({});
+  const [smEditNotes,   setSmEditNotes]   = useState<string | null>(null);
+  const [smBuildersById, setSmBuildersById] = useState<Record<string, Builder>>({});
 
   useEffect(() => {
     Promise.all([getAllProjects(), getAllBuildersBySlug(), getAwaitingPaymentRequests()]).then(([p, b, u]) => {
@@ -104,9 +107,18 @@ export default function ProductionQueuePage() {
     if (adminTab !== "site-maps") return;
     fetch("/api/admin/site-map-requests")
       .then(r => r.ok ? r.json() : [])
-      .then((data: SiteMapRequest[]) => setSmRequests(data))
+      .then((data: SiteMapRequest[]) => {
+        setSmRequests(data);
+        setSmNotes(Object.fromEntries(data.map((r: SiteMapRequest) => [r.id, r.admin_notes ?? ""])));
+        // Build builders-by-id lookup from already-loaded builders (keyed by slug)
+        const byId: Record<string, Builder> = {};
+        for (const b of Object.values(builders)) {
+          if (b.id) byId[b.id] = b;
+        }
+        setSmBuildersById(byId);
+      })
       .catch(() => {});
-  }, [adminTab]);
+  }, [adminTab, builders]);
 
   async function updateSmStatus(id: string, status: string, notes?: string) {
     setSmUpdating(id);
@@ -320,7 +332,7 @@ export default function ProductionQueuePage() {
               <p className="text-white/20 text-sm mt-1">Requests submitted by builders will appear here after payment.</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {smRequests.map(req => {
                 const statusConfig: Record<string, { label: string; dot: string }> = {
                   pending_review: { label: "Pending Review", dot: "#60a5fa" },
@@ -329,10 +341,16 @@ export default function ProductionQueuePage() {
                   archived:       { label: "Archived",       dot: "#6b7280" },
                 };
                 const s = statusConfig[req.status] ?? statusConfig.pending_review;
+                const builder = smBuildersById[req.builder_id];
+                const files: { name: string; url: string; size: number }[] = req.plat_map_files ?? [];
+                const links: string[] = (req as SiteMapRequest & { reference_links?: string[] }).reference_links ?? [];
+                const isEditingNotes = smEditNotes === req.id;
+
                 return (
-                  <div key={req.id} className="bg-[#1a1a1a] border border-white/8 rounded-xl p-4">
-                    <div className="flex items-start justify-between gap-4 flex-wrap">
-                      <div>
+                  <div key={req.id} className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">
+                    {/* Header row */}
+                    <div className="p-4 flex items-start justify-between gap-4 flex-wrap">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-semibold text-white text-sm">{req.community_name}</h3>
                           <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold"
@@ -341,12 +359,15 @@ export default function ProductionQueuePage() {
                           </span>
                         </div>
                         <div className="flex flex-wrap gap-3 mt-1">
+                          {builder && <span className="text-xs text-blue-400/70">{builder.company_name}</span>}
                           {req.community_address && <span className="text-xs text-white/25">{req.community_address}</span>}
                           {req.estimated_lot_count && <span className="text-xs text-white/25">{req.estimated_lot_count} lots</span>}
+                          {req.phases > 1 && <span className="text-xs text-white/25">{req.phases} phases</span>}
+                          {req.target_date && <span className="text-xs text-white/25">Target: {new Date(req.target_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>}
                           <span className="text-xs text-white/20">{new Date(req.created_at).toLocaleDateString()}</span>
-                          <span className="text-xs text-white/25">Fee: ${(req.setup_fee_cents / 100).toLocaleString()}</span>
+                          <span className="text-xs font-semibold text-white/40">Fee: ${(req.setup_fee_cents / 100).toLocaleString()}</span>
                         </div>
-                        {req.style_notes && <p className="text-xs text-white/35 mt-2 max-w-lg leading-relaxed">{req.style_notes}</p>}
+                        {req.style_notes && <p className="text-xs text-white/35 mt-2 max-w-lg leading-relaxed italic">{req.style_notes}</p>}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {req.status === "pending_review" && (
@@ -356,13 +377,101 @@ export default function ProductionQueuePage() {
                           </button>
                         )}
                         {req.status === "in_progress" && (
-                          <button onClick={() => updateSmStatus(req.id, "complete")} disabled={smUpdating === req.id}
+                          <button onClick={() => updateSmStatus(req.id, "complete", smNotes[req.id] || undefined)} disabled={smUpdating === req.id}
                             className="text-xs px-3 py-1.5 rounded-lg bg-green-600/20 border border-green-500/30 text-green-300 hover:bg-green-600/30 disabled:opacity-50 transition-colors">
                             {smUpdating === req.id ? "…" : "Mark Complete"}
                           </button>
                         )}
                       </div>
                     </div>
+
+                    {/* Files + Links + Notes */}
+                    {(files.length > 0 || links.length > 0 || req.status !== "complete") && (
+                      <div className="border-t border-white/6 px-4 py-3 space-y-3">
+
+                        {/* Plat map files */}
+                        {files.length > 0 && (
+                          <div>
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Plat Map Files</p>
+                            <div className="flex flex-wrap gap-2">
+                              {files.map((f, i) => (
+                                <a key={i} href={f.url} target="_blank" rel="noreferrer"
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                  style={{ background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)" }}>
+                                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                  </svg>
+                                  {f.name}
+                                  <span className="text-white/25">({(f.size / 1024).toFixed(0)}KB)</span>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Reference links */}
+                        {links.filter(l => l.trim()).length > 0 && (
+                          <div>
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Reference Links</p>
+                            <div className="flex flex-wrap gap-2">
+                              {links.filter(l => l.trim()).map((link, i) => (
+                                <a key={i} href={link} target="_blank" rel="noreferrer"
+                                  className="text-xs text-white/50 hover:text-blue-400 underline transition-colors truncate max-w-xs">
+                                  {link.replace(/^https?:\/\//, "")}
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Admin notes */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Admin Notes</p>
+                            {!isEditingNotes && (
+                              <button onClick={() => setSmEditNotes(req.id)}
+                                className="text-[10px] text-blue-400/60 hover:text-blue-400 transition-colors">
+                                {smNotes[req.id] ? "Edit" : "+ Add note"}
+                              </button>
+                            )}
+                          </div>
+                          {isEditingNotes ? (
+                            <div className="space-y-2">
+                              <textarea
+                                value={smNotes[req.id] ?? ""}
+                                onChange={e => setSmNotes(prev => ({ ...prev, [req.id]: e.target.value }))}
+                                rows={3}
+                                className="w-full bg-[#111] border border-white/10 rounded-lg px-3 py-2 text-xs text-white/70 focus:outline-none focus:border-blue-500/60 transition-colors resize-none"
+                                placeholder="Internal notes for this request…"
+                                autoFocus
+                              />
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={async () => {
+                                    await fetch(`/api/admin/site-map-requests/${req.id}`, {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ admin_notes: smNotes[req.id] }),
+                                    });
+                                    setSmEditNotes(null);
+                                  }}
+                                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 hover:bg-blue-600/30 transition-colors">
+                                  Save
+                                </button>
+                                <button onClick={() => setSmEditNotes(null)}
+                                  className="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-white/30 hover:text-white transition-colors">
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : smNotes[req.id] ? (
+                            <p className="text-xs text-white/40 leading-relaxed">{smNotes[req.id]}</p>
+                          ) : (
+                            <p className="text-xs text-white/20 italic">No notes yet</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

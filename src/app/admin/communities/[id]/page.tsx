@@ -40,7 +40,7 @@ export default function CommunityEditorPage() {
 
   // Selection / editing
   const [selectedLot,    setSelectedLot]    = useState<Lot | null>(null);
-  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number } | null>(null);
+  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number; cta_type: "configurator" | "external" | "contact" | "none"; cta_label: string; cta_url: string } | null>(null);
   const [savingLot,      setSavingLot]      = useState(false);
   const [deletingLot,    setDeletingLot]    = useState(false);
 
@@ -193,7 +193,7 @@ export default function CommunityEditorPage() {
     setMousePos(null);
     // Open the lot form for this new polygon
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11 });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11, cta_type: "configurator", cta_label: "", cta_url: "" });
     // Store drawing points for save
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
@@ -223,6 +223,9 @@ export default function CommunityEditorPage() {
       label_x:         lot.label_x ?? null,
       label_y:         lot.label_y ?? null,
       label_font_size: lot.label_font_size ?? 11,
+      cta_type:        (lot as Lot & { cta_type?: string }).cta_type as "configurator" | "external" | "contact" | "none" ?? "configurator",
+      cta_label:       (lot as Lot & { cta_label?: string }).cta_label ?? "",
+      cta_url:         (lot as Lot & { cta_url?: string }).cta_url ?? "",
     });
   }
 
@@ -247,6 +250,9 @@ export default function CommunityEditorPage() {
           label_x:         lotForm.label_x,
           label_y:         lotForm.label_y,
           label_font_size: lotForm.label_font_size,
+          cta_type:        lotForm.cta_type,
+          cta_label:       lotForm.cta_label || null,
+          cta_url:         lotForm.cta_url || null,
         }),
       });
       if (res.ok) {
@@ -278,6 +284,9 @@ export default function CommunityEditorPage() {
           label_x:         lotForm.label_x,
           label_y:         lotForm.label_y,
           label_font_size: lotForm.label_font_size,
+          cta_type:        lotForm.cta_type,
+          cta_label:       lotForm.cta_label || null,
+          cta_url:         lotForm.cta_url || null,
         }),
       });
       if (res.ok) {
@@ -767,6 +776,46 @@ export default function CommunityEditorPage() {
                   rows={2}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
               </div>
+              {/* CTA */}
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Call to Action</label>
+                <div className="grid grid-cols-2 gap-1 mb-2">
+                  {([
+                    { value: "configurator", label: "Configurator" },
+                    { value: "external",     label: "External Link" },
+                    { value: "contact",      label: "Lead Form" },
+                    { value: "none",         label: "None" },
+                  ] as const).map(opt => (
+                    <button key={opt.value} type="button"
+                      onClick={() => setLotForm(f => f && ({ ...f, cta_type: opt.value }))}
+                      className="py-1.5 rounded-lg text-[10px] font-semibold border transition-colors"
+                      style={{
+                        background: lotForm.cta_type === opt.value ? "rgba(59,130,246,0.2)" : "transparent",
+                        borderColor: lotForm.cta_type === opt.value ? "rgba(59,130,246,0.5)" : "rgba(255,255,255,0.1)",
+                        color: lotForm.cta_type === opt.value ? "#93c5fd" : "rgba(255,255,255,0.4)",
+                      }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {(lotForm.cta_type === "configurator" || lotForm.cta_type === "external" || lotForm.cta_type === "contact") && (
+                  <input value={lotForm.cta_label}
+                    onChange={e => setLotForm(f => f && ({ ...f, cta_label: e.target.value }))}
+                    placeholder={
+                      lotForm.cta_type === "configurator" ? "Configure this home (default)" :
+                      lotForm.cta_type === "contact"      ? "Request Info (default)" :
+                                                            "Button label…"
+                    }
+                    className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors mb-1.5" />
+                )}
+                {lotForm.cta_type === "external" && (
+                  <input value={lotForm.cta_url}
+                    onChange={e => setLotForm(f => f && ({ ...f, cta_url: e.target.value }))}
+                    placeholder="https://…"
+                    className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 font-mono focus:outline-none focus:border-blue-500/60 transition-colors" />
+                )}
+              </div>
+
               <div>
                 <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Label Text Color</label>
                 <div className="flex items-center gap-2">
