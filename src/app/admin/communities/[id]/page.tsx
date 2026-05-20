@@ -965,7 +965,7 @@ export default function CommunityEditorPage() {
                   <p className="text-xs text-white/30 mt-0.5">{community.lots.length} lots · {builders[community.company_slug ?? ""]?.company_name ?? community.company_slug ?? "No builder"}</p>
                 </div>
                 <button
-                  onClick={() => { setEditingMeta(v => !v); setMetaForm({ name: community.name, slug: community.slug, description: community.description ?? "", company_slug: community.company_slug ?? "" }); }}
+                  onClick={() => { setEditingMeta(v => !v); setMetaForm({ name: community.name, slug: community.slug, description: community.description ?? "", company_slug: community.company_slug ?? "", address: (community as any).address ?? "", city: (community as any).city ?? "", state: (community as any).state ?? "", zip: (community as any).zip ?? "", latitude: (community as any).latitude != null ? String((community as any).latitude) : "", longitude: (community as any).longitude != null ? String((community as any).longitude) : "", hoa_fee_monthly: (community as any).hoa_fee_monthly != null ? String((community as any).hoa_fee_monthly) : "", school_district: (community as any).school_district ?? "" }); }}
                   className="ml-2 flex-shrink-0 text-[10px] px-2 py-1 rounded-lg border border-white/12 text-white/35 hover:text-white hover:border-white/25 transition-colors"
                 >
                   {editingMeta ? "Cancel" : "Edit"}
