@@ -283,7 +283,7 @@ export default function CommunityEditorPage() {
         setCommunity(prev => prev ? {
           ...prev,
           lots: prev.lots.map(l => l.id === selectedLot.id
-            ? { ...l, ...lotForm, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier) }
+            ? { ...l, ...lotForm, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), phase: Number(lotForm.phase) || 1 }
             : l),
         } : null);
         showToast("Lot saved");
