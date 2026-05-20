@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { Community, Lot, MapSettings } from "@/types/database";
+import { Community, Lot, MapSettings, FloorPlan, LotCta } from "@/types/database";
 
 interface Builder {
   company_name: string;
@@ -30,14 +30,42 @@ interface Project {
   description: string | null;
 }
 
-interface LotWithProject extends Lot {
+interface LotWithData extends Lot {
+  floorPlan?: FloorPlan | null;
   project?: Project | null;
 }
 
+interface FilterState {
+  statuses: string[];
+  minBeds: number | null;
+  minBaths: number | null;
+  minGarage: number | null;
+  priceMin: string;
+  priceMax: string;
+  sqftMin: string;
+  phases: number[];
+  moveInReady: boolean;
+}
+
+const ALL_STATUSES = ["available", "reserved", "sold", "coming_soon"];
+
+const DEFAULT_FILTERS: FilterState = {
+  statuses: [...ALL_STATUSES],
+  minBeds: null,
+  minBaths: null,
+  minGarage: null,
+  priceMin: "",
+  priceMax: "",
+  sqftMin: "",
+  phases: [],
+  moveInReady: false,
+};
+
 const STATUS: Record<string, { fill: string; stroke: string; glow: string; label: string; dot: string }> = {
-  available: { fill: "rgba(34,197,94,0.15)",  stroke: "rgba(34,197,94,0.75)",  glow: "rgba(34,197,94,0.35)",  label: "Available", dot: "#22c55e" },
-  reserved:  { fill: "rgba(251,191,36,0.15)", stroke: "rgba(251,191,36,0.75)", glow: "rgba(251,191,36,0.35)", label: "Reserved",  dot: "#fbbf24" },
-  sold:      { fill: "rgba(239,68,68,0.15)",  stroke: "rgba(239,68,68,0.7)",   glow: "rgba(239,68,68,0.3)",   label: "Sold",      dot: "#ef4444" },
+  available:   { fill: "rgba(34,197,94,0.15)",   stroke: "rgba(34,197,94,0.75)",   glow: "rgba(34,197,94,0.35)",   label: "Available",   dot: "#22c55e" },
+  reserved:    { fill: "rgba(251,191,36,0.15)",  stroke: "rgba(251,191,36,0.75)",  glow: "rgba(251,191,36,0.35)",  label: "Reserved",    dot: "#fbbf24" },
+  sold:        { fill: "rgba(239,68,68,0.15)",   stroke: "rgba(239,68,68,0.7)",    glow: "rgba(239,68,68,0.3)",    label: "Sold",        dot: "#ef4444" },
+  coming_soon: { fill: "rgba(148,163,184,0.06)", stroke: "rgba(148,163,184,0.3)",  glow: "rgba(148,163,184,0.08)", label: "Coming Soon", dot: "#94a3b8" },
 };
 
 const GLASS = {
@@ -50,6 +78,14 @@ const GLASS = {
 function fmtPrice(n: number) {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
+function fmtSqft(n: number) {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toString();
+}
+function fmtDate(s: string | null): string | null {
+  if (!s) return null;
+  try { return new Date(s).toLocaleDateString("en-US", { month: "short", year: "numeric" }); }
+  catch { return null; }
+}
 function centroid(polygon: [number, number][]): [number, number] {
   return [polygon.reduce((s, p) => s + p[0], 0) / polygon.length, polygon.reduce((s, p) => s + p[1], 0) / polygon.length];
 }
@@ -60,27 +96,38 @@ function BuilderInitials({ name }: { name: string }) {
   const parts = name.trim().split(" ");
   return <>{(parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")}</>;
 }
+function effectiveLotStatus(lot: LotWithData): string {
+  if (lot.is_coming_soon) return "coming_soon";
+  return lot.status;
+}
 
 export default function CommunityMapPage({ params }: { params: Promise<{ companySlug: string; communitySlug: string }> }) {
   const [companySlug,   setCompanySlug]   = useState("");
   const [communitySlug, setCommunitySlug] = useState("");
   const [community,     setCommunity]     = useState<Community | null>(null);
   const [builder,       setBuilder]       = useState<Builder | null>(null);
-  const [lots,          setLots]          = useState<LotWithProject[]>([]);
+  const [lots,          setLots]          = useState<LotWithData[]>([]);
+  const [projectMap,    setProjectMap]    = useState<Record<string, Project>>({});
   const [loading,       setLoading]       = useState(true);
-  const [hoveredLot,    setHoveredLot]    = useState<string | null>(null);
-  const [selectedLot,   setSelectedLot]   = useState<LotWithProject | null>(null);
-  const [tooltip,       setTooltip]       = useState<{ x: number; y: number } | null>(null);
-  const [imgRect,       setImgRect]       = useState({ left: 0, top: 0, w: 0, h: 0 });
-  const [mapZoom,       setMapZoom]       = useState(1);
-  const [panOffset,     setPanOffset]     = useState({ x: 0, y: 0 });
-  const [isDragging,    setIsDragging]    = useState(false);
-  const [isMobile,      setIsMobile]      = useState(false);
-  const [contactLot,    setContactLot]    = useState<LotWithProject | null>(null);
-  const [contactForm,   setContactForm]   = useState({ firstName: "", lastName: "", email: "", phone: "", message: "" });
-  const [contactBusy,   setContactBusy]   = useState(false);
-  const [contactDone,   setContactDone]   = useState(false);
-  const [contactErr,    setContactErr]    = useState("");
+
+  const [hoveredLot,  setHoveredLot]  = useState<string | null>(null);
+  const [selectedLot, setSelectedLot] = useState<LotWithData | null>(null);
+  const [tooltip,     setTooltip]     = useState<{ x: number; y: number } | null>(null);
+  const [imgRect,     setImgRect]     = useState({ left: 0, top: 0, w: 0, h: 0 });
+  const [mapZoom,     setMapZoom]     = useState(1);
+  const [panOffset,   setPanOffset]   = useState({ x: 0, y: 0 });
+  const [isDragging,  setIsDragging]  = useState(false);
+  const [isMobile,    setIsMobile]    = useState(false);
+
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filters,    setFilters]    = useState<FilterState>({ ...DEFAULT_FILTERS });
+  const [favorites,  setFavorites]  = useState<Set<string>>(new Set());
+
+  const [contactLot,  setContactLot]  = useState<LotWithData | null>(null);
+  const [contactForm, setContactForm] = useState({ firstName: "", lastName: "", email: "", phone: "", message: "" });
+  const [contactBusy, setContactBusy] = useState(false);
+  const [contactDone, setContactDone] = useState(false);
+  const [contactErr,  setContactErr]  = useState("");
 
   const imgRef       = useRef<HTMLImageElement>(null);
   const mapWrapRef   = useRef<HTMLDivElement>(null);
@@ -90,6 +137,57 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
   const touchPanRef  = useRef<{ id: number; sx: number; sy: number; px: number; py: number } | null>(null);
   const pinchRef     = useRef<{ dist: number; zoom: number } | null>(null);
 
+  // ── Computed ──────────────────────────────────────────────────────────────
+  const uniquePhases = useMemo(() =>
+    [...new Set(lots.filter(l => l.phase).map(l => l.phase!))].sort((a, b) => a - b),
+  [lots]);
+
+  const minPrice = useMemo(() => lots.reduce((min: number | null, lot) => {
+    const bp = lot.floorPlan?.base_price ?? (lot.project?.base_price ?? null);
+    if (bp === null) return min;
+    const total = bp + (lot.price_modifier ?? 0);
+    return min === null ? total : Math.min(min, total);
+  }, null), [lots]);
+
+  const filteredLotIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const lot of lots) {
+      const fp     = lot.floorPlan;
+      const status = effectiveLotStatus(lot);
+      if (!filters.statuses.includes(status)) continue;
+      if (filters.moveInReady && status !== "available") continue;
+      if (filters.phases.length > 0 && !filters.phases.includes(lot.phase ?? 1)) continue;
+      if (fp) {
+        if (filters.minBeds   && (fp.beds          ?? 0) < filters.minBeds)   continue;
+        if (filters.minBaths  && (fp.baths         ?? 0) < filters.minBaths)  continue;
+        if (filters.minGarage && (fp.garage_spaces ?? 0) < filters.minGarage) continue;
+        const price = (fp.base_price ?? 0) + (lot.price_modifier ?? 0);
+        const pMin = parseFloat(filters.priceMin.replace(/[^0-9.]/g, ""));
+        const pMax = parseFloat(filters.priceMax.replace(/[^0-9.]/g, ""));
+        if (!isNaN(pMin) && price < pMin) continue;
+        if (!isNaN(pMax) && price > pMax) continue;
+        const sMin = parseFloat(filters.sqftMin.replace(/[^0-9.]/g, ""));
+        if (!isNaN(sMin) && (fp.sqft ?? 0) < sMin) continue;
+      }
+      ids.add(lot.id);
+    }
+    return ids;
+  }, [lots, filters]);
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filters.statuses.length < ALL_STATUSES.length) n++;
+    if (filters.phases.length > 0) n++;
+    if (filters.minBeds)    n++;
+    if (filters.minBaths)   n++;
+    if (filters.minGarage)  n++;
+    if (filters.priceMin)   n++;
+    if (filters.priceMax)   n++;
+    if (filters.sqftMin)    n++;
+    if (filters.moveInReady) n++;
+    return n;
+  }, [filters]);
+
   // ── Mobile detection ──────────────────────────────────────────────────────
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640);
@@ -98,7 +196,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // ── Prevent page scroll while touching the map ────────────────────────────
+  // ── Touch prevention ──────────────────────────────────────────────────────
   useEffect(() => {
     const el = mapCanvasRef.current;
     if (!el) return;
@@ -107,7 +205,84 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     return () => el.removeEventListener("touchmove", handler);
   }, []);
 
-  // ── Mouse pan ─────────────────────────────────────────────────────────────
+  // ── Data loading ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    params.then(p => { setCompanySlug(p.companySlug); setCommunitySlug(p.communitySlug); });
+  }, [params]);
+
+  useEffect(() => {
+    if (!companySlug || !communitySlug) return;
+    (async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: comm } = await (supabase.from("communities") as any)
+        .select("*").eq("company_slug", companySlug).eq("slug", communitySlug).single();
+      if (!comm) { setLoading(false); return; }
+      setCommunity(comm as Community);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: bld } = await (supabase.from("builders") as any)
+        .select("company_name,logo_url,contact_email,phone,website_url,city,state")
+        .eq("company_slug", companySlug).single();
+      if (bld) setBuilder(bld as Builder);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: lotData } = await (supabase.from("lots") as any)
+        .select("*").eq("community_id", comm.id);
+      const rawLots = (lotData ?? []) as Lot[];
+
+      // Load floor plans
+      const fpIds = [...new Set(rawLots.filter(l => l.floor_plan_id).map(l => l.floor_plan_id!))];
+      const fpMap: Record<string, FloorPlan> = {};
+      if (fpIds.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: fps } = await (supabase.from("floor_plans") as any).select("*").in("id", fpIds);
+        if (fps) for (const fp of fps as FloorPlan[]) fpMap[fp.id] = fp;
+      }
+
+      // Load projects (legacy lot.project_id + floor_plan.project_id for configurator links)
+      const projIds = [...new Set([
+        ...rawLots.filter(l => l.project_id).map(l => l.project_id!),
+        ...Object.values(fpMap).filter(fp => fp.project_id).map(fp => fp.project_id!),
+      ])];
+      const projMap: Record<string, Project> = {};
+      if (projIds.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: projs } = await (supabase.from("projects") as any)
+          .select("id,name,slug,company_slug,beds,baths,floors,sqft,base_price,thumbnail_url,home_type,description")
+          .in("id", projIds);
+        if (projs) for (const p of projs as Project[]) projMap[p.id] = p;
+      }
+
+      setProjectMap(projMap);
+      setLots(rawLots.map(l => ({
+        ...l,
+        floorPlan: l.floor_plan_id ? (fpMap[l.floor_plan_id] ?? null) : null,
+        project:   l.project_id   ? (projMap[l.project_id]   ?? null) : null,
+      })));
+      setLoading(false);
+    })();
+  }, [companySlug, communitySlug]);
+
+  // ── Favorites ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!community?.id) return;
+    try {
+      const saved = localStorage.getItem(`fav_${community.id}`);
+      if (saved) setFavorites(new Set(JSON.parse(saved) as string[]));
+    } catch { /* ignore */ }
+  }, [community?.id]);
+
+  function toggleFavorite(lotId: string) {
+    setFavorites(prev => {
+      const next = new Set(prev);
+      if (next.has(lotId)) next.delete(lotId);
+      else next.add(lotId);
+      try { localStorage.setItem(`fav_${community!.id}`, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }
+
+  // ── Map interaction ───────────────────────────────────────────────────────
   function handleMapWheel(e: React.WheelEvent) {
     e.preventDefault();
     setMapZoom(prev => Math.max(0.5, Math.min(4, prev * (e.deltaY < 0 ? 1.1 : 0.9))));
@@ -129,8 +304,6 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     setIsDragging(false);
     setTimeout(() => { hasDragged.current = false; }, 0);
   }
-
-  // ── Touch pan / pinch zoom ────────────────────────────────────────────────
   function getTouchDist(touches: React.TouchList) {
     return Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
   }
@@ -163,46 +336,22 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     setTimeout(() => { hasDragged.current = false; }, 0);
   }
 
-  // ── Data loading ──────────────────────────────────────────────────────────
+  function measureImgRect() {
+    const el = imgRef.current;
+    if (!el || !el.naturalWidth || !el.naturalHeight) return;
+    const { clientWidth: elW, clientHeight: elH, naturalWidth: natW, naturalHeight: natH } = el;
+    const scale = Math.min(elW / natW, elH / natH);
+    const rendW = natW * scale;
+    const rendH = natH * scale;
+    setImgRect({ left: (elW - rendW) / 2, top: (elH - rendH) / 2, w: rendW, h: rendH });
+  }
   useEffect(() => {
-    params.then(p => { setCompanySlug(p.companySlug); setCommunitySlug(p.communitySlug); });
-  }, [params]);
+    window.addEventListener("resize", measureImgRect);
+    return () => window.removeEventListener("resize", measureImgRect);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [community]);
 
-  useEffect(() => {
-    if (!companySlug || !communitySlug) return;
-    (async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: comm } = await (supabase.from("communities") as any)
-        .select("*").eq("company_slug", companySlug).eq("slug", communitySlug).single();
-      if (!comm) { setLoading(false); return; }
-      setCommunity(comm as Community);
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: bld } = await (supabase.from("builders") as any)
-        .select("company_name,logo_url,contact_email,phone,website_url,city,state")
-        .eq("company_slug", companySlug).single();
-      if (bld) setBuilder(bld as Builder);
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: lotData } = await (supabase.from("lots") as any)
-        .select("*").eq("community_id", comm.id);
-      const rawLots = (lotData ?? []) as Lot[];
-
-      const projectIds = [...new Set(rawLots.filter(l => l.project_id).map(l => l.project_id!))];
-      const projectMap: Record<string, Project> = {};
-      if (projectIds.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: projs } = await (supabase.from("projects") as any)
-          .select("id,name,slug,company_slug,beds,baths,floors,sqft,base_price,thumbnail_url,home_type,description")
-          .in("id", projectIds);
-        if (projs) for (const p of projs as Project[]) projectMap[p.id] = p;
-      }
-
-      setLots(rawLots.map(l => ({ ...l, project: l.project_id ? (projectMap[l.project_id] ?? null) : null })));
-      setLoading(false);
-    })();
-  }, [companySlug, communitySlug]);
-
+  // ── Contact form ──────────────────────────────────────────────────────────
   function closeContactModal() {
     setContactLot(null);
     setContactForm({ firstName: "", lastName: "", email: "", phone: "", message: "" });
@@ -210,7 +359,6 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     setContactDone(false);
     setContactErr("");
   }
-
   async function submitContact(e: React.FormEvent) {
     e.preventDefault();
     if (!contactLot) return;
@@ -226,6 +374,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
           community_slug: communitySlug,
           lot_id:         contactLot.id,
           lot_number:     contactLot.lot_number,
+          floor_plan_id:  contactLot.floor_plan_id ?? null,
           project_id:     contactLot.project_id ?? null,
           first_name:     contactForm.firstName,
           last_name:      contactForm.lastName,
@@ -246,22 +395,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     }
   }
 
-  function measureImgRect() {
-    const el = imgRef.current;
-    if (!el || !el.naturalWidth || !el.naturalHeight) return;
-    const { clientWidth: elW, clientHeight: elH, naturalWidth: natW, naturalHeight: natH } = el;
-    const scale = Math.min(elW / natW, elH / natH);
-    const rendW = natW * scale;
-    const rendH = natH * scale;
-    setImgRect({ left: (elW - rendW) / 2, top: (elH - rendH) / 2, w: rendW, h: rendH });
-  }
-
-  useEffect(() => {
-    window.addEventListener("resize", measureImgRect);
-    return () => window.removeEventListener("resize", measureImgRect);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [community]);
-
+  // ── Loading / not found ───────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#080808]">
@@ -272,7 +406,6 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
       </div>
     );
   }
-
   if (!community) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#080808] text-white/30 text-sm">
@@ -281,14 +414,15 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     );
   }
 
+  // ── Stats & map settings ──────────────────────────────────────────────────
   const stats = {
-    available: lots.filter(l => l.status === "available").length,
-    reserved:  lots.filter(l => l.status === "reserved").length,
-    sold:      lots.filter(l => l.status === "sold").length,
-    total:     lots.length,
+    available:   lots.filter(l => effectiveLotStatus(l) === "available").length,
+    reserved:    lots.filter(l => effectiveLotStatus(l) === "reserved").length,
+    sold:        lots.filter(l => effectiveLotStatus(l) === "sold").length,
+    coming_soon: lots.filter(l => effectiveLotStatus(l) === "coming_soon").length,
+    total:       lots.length,
   };
 
-  // ── Map settings ──────────────────────────────────────────────────────────
   const comm               = community!;
   const ms: MapSettings    = comm.map_settings ?? {};
   const showLabels         = ms.show_labels !== false;
@@ -296,26 +430,111 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
   const defaultLabelSize   = ms.default_label_size ?? null;
   const defaultStrokeWidth = ms.stroke_width ?? 1.5;
 
-  // ── Lot detail content (shared between side panel and bottom sheet) ────────
-  function LotDetailContent({ lot }: { lot: LotWithProject }) {
-    const s = STATUS[lot.status] ?? STATUS.available;
-    const proj = lot.project;
-    const totalPrice = proj ? proj.base_price + (lot.price_modifier ?? 0) : null;
+  const addressLine   = [comm.address, comm.city, comm.state, comm.zip].filter(Boolean).join(", ");
+  const mapsUrl       = (comm.latitude && comm.longitude)
+    ? `https://www.google.com/maps?q=${comm.latitude},${comm.longitude}`
+    : addressLine ? `https://www.google.com/maps/search/${encodeURIComponent(addressLine)}` : null;
+  const directionsUrl = (comm.latitude && comm.longitude)
+    ? `https://www.google.com/maps/dir/?api=1&destination=${comm.latitude},${comm.longitude}`
+    : addressLine ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addressLine)}` : null;
+
+  // ── CTA helpers ───────────────────────────────────────────────────────────
+  function getEffectiveCtas(lot: LotWithData): LotCta[] {
+    const arr = (lot.ctas ?? []) as LotCta[];
+    if (arr.length > 0) return arr;
+    const t = lot.cta_type;
+    if (!t || t === "none") return [];
+    return [{ type: t as LotCta["type"], label: lot.cta_label ?? "", url: lot.cta_url ?? undefined }];
+  }
+  function getConfiguratorProject(lot: LotWithData): Project | null {
+    if (lot.floorPlan?.project_id) return projectMap[lot.floorPlan.project_id] ?? null;
+    return lot.project ?? null;
+  }
+
+  // ── Lot detail content ────────────────────────────────────────────────────
+  function LotDetailContent({ lot }: { lot: LotWithData }) {
+    const fp         = lot.floorPlan;
+    const proj       = lot.project;
+    const status     = effectiveLotStatus(lot);
+    const s          = STATUS[status] ?? STATUS.available;
+    const isFav      = favorites.has(lot.id);
+    const configProj = getConfiguratorProject(lot);
+
+    const thumbnailUrl = fp?.thumbnail_url ?? proj?.thumbnail_url ?? null;
+    const displayName  = fp?.name          ?? proj?.name          ?? null;
+    const homeStyle    = fp?.home_style    ?? proj?.home_type      ?? null;
+    const description  = fp?.description   ?? proj?.description    ?? null;
+    const beds         = fp?.beds          ?? proj?.beds           ?? null;
+    const baths        = fp?.baths         ?? proj?.baths          ?? null;
+    const floors       = fp?.floors        ?? proj?.floors         ?? null;
+    const sqft         = fp?.sqft          ?? proj?.sqft           ?? null;
+    const garage       = fp?.garage_spaces ?? null;
+    const basePrice    = fp?.base_price    ?? (proj ? proj.base_price : null);
+    const totalPrice   = basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null;
+
+    const rawCtas      = getEffectiveCtas(lot);
+    const effectiveCtas: LotCta[] = rawCtas.length === 0 && configProj
+      ? [{ type: "configurator", label: "Configure this home" }]
+      : rawCtas;
+
+    const Arrow = () => (
+      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+      </svg>
+    );
+
+    function renderCta(cta: LotCta, idx: number) {
+      const isPrimary    = idx === 0;
+      const cls          = `flex items-center justify-center gap-2 w-full ${isPrimary ? "py-3.5 text-sm font-bold" : "py-2.5 text-xs font-semibold"} rounded-xl text-white transition-all hover:brightness-110`;
+      const primaryStyle = { background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" };
+      const secondStyle  = { background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)" };
+      const style        = isPrimary ? primaryStyle : secondStyle;
+
+      if (cta.type === "external" && cta.url) {
+        return <a key={idx} href={cta.url} target="_blank" rel="noopener noreferrer" className={cls} style={style}>{cta.label || "Learn More"} <Arrow /></a>;
+      }
+      if (cta.type === "contact") {
+        return <button key={idx} onClick={() => setContactLot(lot)} className={cls} style={style}>{cta.label || "Request Info"} <Arrow /></button>;
+      }
+      if (cta.type === "schedule" && cta.url) {
+        return <a key={idx} href={cta.url} target="_blank" rel="noopener noreferrer" className={cls} style={style}>{cta.label || "Schedule a Tour"} <Arrow /></a>;
+      }
+      if (cta.type === "configurator" && configProj) {
+        return (
+          <Link key={idx}
+            href={`/project/${configProj.company_slug}/${configProj.slug}?lotId=${encodeURIComponent(lot.id)}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${encodeURIComponent(comm.slug)}&communityName=${encodeURIComponent(comm.name)}&lotPriceModifier=${lot.price_modifier ?? 0}`}
+            target="_top" className={cls} style={style}>
+            {cta.label || "Configure this home"} <Arrow />
+          </Link>
+        );
+      }
+      return null;
+    }
+
+    const FavBtn = ({ size = "sm" }: { size?: "sm" | "md" }) => (
+      <button onClick={() => toggleFavorite(lot.id)}
+        className={`${size === "md" ? "w-8 h-8" : "w-7 h-7"} flex items-center justify-center rounded-lg transition-colors hover:bg-white/8 flex-shrink-0`}>
+        <svg className="w-4 h-4" fill={isFav ? "#ef4444" : "none"} viewBox="0 0 24 24" stroke={isFav ? "#ef4444" : "rgba(255,255,255,0.3)"} strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+        </svg>
+      </button>
+    );
 
     return (
       <>
-        {/* Thumbnail / header */}
+        {/* Header */}
         <div className="relative flex-shrink-0">
-          {proj?.thumbnail_url ? (
+          {thumbnailUrl ? (
             <div className="relative overflow-hidden" style={{ height: isMobile ? 180 : 208 }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={proj.thumbnail_url} alt={proj.name} className="w-full h-full object-cover" />
-              <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.7) 100%)" }} />
+              <img src={thumbnailUrl} alt={displayName ?? lot.lot_number} className="w-full h-full object-cover" />
+              <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.72) 100%)" }} />
               <div className="absolute bottom-0 left-0 right-0 px-5 pb-4">
                 <div className="flex items-end justify-between">
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-widest text-white/50">Lot</p>
                     <p className="text-2xl font-bold text-white leading-tight">{lot.lot_number}</p>
+                    {lot.phase && lot.phase > 0 && <p className="text-[10px] text-white/40 mt-0.5">Phase {lot.phase}</p>}
                   </div>
                   <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold"
                     style={{ background: "rgba(0,0,0,0.6)", border: `1px solid ${s.stroke}`, color: s.dot }}>
@@ -324,26 +543,37 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                   </span>
                 </div>
               </div>
-              <button onClick={() => setSelectedLot(null)}
-                className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full text-white/60 hover:text-white transition-colors"
-                style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)" }}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                <button onClick={() => toggleFavorite(lot.id)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
+                  style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)" }}>
+                  <svg className="w-4 h-4" fill={isFav ? "#ef4444" : "none"} viewBox="0 0 24 24" stroke={isFav ? "#ef4444" : "rgba(255,255,255,0.6)"} strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                  </svg>
+                </button>
+                <button onClick={() => setSelectedLot(null)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full text-white/60 hover:text-white transition-colors"
+                  style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)" }}>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-white/35">Lot</p>
                 <p className="text-xl font-bold text-white">{lot.lot_number}</p>
+                {lot.phase && lot.phase > 0 && <p className="text-[10px] text-white/30 mt-0.5">Phase {lot.phase}</p>}
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold"
                   style={{ background: s.fill, border: `1px solid ${s.stroke}`, color: s.dot }}>
                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.dot }} />
                   {s.label}
                 </span>
+                <FavBtn />
                 <button onClick={() => setSelectedLot(null)}
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-white/30 hover:text-white hover:bg-white/8 transition-colors">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -355,24 +585,30 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
           )}
         </div>
 
-        {/* Scrollable content */}
+        {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto">
-          {proj ? (
-            <div className="px-5 py-4 space-y-5">
+          <div className="px-5 py-4 space-y-4">
+
+            {/* Home model */}
+            {displayName && (
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1">Home Model</p>
-                <h2 className="text-lg font-bold text-white leading-tight">{proj.name}</h2>
-                {proj.home_type && <p className="text-xs text-white/35 mt-0.5 capitalize">{proj.home_type.replace("_", " ")}</p>}
-                {proj.description && <p className="text-xs text-white/40 mt-2 leading-relaxed">{proj.description}</p>}
+                <h2 className="text-lg font-bold text-white leading-tight">{displayName}</h2>
+                {homeStyle && <p className="text-xs text-white/35 mt-0.5 capitalize">{homeStyle.replace(/_/g, " ")}</p>}
+                {description && <p className="text-xs text-white/40 mt-2 leading-relaxed">{description}</p>}
               </div>
+            )}
 
-              <div className="grid grid-cols-4 gap-2">
+            {/* Specs */}
+            {(beds || baths || floors || sqft || garage) && (
+              <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${[beds, baths, floors, sqft, garage].filter(x => x != null).length}, 1fr)` }}>
                 {[
-                  { label: "Bed",   value: proj.beds   ?? "—" },
-                  { label: "Bath",  value: proj.baths  ?? "—" },
-                  { label: "Floor", value: proj.floors ?? "—" },
-                  { label: "Sqft",  value: proj.sqft ? (proj.sqft >= 1000 ? `${(proj.sqft/1000).toFixed(1)}k` : proj.sqft) : "—" },
-                ].map(spec => (
+                  { label: "Bed",    value: beds },
+                  { label: "Bath",   value: baths },
+                  { label: "Floor",  value: floors },
+                  { label: "Sqft",   value: sqft ? fmtSqft(sqft) : null },
+                  { label: "Garage", value: garage },
+                ].filter(x => x.value != null).map(spec => (
                   <div key={spec.label} className="flex flex-col items-center py-2.5 rounded-xl"
                     style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
                     <p className="text-base font-bold text-white">{spec.value}</p>
@@ -380,97 +616,112 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                   </div>
                 ))}
               </div>
+            )}
 
-              {totalPrice !== null && (
-                <div className="rounded-xl px-4 py-3.5"
-                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1">Starting Price</p>
-                  <p className="text-3xl font-bold text-white">{fmtPrice(totalPrice)}</p>
-                  {(lot.price_modifier ?? 0) !== 0 && (
-                    <div className="flex items-center gap-1.5 mt-1.5">
-                      <span className="text-[11px] text-white/30">{fmtPrice(proj.base_price)} base</span>
-                      <span className="text-[11px] text-white/20">·</span>
-                      <span className="text-[11px]" style={{ color: (lot.price_modifier ?? 0) > 0 ? "#fbbf24" : "#34d399" }}>
-                        {(lot.price_modifier ?? 0) > 0 ? "+" : "−"}{fmtPrice(Math.abs(lot.price_modifier ?? 0))} lot
-                      </span>
+            {/* Price */}
+            {totalPrice !== null && (
+              <div className="rounded-xl px-4 py-3.5"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1">Starting Price</p>
+                <p className="text-3xl font-bold text-white">{fmtPrice(totalPrice)}</p>
+                {(lot.price_modifier ?? 0) !== 0 && (
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <span className="text-[11px] text-white/30">{fmtPrice(basePrice!)} base</span>
+                    <span className="text-[11px] text-white/20">·</span>
+                    <span className="text-[11px]" style={{ color: (lot.price_modifier ?? 0) > 0 ? "#fbbf24" : "#34d399" }}>
+                      {(lot.price_modifier ?? 0) > 0 ? "+" : "−"}{fmtPrice(Math.abs(lot.price_modifier ?? 0))} lot adj.
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Lot details */}
+            {(lot.lot_size_sqft || lot.estimated_completion || lot.virtual_tour_url) && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">Lot Details</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {lot.lot_size_sqft && (
+                    <div className="rounded-xl px-3 py-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <p className="text-[10px] text-white/30 mb-0.5">Lot Size</p>
+                      <p className="text-sm font-bold text-white">{lot.lot_size_sqft.toLocaleString()} sqft</p>
+                      {lot.lot_width_ft && lot.lot_depth_ft && (
+                        <p className="text-[10px] text-white/25 mt-0.5">{lot.lot_width_ft}′ × {lot.lot_depth_ft}′</p>
+                      )}
+                    </div>
+                  )}
+                  {lot.estimated_completion && (
+                    <div className="rounded-xl px-3 py-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <p className="text-[10px] text-white/30 mb-0.5">Est. Completion</p>
+                      <p className="text-sm font-bold text-white">{fmtDate(lot.estimated_completion)}</p>
                     </div>
                   )}
                 </div>
-              )}
-
-              {lot.notes && (
-                <div className="rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Lot Notes</p>
-                  <p className="text-xs text-white/45 leading-relaxed">{lot.notes}</p>
-                </div>
-              )}
-
-              {lot.status === "available" && (() => {
-                const ctaType  = lot.cta_type  ?? "configurator";
-                const ctaLabel = lot.cta_label || null;
-                const ctaUrl   = lot.cta_url   || null;
-                const btnStyle = { background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" };
-                const btnClass = "flex items-center justify-center gap-2 w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110";
-                const Arrow = () => (
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                  </svg>
-                );
-
-                if (ctaType === "none") return null;
-
-                if (ctaType === "external" && ctaUrl) {
-                  return (
-                    <a href={ctaUrl} target="_blank" rel="noopener noreferrer" className={btnClass} style={btnStyle}>
-                      {ctaLabel ?? "Learn More"} <Arrow />
-                    </a>
-                  );
-                }
-
-                if (ctaType === "contact") {
-                  return (
-                    <button onClick={() => setContactLot(lot)} className={btnClass} style={btnStyle}>
-                      {ctaLabel ?? "Request Info"} <Arrow />
-                    </button>
-                  );
-                }
-
-                // Default: configurator
-                if (!proj) return null;
-                return (
-                  <Link
-                    href={`/project/${proj.company_slug}/${proj.slug}?lotId=${encodeURIComponent(lot.id)}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${encodeURIComponent(comm.slug)}&communityName=${encodeURIComponent(comm.name)}&lotPriceModifier=${lot.price_modifier ?? 0}`}
-                    target="_top" className={btnClass} style={btnStyle}
-                  >
-                    {ctaLabel ?? "Configure this home"} <Arrow />
-                  </Link>
-                );
-              })()}
-              {lot.status === "reserved" && (
-                <div className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-semibold text-amber-400/70"
-                  style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)" }}>
-                  This lot is currently reserved
-                </div>
-              )}
-              {lot.status === "sold" && (
-                <div className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-semibold text-white/25"
-                  style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  This lot has been sold
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 px-5 text-center">
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
-                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <svg className="w-6 h-6 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21" />
-                </svg>
+                {lot.virtual_tour_url && (
+                  <a href={lot.virtual_tour_url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs text-white/50 hover:text-white/80 transition-colors"
+                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                    </svg>
+                    Virtual Tour
+                    <svg className="w-3 h-3 ml-auto flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                    </svg>
+                  </a>
+                )}
               </div>
-              <p className="text-sm font-semibold text-white/40">No model assigned</p>
-              <p className="text-xs text-white/20 mt-1 leading-relaxed">Contact us to learn more about this lot.</p>
-            </div>
-          )}
+            )}
+
+            {/* Notes */}
+            {lot.notes && (
+              <div className="rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Notes</p>
+                <p className="text-xs text-white/45 leading-relaxed">{lot.notes}</p>
+              </div>
+            )}
+
+            {/* CTAs */}
+            {status === "available" && effectiveCtas.length > 0 && (
+              <div className="space-y-2">
+                {effectiveCtas.map((cta, idx) => renderCta(cta, idx)).filter(Boolean)}
+              </div>
+            )}
+            {status === "coming_soon" && (
+              <div className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-semibold text-slate-400/70"
+                style={{ background: "rgba(148,163,184,0.06)", border: "1px solid rgba(148,163,184,0.2)" }}>
+                Coming soon — not yet available
+              </div>
+            )}
+            {status === "reserved" && (
+              <div className="flex items-center justify-center w-full py-3 rounded-xl text-sm font-semibold text-amber-400/70"
+                style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)" }}>
+                This lot is currently reserved
+              </div>
+            )}
+            {status === "sold" && (
+              <div className="flex items-center justify-center w-full py-3 rounded-xl text-sm font-semibold text-white/25"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                This lot has been sold
+              </div>
+            )}
+
+            {/* Directions */}
+            {directionsUrl && (
+              <a href={directionsUrl} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 w-full py-2.5 px-3 rounded-xl text-xs text-white/40 hover:text-white/70 transition-colors"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0zM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                </svg>
+                <span className="flex-1">Get Directions</span>
+                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                </svg>
+              </a>
+            )}
+          </div>
         </div>
 
         {/* Builder contact footer */}
@@ -509,10 +760,169 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     );
   }
 
+  // ── Filter panel ──────────────────────────────────────────────────────────
+  function FilterPanel() {
+    function toggleStatus(key: string) {
+      setFilters(f => {
+        const next = f.statuses.includes(key) ? f.statuses.filter(x => x !== key) : [...f.statuses, key];
+        return { ...f, statuses: next.length === 0 ? [key] : next };
+      });
+    }
+    function togglePhase(p: number) {
+      setFilters(f => ({ ...f, phases: f.phases.includes(p) ? f.phases.filter(x => x !== p) : [...f.phases, p] }));
+    }
+    const btnBase   = { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.35)" };
+    const btnActive = { background: "rgba(59,130,246,0.18)",  border: "1px solid rgba(59,130,246,0.4)",  color: "#93c5fd" };
+
+    return (
+      <div className="flex flex-col h-full">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-white">Filters</p>
+            {activeFilterCount > 0 && (
+              <span className="text-[10px] font-bold text-blue-400 bg-blue-500/15 px-1.5 py-0.5 rounded-full">{activeFilterCount}</span>
+            )}
+          </div>
+          <button onClick={() => setFilters({ ...DEFAULT_FILTERS })} className="text-[11px] text-white/30 hover:text-white/60 transition-colors">
+            Reset all
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+          {/* Status */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Status</p>
+            <div className="flex flex-wrap gap-1.5">
+              {ALL_STATUSES.map(key => {
+                const st     = STATUS[key];
+                const active = filters.statuses.includes(key);
+                return (
+                  <button key={key} onClick={() => toggleStatus(key)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-all"
+                    style={active ? { background: `${st.dot}1a`, border: `1px solid ${st.dot}60`, color: st.dot } : { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)" }}>
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: active ? st.dot : "rgba(255,255,255,0.2)" }} />
+                    {st.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Phases (only when multiple exist) */}
+          {uniquePhases.length > 1 && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Phase</p>
+              <div className="flex flex-wrap gap-1.5">
+                {uniquePhases.map(p => (
+                  <button key={p} onClick={() => togglePhase(p)}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all"
+                    style={filters.phases.includes(p) ? btnActive : btnBase}>
+                    Phase {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Bedrooms */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Min. Bedrooms</p>
+            <div className="flex gap-1.5">
+              {[null, 1, 2, 3, 4].map(n => (
+                <button key={n ?? "any"} onClick={() => setFilters(f => ({ ...f, minBeds: n }))}
+                  className="flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all"
+                  style={filters.minBeds === n ? btnActive : btnBase}>
+                  {n === null ? "Any" : `${n}+`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Bathrooms */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Min. Bathrooms</p>
+            <div className="flex gap-1.5">
+              {[null, 1, 2, 3].map(n => (
+                <button key={n ?? "any"} onClick={() => setFilters(f => ({ ...f, minBaths: n }))}
+                  className="flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all"
+                  style={filters.minBaths === n ? btnActive : btnBase}>
+                  {n === null ? "Any" : `${n}+`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Garage */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Min. Garage</p>
+            <div className="flex gap-1.5">
+              {[null, 1, 2, 3].map(n => (
+                <button key={n ?? "any"} onClick={() => setFilters(f => ({ ...f, minGarage: n }))}
+                  className="flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all"
+                  style={filters.minGarage === n ? btnActive : btnBase}>
+                  {n === null ? "Any" : `${n}+`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Price range */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Price Range</p>
+            <div className="flex gap-2">
+              {[
+                { key: "priceMin" as const, label: "Min", placeholder: "$0" },
+                { key: "priceMax" as const, label: "Max", placeholder: "No limit" },
+              ].map(({ key, label, placeholder }) => (
+                <div key={key} className="flex-1">
+                  <p className="text-[9px] text-white/25 mb-1">{label}</p>
+                  <input type="text" placeholder={placeholder} value={filters[key]}
+                    onChange={e => setFilters(f => ({ ...f, [key]: e.target.value }))}
+                    className="w-full px-2.5 py-2 rounded-lg text-xs text-white placeholder-white/20 outline-none"
+                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Min sq ft */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Min. Square Footage</p>
+            <input type="text" placeholder="Any size" value={filters.sqftMin}
+              onChange={e => setFilters(f => ({ ...f, sqftMin: e.target.value }))}
+              className="w-full px-2.5 py-2 rounded-lg text-xs text-white placeholder-white/20 outline-none"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }} />
+          </div>
+
+          {/* Move-in ready */}
+          <button onClick={() => setFilters(f => ({ ...f, moveInReady: !f.moveInReady }))}
+            className="flex items-center gap-3 w-full">
+            <div className="w-9 h-5 rounded-full transition-colors flex-shrink-0 relative"
+              style={{ background: filters.moveInReady ? "rgba(37,99,235,0.8)" : "rgba(255,255,255,0.1)", border: filters.moveInReady ? "1px solid rgba(59,130,246,0.5)" : "1px solid rgba(255,255,255,0.1)" }}>
+              <div className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                style={{ left: filters.moveInReady ? "calc(100% - 18px)" : 2 }} />
+            </div>
+            <span className="text-xs font-semibold text-white/60">Move-in ready only</span>
+          </button>
+        </div>
+
+        {/* Footer count */}
+        <div className="flex-shrink-0 px-4 py-3 border-t border-white/8">
+          <p className="text-xs text-center" style={{ color: "rgba(255,255,255,0.35)" }}>
+            <span className="font-bold text-white">{filteredLotIds.size}</span> of{" "}
+            <span className="font-bold text-white">{lots.length}</span> lots match
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main render ───────────────────────────────────────────────────────────
   return (
     <div className="relative h-screen bg-[#080808] overflow-hidden">
 
-      {/* ── Map canvas ────────────────────────────────────────────────────────── */}
+      {/* Map canvas */}
       <div
         ref={mapCanvasRef}
         className="absolute inset-0 overflow-hidden"
@@ -533,13 +943,8 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
             style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapZoom})`, transformOrigin: "center center", transition: isDragging ? "none" : "transform 0.1s ease" }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              ref={imgRef}
-              src={community.site_map_url}
-              alt={community.name}
-              className="w-full h-full object-contain"
-              onLoad={measureImgRect}
-            />
+            <img ref={imgRef} src={community.site_map_url} alt={community.name}
+              className="w-full h-full object-contain" onLoad={measureImgRect} />
 
             {imgRect.w > 0 && imgRect.h > 0 && (
               <svg
@@ -560,27 +965,30 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
 
                 {lots.map(lot => {
                   if (!lot.polygon || lot.polygon.length < 3) return null;
-                  const s     = STATUS[lot.status] ?? STATUS.available;
-                  const isHov = hoveredLot === lot.id;
-                  const isSel = selectedLot?.id === lot.id;
+                  const status  = effectiveLotStatus(lot);
+                  const s       = STATUS[status] ?? STATUS.available;
+                  const isHov   = hoveredLot === lot.id;
+                  const isSel   = selectedLot?.id === lot.id;
+                  const isDimmed = !filteredLotIds.has(lot.id);
+                  const isCS    = status === "coming_soon";
                   const [cx, cy] = centroid(lot.polygon);
-                  const svgCx = lot.label_x != null ? (lot.label_x / 100) * imgRect.w : (cx / 100) * imgRect.w;
-                  const svgCy = lot.label_y != null ? (lot.label_y / 100) * imgRect.h : (cy / 100) * imgRect.h;
-                  const pts   = toSvgPoints(lot.polygon, imgRect.w, imgRect.h);
-                  const fs    = lot.label_font_size ?? defaultLabelSize ?? Math.max(9, Math.min(13, imgRect.w / 70));
-                  const fc    = lot.text_color ?? defaultLabelColor;
+                  const svgCx   = lot.label_x != null ? (lot.label_x / 100) * imgRect.w : (cx / 100) * imgRect.w;
+                  const svgCy   = lot.label_y != null ? (lot.label_y / 100) * imgRect.h : (cy / 100) * imgRect.h;
+                  const pts     = toSvgPoints(lot.polygon, imgRect.w, imgRect.h);
+                  const fs      = lot.label_font_size ?? defaultLabelSize ?? Math.max(9, Math.min(13, imgRect.w / 70));
+                  const fc      = lot.text_color ?? defaultLabelColor;
 
                   return (
-                    <g key={lot.id}>
-                      {(isHov || isSel) && (
+                    <g key={lot.id} style={{ opacity: isDimmed ? 0.25 : 1, transition: "opacity 0.2s" }}>
+                      {(isHov || isSel) && !isDimmed && (
                         <polygon points={pts} fill={s.glow} stroke="none" filter={`url(#glow-${lot.id})`} style={{ pointerEvents: "none" }} />
                       )}
                       <polygon
                         points={pts}
-                        fill={isHov || isSel ? s.fill.replace("0.15", "0.28") : s.fill}
+                        fill={isHov || isSel ? s.fill.replace("0.15", "0.28").replace("0.06", "0.15") : s.fill}
                         stroke={s.stroke}
                         strokeWidth={isSel ? 2.5 : isHov ? 2 : defaultStrokeWidth}
-                        strokeDasharray={isSel ? "5 3" : undefined}
+                        strokeDasharray={isCS ? "5 3" : isSel ? "5 3" : undefined}
                         className="cursor-pointer"
                         style={{ transition: "fill 0.15s, stroke-width 0.15s" }}
                         data-lot="true"
@@ -590,14 +998,11 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                         onClick={() => { if (!hasDragged.current) setSelectedLot(prev => prev?.id === lot.id ? null : lot); }}
                       />
                       {showLabels && (
-                        <text
-                          x={svgCx} y={svgCy}
-                          textAnchor="middle" dominantBaseline="middle"
+                        <text x={svgCx} y={svgCy} textAnchor="middle" dominantBaseline="middle"
                           fontSize={fs} fontWeight="700"
-                          fill={fc}
+                          fill={isCS ? "rgba(148,163,184,0.7)" : fc}
                           style={{ pointerEvents: "none", userSelect: "none" }}
-                          filter="url(#label-shadow)"
-                        >
+                          filter="url(#label-shadow)">
                           {lot.lot_number}
                         </text>
                       )}
@@ -614,10 +1019,10 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         )}
       </div>
 
-      {/* Edge vignette */}
+      {/* Vignette */}
       <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%)" }} />
 
-      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
+      {/* Top bar */}
       <div className="absolute top-0 left-0 right-0 z-20 flex items-start justify-between px-3 sm:px-5 pt-3 sm:pt-5 gap-2 sm:gap-4">
 
         {/* Builder identity */}
@@ -639,32 +1044,98 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
           </div>
         </div>
 
-        {/* Availability stats — hidden on mobile */}
-        <div className="hidden sm:flex items-center gap-2">
-          {([ { key: "available", label: "Available" }, { key: "reserved", label: "Reserved" }, { key: "sold", label: "Sold" } ] as const).map(({ key, label }) => {
-            const s = STATUS[key];
-            return (
-              <div key={key} className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ ...GLASS, borderRadius: 12 }}>
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.dot }} />
-                <span className="text-xs text-white/40">{label}</span>
-                <span className="text-xs font-bold text-white/80">{stats[key]}</span>
-              </div>
-            );
-          })}
-        </div>
+        {/* Right: stats + filter button */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Desktop stats */}
+          <div className="hidden sm:flex items-center gap-2">
+            {([
+              { key: "available" as const, label: "Available" },
+              { key: "reserved"  as const, label: "Reserved" },
+              { key: "sold"      as const, label: "Sold" },
+              ...(stats.coming_soon > 0 ? [{ key: "coming_soon" as const, label: "Coming Soon" }] : []),
+            ]).map(({ key, label }) => {
+              const s = STATUS[key];
+              return (
+                <div key={key} className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ ...GLASS, borderRadius: 12 }}>
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.dot }} />
+                  <span className="text-xs text-white/40">{label}</span>
+                  <span className="text-xs font-bold text-white/80">{stats[key]}</span>
+                </div>
+              );
+            })}
+          </div>
 
-        {/* Mobile: compact stats pill */}
-        <div className="flex sm:hidden items-center gap-1.5" style={{ ...GLASS, borderRadius: 12, padding: "6px 10px" }}>
-          {([ { key: "available" as const, dot: "#22c55e" }, { key: "reserved" as const, dot: "#fbbf24" }, { key: "sold" as const, dot: "#ef4444" } ]).map(({ key, dot }) => (
-            <div key={key} className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: dot }} />
-              <span className="text-[11px] font-bold text-white/70">{stats[key]}</span>
-            </div>
-          ))}
+          {/* Mobile compact stats */}
+          <div className="flex sm:hidden items-center gap-1.5" style={{ ...GLASS, borderRadius: 12, padding: "6px 10px" }}>
+            {([
+              { key: "available" as const, dot: "#22c55e" },
+              { key: "reserved"  as const, dot: "#fbbf24" },
+              { key: "sold"      as const, dot: "#ef4444" },
+            ]).map(({ key, dot }) => (
+              <div key={key} className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: dot }} />
+                <span className="text-[11px] font-bold text-white/70">{stats[key]}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Filter button */}
+          <button onClick={() => setFilterOpen(v => !v)}
+            className="relative flex items-center gap-1.5 px-3 py-2 rounded-xl transition-colors"
+            style={filterOpen
+              ? { background: "rgba(59,130,246,0.2)", border: "1px solid rgba(59,130,246,0.4)", backdropFilter: "blur(24px)" }
+              : { ...GLASS, borderRadius: 12 }}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke={filterOpen ? "#93c5fd" : "rgba(255,255,255,0.5)"} strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+            </svg>
+            <span className="text-xs font-semibold" style={{ color: filterOpen ? "#93c5fd" : "rgba(255,255,255,0.5)" }}>Filter</span>
+            {activeFilterCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-500 text-[9px] font-bold text-white flex items-center justify-center">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
-      {/* ── Zoom controls — desktop only ────────────────────────────────────── */}
+      {/* Filter drawer — desktop (left slide-in) */}
+      <div
+        className="hidden sm:flex absolute left-0 top-[72px] bottom-0 z-25 flex-col overflow-hidden"
+        style={{
+          width: filterOpen ? 272 : 0,
+          transition: "width 0.28s cubic-bezier(0.4,0,0.2,1)",
+          ...GLASS,
+          borderRight: "1px solid rgba(255,255,255,0.09)",
+          borderRadius: 0,
+        }}
+      >
+        {filterOpen && <FilterPanel />}
+      </div>
+
+      {/* Filter drawer — mobile (bottom sheet) */}
+      <div
+        className="sm:hidden fixed inset-x-0 bottom-0 z-40 flex flex-col overflow-hidden"
+        style={{
+          maxHeight: "72vh",
+          borderRadius: "20px 20px 0 0",
+          transform: filterOpen ? "translateY(0)" : "translateY(100%)",
+          transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
+          background: "rgba(8,8,12,0.97)",
+          backdropFilter: "blur(32px)",
+          WebkitBackdropFilter: "blur(32px)",
+          borderTop: "1px solid rgba(255,255,255,0.1)",
+        }}
+      >
+        <div className="flex justify-center pt-3 pb-0 flex-shrink-0">
+          <div className="w-10 h-1 rounded-full bg-white/20" />
+        </div>
+        <FilterPanel />
+      </div>
+      {isMobile && filterOpen && (
+        <div className="sm:hidden fixed inset-0 z-30 bg-black/40" onClick={() => setFilterOpen(false)} />
+      )}
+
+      {/* Zoom controls — desktop */}
       <div className="hidden sm:flex absolute bottom-5 right-5 z-20 flex-col gap-1" style={{ ...GLASS, borderRadius: 12, padding: "6px" }}>
         <button onClick={() => setMapZoom(v => Math.min(4, v + 0.15))}
           className="w-8 h-8 flex items-center justify-center text-white/50 hover:text-white transition-colors text-lg leading-none rounded-lg hover:bg-white/8">+</button>
@@ -683,20 +1154,47 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         )}
       </div>
 
-      {/* ── Community info card — desktop bottom-left ───────────────────────── */}
+      {/* Community info card — desktop bottom-left */}
       {!selectedLot && (
-        <div
-          className="hidden sm:block absolute bottom-5 left-5 z-20 max-w-xs"
-          style={{ ...GLASS, borderRadius: 16, padding: "16px 18px" }}
-        >
+        <div className="hidden sm:block absolute bottom-5 z-20 max-w-xs"
+          style={{ ...GLASS, borderRadius: 16, padding: "16px 18px", left: filterOpen ? 292 : 20, transition: "left 0.28s cubic-bezier(0.4,0,0.2,1)" }}>
           <h1 className="text-base font-bold text-white leading-tight">{community.name}</h1>
           {community.description && (
             <p className="text-xs text-white/45 mt-1.5 leading-relaxed">{community.description}</p>
           )}
+
+          {/* Address */}
+          {addressLine && (
+            <div className="flex items-start gap-1.5 mt-2">
+              <svg className="w-3 h-3 text-white/25 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0zM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+              </svg>
+              <p className="text-[11px] text-white/35 leading-tight">{addressLine}</p>
+            </div>
+          )}
+
+          {/* Community metadata */}
+          {(comm.hoa_fee_monthly || comm.school_district) && (
+            <div className="mt-2 space-y-1">
+              {comm.hoa_fee_monthly && (
+                <p className="text-[11px] text-white/30">HOA: <span className="text-white/50 font-semibold">{fmtPrice(comm.hoa_fee_monthly)}/mo</span></p>
+              )}
+              {comm.school_district && (
+                <p className="text-[11px] text-white/30">School District: <span className="text-white/50 font-semibold">{comm.school_district}</span></p>
+              )}
+            </div>
+          )}
+
+          {/* Price range */}
+          {minPrice !== null && (
+            <p className="text-[11px] text-white/35 mt-2">From <span className="text-white/70 font-bold">{fmtPrice(minPrice)}</span></p>
+          )}
+
+          {/* Stats */}
           <div className="flex items-center gap-3 mt-3 pt-3 border-t border-white/8">
             <div className="text-center">
               <p className="text-lg font-bold text-white">{stats.total}</p>
-              <p className="text-[10px] text-white/30">Total Lots</p>
+              <p className="text-[10px] text-white/30">Total</p>
             </div>
             <div className="w-px h-8 bg-white/8" />
             <div className="text-center">
@@ -712,52 +1210,98 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                 </div>
               </>
             )}
+            {stats.coming_soon > 0 && (
+              <>
+                <div className="w-px h-8 bg-white/8" />
+                <div className="text-center">
+                  <p className="text-lg font-bold text-slate-400">{stats.coming_soon}</p>
+                  <p className="text-[10px] text-white/30">Soon</p>
+                </div>
+              </>
+            )}
           </div>
+
+          {/* Directions */}
+          {mapsUrl && (
+            <a href={directionsUrl ?? mapsUrl} target="_blank" rel="noopener noreferrer"
+              className="flex items-center justify-center gap-1.5 w-full mt-3 py-2 rounded-xl text-[11px] font-semibold text-white/40 hover:text-white/70 transition-colors"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0zM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+              </svg>
+              Get Directions
+            </a>
+          )}
+
           {lots.length > 0 && (
             <p className="text-[10px] text-white/20 mt-3 text-center">Click a lot on the map to explore</p>
           )}
         </div>
       )}
 
-      {/* ── Community info bar — mobile bottom ─────────────────────────────── */}
-      {!selectedLot && (
-        <div
-          className="sm:hidden absolute bottom-0 left-0 right-0 z-20"
-          style={{ ...GLASS, borderTop: "1px solid rgba(255,255,255,0.09)", padding: "14px 16px 20px" }}
-        >
+      {/* Community info — mobile bottom bar */}
+      {!selectedLot && !filterOpen && (
+        <div className="sm:hidden absolute bottom-0 left-0 right-0 z-20"
+          style={{ ...GLASS, borderTop: "1px solid rgba(255,255,255,0.09)", padding: "14px 16px 20px" }}>
           <div className="flex items-center justify-between mb-1">
-            <h1 className="text-sm font-bold text-white leading-tight">{community.name}</h1>
+            <div>
+              <h1 className="text-sm font-bold text-white leading-tight">{community.name}</h1>
+              {addressLine && <p className="text-[10px] text-white/30 mt-0.5">{addressLine}</p>}
+            </div>
             <div className="flex items-center gap-3">
               <div className="text-center">
                 <span className="text-sm font-bold text-green-400">{stats.available}</span>
                 <span className="text-[10px] text-white/30 ml-1">avail</span>
               </div>
               {stats.reserved > 0 && (
-                <div className="text-center">
+                <div>
                   <span className="text-sm font-bold text-amber-400">{stats.reserved}</span>
                   <span className="text-[10px] text-white/30 ml-1">res</span>
                 </div>
               )}
-              <div className="text-center">
+              <div>
                 <span className="text-sm font-bold text-white/50">{stats.total}</span>
                 <span className="text-[10px] text-white/30 ml-1">total</span>
               </div>
             </div>
           </div>
-          {lots.length > 0 && (
-            <p className="text-[10px] text-white/25">Tap a lot on the map to explore</p>
-          )}
+          <div className="flex items-center justify-between mt-1">
+            {minPrice !== null
+              ? <p className="text-[10px] text-white/30">From <span className="font-bold text-white/50">{fmtPrice(minPrice)}</span></p>
+              : <p className="text-[10px] text-white/25">Tap a lot on the map to explore</p>
+            }
+            {directionsUrl && (
+              <a href={directionsUrl} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/60">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0zM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                </svg>
+                Directions
+              </a>
+            )}
+          </div>
         </div>
       )}
 
-      {/* ── Hover tooltip — desktop only ────────────────────────────────────── */}
+      {/* Hover tooltip — desktop */}
       {!isMobile && tooltip && hoveredLot && !selectedLot && (() => {
         const lot = lots.find(l => l.id === hoveredLot);
         if (!lot) return null;
-        const s    = STATUS[lot.status] ?? STATUS.available;
-        const proj = lot.project;
-        const totalPrice = proj ? proj.base_price + (lot.price_modifier ?? 0) : null;
-        const hasPremium = (lot.price_modifier ?? 0) !== 0;
+        const fp          = lot.floorPlan;
+        const proj        = lot.project;
+        const status      = effectiveLotStatus(lot);
+        const s           = STATUS[status] ?? STATUS.available;
+        const thumbUrl    = fp?.thumbnail_url ?? proj?.thumbnail_url ?? null;
+        const name        = fp?.name ?? proj?.name ?? null;
+        const homeType    = fp?.home_style ?? proj?.home_type ?? null;
+        const beds        = fp?.beds ?? proj?.beds ?? null;
+        const baths       = fp?.baths ?? proj?.baths ?? null;
+        const sqft        = fp?.sqft ?? proj?.sqft ?? null;
+        const floors      = fp?.floors ?? proj?.floors ?? null;
+        const basePrice   = fp?.base_price ?? (proj ? proj.base_price : null);
+        const totalPrice  = basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null;
+        const isDimmed    = !filteredLotIds.has(lot.id);
+
         const cardW = 252, margin = 14;
         const flipX = tooltip.x + margin + cardW > window.innerWidth - 12;
         const left  = flipX ? tooltip.x - cardW - margin : tooltip.x + margin;
@@ -765,14 +1309,13 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
 
         return (
           <div className="fixed z-50 pointer-events-none"
-            style={{ left, top: Math.max(8, top), width: cardW, background: "rgba(6,6,10,0.94)", backdropFilter: "blur(28px)", WebkitBackdropFilter: "blur(28px)", border: `1px solid ${s.stroke}`, borderRadius: 14, boxShadow: `0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)`, overflow: "hidden", animation: "hoverCardIn 0.14s ease-out" }}
-          >
+            style={{ left, top: Math.max(8, top), width: cardW, background: "rgba(6,6,10,0.94)", backdropFilter: "blur(28px)", WebkitBackdropFilter: "blur(28px)", border: `1px solid ${s.stroke}`, borderRadius: 14, boxShadow: `0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)`, overflow: "hidden", animation: "hoverCardIn 0.14s ease-out", opacity: isDimmed ? 0.5 : 1 }}>
             <style>{`@keyframes hoverCardIn { from { opacity:0; transform:translateY(4px) scale(0.97); } to { opacity:1; transform:none; } }`}</style>
             <div style={{ height: 2, background: s.dot, opacity: 0.8 }} />
-            {proj?.thumbnail_url && (
+            {thumbUrl && (
               <div className="relative overflow-hidden" style={{ height: 118 }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={proj.thumbnail_url} alt={proj.name} className="w-full h-full object-cover" />
+                <img src={thumbUrl} alt={name ?? ""} className="w-full h-full object-cover" />
                 <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0) 30%, rgba(6,6,10,0.85) 100%)" }} />
                 {totalPrice !== null && (
                   <div className="absolute bottom-2.5 right-3">
@@ -784,8 +1327,9 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
             <div className="px-3.5 pt-3 pb-3.5 space-y-2.5">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest mb-0.5" style={{ color: "rgba(255,255,255,0.3)" }}>Lot</p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest mb-0.5 text-white/30">Lot</p>
                   <p className="text-base font-bold text-white leading-none">{lot.lot_number}</p>
+                  {lot.phase && lot.phase > 0 && <p className="text-[9px] text-white/25 mt-0.5">Phase {lot.phase}</p>}
                 </div>
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0 mt-0.5"
                   style={{ background: `${s.dot}18`, border: `1px solid ${s.dot}55`, color: s.dot }}>
@@ -793,32 +1337,41 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                   {s.label}
                 </span>
               </div>
-              {proj && (
-                <>
-                  <div>
-                    <p className="text-xs font-semibold text-white/80 leading-tight">{proj.name}</p>
-                    {proj.home_type && <p className="text-[10px] text-white/35 mt-0.5 capitalize">{proj.home_type.replace("_", " ")}</p>}
-                  </div>
-                  {(proj.beds || proj.baths || proj.sqft || proj.floors) && (
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {[{ v: proj.beds, l: "Bed" }, { v: proj.baths, l: "Bath" }, { v: proj.sqft ? `${proj.sqft >= 1000 ? (proj.sqft/1000).toFixed(1)+"k" : proj.sqft}` : null, l: "Sqft" }, { v: proj.floors, l: "Floor" }].map(({ v, l }) => v != null && (
-                        <div key={l} className="flex flex-col items-center py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                          <p className="text-xs font-bold text-white leading-none">{v}</p>
-                          <p className="text-[8px] uppercase tracking-wider text-white/30 mt-0.5">{l}</p>
-                        </div>
-                      ))}
+              {name && (
+                <div>
+                  <p className="text-xs font-semibold text-white/80 leading-tight">{name}</p>
+                  {homeType && <p className="text-[10px] text-white/35 mt-0.5 capitalize">{homeType.replace(/_/g, " ")}</p>}
+                </div>
+              )}
+              {(beds || baths || sqft || floors) && (
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { v: beds,   l: "Bed" },
+                    { v: baths,  l: "Bath" },
+                    { v: sqft ? fmtSqft(sqft) : null, l: "Sqft" },
+                    { v: floors, l: "Floor" },
+                  ].filter(x => x.v != null).map(({ v, l }) => (
+                    <div key={l} className="flex flex-col items-center py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                      <p className="text-xs font-bold text-white leading-none">{v}</p>
+                      <p className="text-[8px] uppercase tracking-wider text-white/30 mt-0.5">{l}</p>
                     </div>
+                  ))}
+                </div>
+              )}
+              {totalPrice !== null && !thumbUrl && (
+                <div className="flex items-baseline justify-between pt-1">
+                  <span className="text-base font-bold text-white">{fmtPrice(totalPrice)}</span>
+                  {(lot.price_modifier ?? 0) !== 0 && (
+                    <span className="text-[10px]" style={{ color: (lot.price_modifier ?? 0) > 0 ? "#fbbf24" : "#34d399" }}>
+                      {(lot.price_modifier ?? 0) > 0 ? "+" : "−"}{fmtPrice(Math.abs(lot.price_modifier ?? 0))} lot
+                    </span>
                   )}
-                  {totalPrice !== null && !proj.thumbnail_url && (
-                    <div className="flex items-baseline justify-between pt-1">
-                      <span className="text-base font-bold text-white">{fmtPrice(totalPrice)}</span>
-                      {hasPremium && <span className="text-[10px]" style={{ color: (lot.price_modifier ?? 0) > 0 ? "#fbbf24" : "#34d399" }}>{(lot.price_modifier ?? 0) > 0 ? "+" : "−"}{fmtPrice(Math.abs(lot.price_modifier ?? 0))} lot</span>}
-                    </div>
-                  )}
-                </>
+                </div>
               )}
               <div className="flex items-center justify-between pt-0.5 border-t border-white/6">
-                <p className="text-[9px] text-white/20 uppercase tracking-widest">Click to explore</p>
+                <p className="text-[9px] text-white/20 uppercase tracking-widest">
+                  {isDimmed ? "Outside filter" : "Click to explore"}
+                </p>
                 <svg className="w-3 h-3 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                 </svg>
@@ -828,17 +1381,14 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         );
       })()}
 
-      {/* ── Lot detail panel — desktop right side ──────────────────────────── */}
-      <div
-        className="hidden sm:flex absolute right-0 top-0 bottom-0 z-30 flex-col overflow-hidden"
-        style={{ width: selectedLot ? 360 : 0, transition: "width 0.3s cubic-bezier(0.4,0,0.2,1)", ...GLASS, borderLeft: "1px solid rgba(255,255,255,0.09)", borderRadius: 0 }}
-      >
+      {/* Lot detail panel — desktop right */}
+      <div className="hidden sm:flex absolute right-0 top-0 bottom-0 z-30 flex-col overflow-hidden"
+        style={{ width: selectedLot ? 360 : 0, transition: "width 0.3s cubic-bezier(0.4,0,0.2,1)", ...GLASS, borderLeft: "1px solid rgba(255,255,255,0.09)", borderRadius: 0 }}>
         {selectedLot && <LotDetailContent lot={selectedLot} />}
       </div>
 
-      {/* ── Lot detail panel — mobile bottom sheet ─────────────────────────── */}
-      <div
-        className="sm:hidden fixed inset-x-0 bottom-0 z-40 flex flex-col overflow-hidden"
+      {/* Lot detail panel — mobile bottom sheet */}
+      <div className="sm:hidden fixed inset-x-0 bottom-0 z-40 flex flex-col overflow-hidden"
         style={{
           maxHeight: "78vh",
           borderRadius: "20px 20px 0 0",
@@ -848,37 +1398,25 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
           backdropFilter: "blur(32px)",
           WebkitBackdropFilter: "blur(32px)",
           borderTop: "1px solid rgba(255,255,255,0.1)",
-        }}
-      >
-        {/* Drag handle */}
+        }}>
         <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
           <div className="w-10 h-1 rounded-full bg-white/20" />
         </div>
         {selectedLot && <LotDetailContent lot={selectedLot} />}
       </div>
-
-      {/* Mobile backdrop when bottom sheet open */}
       {isMobile && selectedLot && (
-        <div
-          className="sm:hidden fixed inset-0 z-30 bg-black/40"
-          onClick={() => setSelectedLot(null)}
-        />
+        <div className="sm:hidden fixed inset-0 z-30 bg-black/40" onClick={() => setSelectedLot(null)} />
       )}
 
-      {/* ── Contact / Request Info modal ───────────────────────────────────── */}
+      {/* Contact / Request Info modal */}
       {contactLot && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeContactModal} />
-          <div
-            className="relative w-full sm:max-w-md flex flex-col overflow-hidden"
-            style={{ background: "rgba(10,10,16,0.97)", backdropFilter: "blur(32px)", WebkitBackdropFilter: "blur(32px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: isMobile ? "20px 20px 0 0" : 20 }}
-          >
-            {/* Drag handle (mobile) */}
+          <div className="relative w-full sm:max-w-md flex flex-col overflow-hidden"
+            style={{ background: "rgba(10,10,16,0.97)", backdropFilter: "blur(32px)", WebkitBackdropFilter: "blur(32px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: isMobile ? "20px 20px 0 0" : 20 }}>
             <div className="sm:hidden flex justify-center pt-3 pb-0.5 flex-shrink-0">
               <div className="w-10 h-1 rounded-full bg-white/20" />
             </div>
-
-            {/* Header */}
             <div className="flex items-start justify-between px-5 py-4 border-b border-white/8">
               <div>
                 <h2 className="text-base font-bold text-white">Request Information</h2>
@@ -890,100 +1428,69 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                 </svg>
               </button>
             </div>
-
-            {/* Body */}
             <div className="flex-1 overflow-y-auto px-5 py-5">
               {contactDone ? (
                 <div className="flex flex-col items-center py-8 text-center">
-                  <div className="w-14 h-14 rounded-full flex items-center justify-center mb-4" style={{ background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)" }}>
+                  <div className="w-14 h-14 rounded-full flex items-center justify-center mb-4"
+                    style={{ background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)" }}>
                     <svg className="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
                   <h3 className="text-base font-bold text-white mb-2">Message Sent!</h3>
-                  <p className="text-sm text-white/45 leading-relaxed max-w-xs">
-                    {"We've received your inquiry and will be in touch shortly."}
-                  </p>
-                  <button onClick={closeContactModal} className="mt-6 px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors" style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}>
+                  <p className="text-sm text-white/45 leading-relaxed max-w-xs">{"We've received your inquiry and will be in touch shortly."}</p>
+                  <button onClick={closeContactModal} className="mt-6 px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors"
+                    style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}>
                     Close
                   </button>
                 </div>
               ) : (
                 <form onSubmit={submitContact} className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">First Name <span className="text-red-400">*</span></label>
-                      <input
-                        required
-                        type="text"
-                        value={contactForm.firstName}
-                        onChange={e => setContactForm(f => ({ ...f, firstName: e.target.value }))}
-                        placeholder="Jane"
-                        className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
-                        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">Last Name <span className="text-red-400">*</span></label>
-                      <input
-                        required
-                        type="text"
-                        value={contactForm.lastName}
-                        onChange={e => setContactForm(f => ({ ...f, lastName: e.target.value }))}
-                        placeholder="Smith"
-                        className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
-                        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-                      />
-                    </div>
+                    {[
+                      { field: "firstName" as const, label: "First Name", placeholder: "Jane", required: true },
+                      { field: "lastName"  as const, label: "Last Name",  placeholder: "Smith", required: true },
+                    ].map(({ field, label, placeholder, required }) => (
+                      <div key={field}>
+                        <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">
+                          {label} {required && <span className="text-red-400">*</span>}
+                        </label>
+                        <input required={required} type="text" value={contactForm[field]}
+                          onChange={e => setContactForm(f => ({ ...f, [field]: e.target.value }))}
+                          placeholder={placeholder}
+                          className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
+                          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }} />
+                      </div>
+                    ))}
                   </div>
-
                   <div>
                     <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">Email <span className="text-red-400">*</span></label>
-                    <input
-                      required
-                      type="email"
-                      value={contactForm.email}
+                    <input required type="email" value={contactForm.email}
                       onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))}
                       placeholder="jane@example.com"
                       className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
-                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-                    />
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }} />
                   </div>
-
                   <div>
                     <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">Phone</label>
-                    <input
-                      type="tel"
-                      value={contactForm.phone}
+                    <input type="tel" value={contactForm.phone}
                       onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))}
                       placeholder="(555) 000-0000"
                       className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all"
-                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-                    />
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }} />
                   </div>
-
                   <div>
                     <label className="block text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-1.5">Message</label>
-                    <textarea
-                      rows={3}
-                      value={contactForm.message}
+                    <textarea rows={3} value={contactForm.message}
                       onChange={e => setContactForm(f => ({ ...f, message: e.target.value }))}
                       placeholder="Any questions about this lot…"
                       className="w-full px-3 py-2.5 rounded-xl text-sm text-white placeholder-white/20 outline-none focus:ring-1 focus:ring-blue-500/50 transition-all resize-none"
-                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-                    />
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }} />
                   </div>
-
-                  {contactErr && (
-                    <p className="text-xs text-red-400 text-center">{contactErr}</p>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={contactBusy}
+                  {contactErr && <p className="text-xs text-red-400 text-center">{contactErr}</p>}
+                  <button type="submit" disabled={contactBusy}
                     className="w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" }}
-                  >
+                    style={{ background: "rgba(37,99,235,0.85)", border: "1px solid rgba(59,130,246,0.4)", boxShadow: "0 4px 20px rgba(37,99,235,0.3)" }}>
                     {contactBusy ? (
                       <span className="flex items-center justify-center gap-2">
                         <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">

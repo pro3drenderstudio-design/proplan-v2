@@ -631,11 +631,27 @@ export interface Community {
   description: string | null;
   site_map_url: string | null;
   map_settings: MapSettings | null;
+  // v12 additions
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  hoa_fee_monthly: number | null;
+  school_district: string | null;
+  gallery_images: { url: string; label?: string }[];
   created_at: string;
   updated_at: string;
 }
 
 export type LotStatus = "available" | "reserved" | "sold";
+
+export interface LotCta {
+  type: "configurator" | "external" | "contact" | "schedule";
+  label: string;
+  url?: string;
+}
 
 export interface Lot {
   id: string;
@@ -643,6 +659,7 @@ export interface Lot {
   lot_number: string;
   status: LotStatus;
   project_id: string | null;
+  floor_plan_id: string | null;
   /** Array of [x, y] percentage points (0–100) relative to the site map image */
   polygon: [number, number][];
   price_modifier: number;
@@ -651,9 +668,43 @@ export interface Lot {
   label_x: number | null;
   label_y: number | null;
   label_font_size: number | null;
+  // legacy single CTA (kept for backward compat)
   cta_type:  "configurator" | "external" | "contact" | "none";
   cta_label: string | null;
   cta_url:   string | null;
+  // v12: multi-CTA array (up to 3), overrides legacy fields when non-empty
+  ctas: LotCta[];
+  // v12 additions
+  lot_size_sqft: number | null;
+  lot_width_ft: number | null;
+  lot_depth_ft: number | null;
+  phase: number;
+  estimated_completion: string | null;
+  virtual_tour_url: string | null;
+  is_coming_soon: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type HomeStyle = "ranch" | "two_story" | "craftsman" | "modern" | "colonial" | "cape_cod" | "mediterranean" | "contemporary";
+
+export interface FloorPlan {
+  id: string;
+  builder_id: string;
+  name: string;
+  description: string | null;
+  beds: number | null;
+  baths: number | null;
+  floors: number | null;
+  sqft: number | null;
+  garage_spaces: number | null;
+  home_style: HomeStyle | null;
+  base_price: number | null;        // cents
+  thumbnail_url: string | null;
+  floor_plan_images: { url: string; label?: string }[];
+  project_id: string | null;        // optional 3D configurator link
+  is_active: boolean;
+  sort_order: number;
   created_at: string;
   updated_at: string;
 }

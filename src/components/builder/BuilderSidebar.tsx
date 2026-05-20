@@ -21,6 +21,9 @@ const ICONS: Record<string, string[]> = {
   communities: [
     "M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z",
   ],
+  floor_plans: [
+    "M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25",
+  ],
   render_studio: [
     "M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z",
     "M18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z",
@@ -56,6 +59,7 @@ const ICONS: Record<string, string[]> = {
 // "any" = requires at least one active addon (no specific one)
 const ADDON_REQUIRED: Partial<Record<string, string>> = {
   "/builder/projects":      "configurator",
+  "/builder/floor-plans":   "site-maps",
   "/builder/3d-projects":   "traditional-renders",
   "/builder/communities":   "site-maps",
   "/builder/render-studio": "ai-renders",
@@ -75,6 +79,7 @@ const ADDON_INFO: Record<string, AddonInfo> = {
 const NAV_ITEMS = [
   { href: "/builder/dashboard",     label: "Dashboard",        icon: "dashboard"      },
   { href: "/builder/projects",      label: "Home Models",      icon: "projects"       },
+  { href: "/builder/floor-plans",   label: "Floor Plans",      icon: "floor_plans"    },
   { href: "/builder/3d-projects",   label: "3D Projects",      icon: "projects_3d"    },
   { href: "/builder/communities",   label: "Communities",      icon: "communities"    },
   { href: "/builder/render-studio", label: "AI Render Studio", icon: "render_studio"  },

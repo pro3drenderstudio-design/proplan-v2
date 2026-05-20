@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getCommunityById, getAllProjects, getAllBuildersBySlug } from "@/lib/admin-api";
-import { CommunityWithLots, Lot, LotStatus, MapSettings, Project, Builder } from "@/types/database";
+import { CommunityWithLots, Lot, LotStatus, MapSettings, Project, Builder, FloorPlan } from "@/types/database";
 import QRModal, { QRLot } from "@/components/QRModal";
 
 const LOT_COLORS: Record<LotStatus, { fill: string; stroke: string; label: string }> = {
@@ -25,12 +25,13 @@ export default function CommunityEditorPage() {
   const [community,   setCommunity]   = useState<CommunityWithLots | null>(null);
   const [projects,    setProjects]    = useState<Project[]>([]);
   const [builders,    setBuilders]    = useState<Record<string, Builder>>({});
+  const [floorPlans,  setFloorPlans]  = useState<FloorPlan[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [toast,       setToast]       = useState("");
 
   // Community metadata editing
   const [editingMeta,  setEditingMeta]  = useState(false);
-  const [metaForm,     setMetaForm]     = useState({ name: "", slug: "", description: "", company_slug: "" });
+  const [metaForm,     setMetaForm]     = useState({ name: "", slug: "", description: "", company_slug: "", address: "", city: "", state: "", zip: "", latitude: "", longitude: "", hoa_fee_monthly: "", school_district: "" });
   const [savingMeta,   setSavingMeta]   = useState(false);
 
   // Drawing state
@@ -40,7 +41,7 @@ export default function CommunityEditorPage() {
 
   // Selection / editing
   const [selectedLot,    setSelectedLot]    = useState<Lot | null>(null);
-  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number; cta_type: "configurator" | "external" | "contact" | "none"; cta_label: string; cta_url: string } | null>(null);
+  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; floor_plan_id: string; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number; cta_type: "configurator" | "external" | "contact" | "none"; cta_label: string; cta_url: string; phase: string; is_coming_soon: boolean } | null>(null);
   const [savingLot,      setSavingLot]      = useState(false);
   const [deletingLot,    setDeletingLot]    = useState(false);
 
@@ -140,8 +141,24 @@ export default function CommunityEditorPage() {
       setProjects(p.filter(proj => proj.status === "live" || proj.status === "in_development"));
       setBuilders(b);
       if (c) {
-        setMetaForm({ name: c.name, slug: c.slug, description: c.description ?? "", company_slug: c.company_slug ?? "" });
+        const comm = c as CommunityWithLots & { address?: string; city?: string; state?: string; zip?: string; latitude?: number; longitude?: number; hoa_fee_monthly?: number; school_district?: string };
+        setMetaForm({
+          name: c.name, slug: c.slug, description: c.description ?? "", company_slug: c.company_slug ?? "",
+          address: comm.address ?? "", city: comm.city ?? "", state: comm.state ?? "", zip: comm.zip ?? "",
+          latitude: comm.latitude != null ? String(comm.latitude) : "",
+          longitude: comm.longitude != null ? String(comm.longitude) : "",
+          hoa_fee_monthly: comm.hoa_fee_monthly != null ? String(comm.hoa_fee_monthly) : "",
+          school_district: comm.school_district ?? "",
+        });
         if (c.map_settings) setMapSettings(c.map_settings);
+        // Load floor plans for this community's builder
+        const bldr = c.company_slug ? b[c.company_slug] : null;
+        if (bldr?.id) {
+          fetch(`/api/builder/floor-plans?builderId=${bldr.id}`)
+            .then(r => r.json())
+            .then(fps => { if (Array.isArray(fps)) setFloorPlans(fps as FloorPlan[]); })
+            .catch(() => {});
+        }
       }
       setLoading(false);
     });
@@ -193,7 +210,7 @@ export default function CommunityEditorPage() {
     setMousePos(null);
     // Open the lot form for this new polygon
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11, cta_type: "configurator", cta_label: "", cta_url: "" });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", floor_plan_id: "", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11, cta_type: "configurator", cta_label: "", cta_url: "", phase: "1", is_coming_soon: false });
     // Store drawing points for save
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
@@ -213,9 +230,11 @@ export default function CommunityEditorPage() {
     if (isDrawing) return;
     setPendingPolygon(null);
     setSelectedLot(lot);
+    const anyLot = lot as Lot & { cta_type?: string; cta_label?: string; cta_url?: string; floor_plan_id?: string; phase?: number; is_coming_soon?: boolean };
     setLotForm({
       lot_number:      lot.lot_number,
       status:          lot.status,
+      floor_plan_id:   anyLot.floor_plan_id ?? "",
       project_id:      lot.project_id ?? "",
       price_modifier:  String(lot.price_modifier ?? 0),
       notes:           lot.notes ?? "",
@@ -223,9 +242,11 @@ export default function CommunityEditorPage() {
       label_x:         lot.label_x ?? null,
       label_y:         lot.label_y ?? null,
       label_font_size: lot.label_font_size ?? 11,
-      cta_type:        (lot as Lot & { cta_type?: string }).cta_type as "configurator" | "external" | "contact" | "none" ?? "configurator",
-      cta_label:       (lot as Lot & { cta_label?: string }).cta_label ?? "",
-      cta_url:         (lot as Lot & { cta_url?: string }).cta_url ?? "",
+      cta_type:        (anyLot.cta_type ?? "configurator") as "configurator" | "external" | "contact" | "none",
+      cta_label:       anyLot.cta_label ?? "",
+      cta_url:         anyLot.cta_url ?? "",
+      phase:           String(anyLot.phase ?? 1),
+      is_coming_soon:  anyLot.is_coming_soon ?? false,
     });
   }
 
@@ -243,6 +264,7 @@ export default function CommunityEditorPage() {
         body: JSON.stringify({
           lot_number:      lotForm.lot_number,
           status:          lotForm.status,
+          floor_plan_id:   lotForm.floor_plan_id || null,
           project_id:      lotForm.project_id || null,
           price_modifier:  Number(lotForm.price_modifier),
           notes:           lotForm.notes || null,
@@ -253,6 +275,8 @@ export default function CommunityEditorPage() {
           cta_type:        lotForm.cta_type,
           cta_label:       lotForm.cta_label || null,
           cta_url:         lotForm.cta_url || null,
+          phase:           Number(lotForm.phase) || 1,
+          is_coming_soon:  lotForm.is_coming_soon,
         }),
       });
       if (res.ok) {
@@ -277,6 +301,7 @@ export default function CommunityEditorPage() {
           lot_number:      lotForm.lot_number,
           polygon:         pendingPolygon,
           status:          lotForm.status,
+          floor_plan_id:   lotForm.floor_plan_id || null,
           project_id:      lotForm.project_id || null,
           price_modifier:  Number(lotForm.price_modifier),
           notes:           lotForm.notes || null,
@@ -287,6 +312,8 @@ export default function CommunityEditorPage() {
           cta_type:        lotForm.cta_type,
           cta_label:       lotForm.cta_label || null,
           cta_url:         lotForm.cta_url || null,
+          phase:           Number(lotForm.phase) || 1,
+          is_coming_soon:  lotForm.is_coming_soon,
         }),
       });
       if (res.ok) {
@@ -397,10 +424,18 @@ export default function CommunityEditorPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name:         metaForm.name,
-        slug:         metaForm.slug,
-        description:  metaForm.description || null,
-        company_slug: metaForm.company_slug || null,
+        name:             metaForm.name,
+        slug:             metaForm.slug,
+        description:      metaForm.description || null,
+        company_slug:     metaForm.company_slug || null,
+        address:          metaForm.address || null,
+        city:             metaForm.city || null,
+        state:            metaForm.state || null,
+        zip:              metaForm.zip || null,
+        latitude:         metaForm.latitude ? parseFloat(metaForm.latitude) : null,
+        longitude:        metaForm.longitude ? parseFloat(metaForm.longitude) : null,
+        hoa_fee_monthly:  metaForm.hoa_fee_monthly ? parseInt(metaForm.hoa_fee_monthly) : null,
+        school_district:  metaForm.school_district || null,
       }),
     });
     if (res.ok) {
@@ -751,7 +786,19 @@ export default function CommunityEditorPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Assigned Model</label>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Floor Plan</label>
+                <select value={lotForm.floor_plan_id}
+                  onChange={e => setLotForm(f => f && ({ ...f, floor_plan_id: e.target.value }))}
+                  className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 focus:outline-none focus:border-blue-500/60 transition-colors">
+                  <option value="">— None —</option>
+                  {floorPlans.map(fp => (
+                    <option key={fp.id} value={fp.id}>{fp.name}{fp.beds ? ` · ${fp.beds}bd` : ""}{fp.baths ? `/${fp.baths}ba` : ""}</option>
+                  ))}
+                </select>
+                {floorPlans.length === 0 && <p className="text-[10px] text-white/25 mt-1">No floor plans found for this builder.</p>}
+              </div>
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Legacy 3D Model</label>
                 <select value={lotForm.project_id}
                   onChange={e => setLotForm(f => f && ({ ...f, project_id: e.target.value }))}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 focus:outline-none focus:border-blue-500/60 transition-colors">
@@ -775,6 +822,21 @@ export default function CommunityEditorPage() {
                   onChange={e => setLotForm(f => f && ({ ...f, notes: e.target.value }))}
                   rows={2}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Phase</p>
+                  <input type="number" min={1} value={lotForm.phase}
+                    onChange={e => setLotForm(f => f && ({ ...f, phase: e.target.value }))}
+                    className="mt-1.5 w-20 bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Coming Soon</p>
+                  <button onClick={() => setLotForm(f => f && ({ ...f, is_coming_soon: !f.is_coming_soon }))}
+                    className={`w-9 h-5 rounded-full border transition-colors relative ${lotForm.is_coming_soon ? "bg-slate-500 border-slate-400" : "bg-white/8 border-white/15"}`}>
+                    <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-all ${lotForm.is_coming_soon ? "left-4" : "left-0.5"}`} />
+                  </button>
+                </div>
               </div>
               {/* CTA */}
               <div>
@@ -939,9 +1001,57 @@ export default function CommunityEditorPage() {
                     <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Description</label>
                     <textarea value={metaForm.description}
                       onChange={e => setMetaForm(f => ({ ...f, description: e.target.value }))}
-                      rows={3}
+                      rows={2}
                       placeholder="Brief description of the community…"
                       className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Street Address</label>
+                    <input value={metaForm.address}
+                      onChange={e => setMetaForm(f => ({ ...f, address: e.target.value }))}
+                      placeholder="123 Main St"
+                      className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-1">
+                      <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">City</label>
+                      <input value={metaForm.city} onChange={e => setMetaForm(f => ({ ...f, city: e.target.value }))} placeholder="Austin"
+                        className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    </div>
+                    <div className="col-span-1">
+                      <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">State</label>
+                      <input value={metaForm.state} onChange={e => setMetaForm(f => ({ ...f, state: e.target.value }))} placeholder="TX" maxLength={2}
+                        className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    </div>
+                    <div className="col-span-1">
+                      <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">ZIP</label>
+                      <input value={metaForm.zip} onChange={e => setMetaForm(f => ({ ...f, zip: e.target.value }))} placeholder="78701"
+                        className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Latitude</label>
+                      <input type="number" step="any" value={metaForm.latitude} onChange={e => setMetaForm(f => ({ ...f, latitude: e.target.value }))} placeholder="30.2672"
+                        className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 font-mono focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Longitude</label>
+                      <input type="number" step="any" value={metaForm.longitude} onChange={e => setMetaForm(f => ({ ...f, longitude: e.target.value }))} placeholder="-97.7431"
+                        className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 font-mono focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">HOA ($/mo)</label>
+                      <input type="number" value={metaForm.hoa_fee_monthly} onChange={e => setMetaForm(f => ({ ...f, hoa_fee_monthly: e.target.value }))} placeholder="150"
+                        className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">School District</label>
+                      <input value={metaForm.school_district} onChange={e => setMetaForm(f => ({ ...f, school_district: e.target.value }))} placeholder="Austin ISD"
+                        className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    </div>
                   </div>
                   <button onClick={handleSaveMeta} disabled={savingMeta || !metaForm.name || !metaForm.slug}
                     className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs text-white font-semibold transition-colors disabled:opacity-50">

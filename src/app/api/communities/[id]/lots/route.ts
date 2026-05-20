@@ -22,26 +22,31 @@ export async function POST(
     polygon:        body.polygon,
     status:         body.status         ?? "available",
     project_id:     body.project_id     ?? null,
+    floor_plan_id:  body.floor_plan_id  ?? null,
     price_modifier: body.price_modifier ?? 0,
     notes:          body.notes          ?? null,
+    // label display
+    text_color:     body.text_color     ?? null,
+    label_x:        body.label_x        ?? null,
+    label_y:        body.label_y        ?? null,
+    label_font_size: body.label_font_size ?? null,
+    // legacy single CTA (kept for backward compat)
+    cta_type:       body.cta_type       ?? "configurator",
+    cta_label:      body.cta_label      ?? null,
+    cta_url:        body.cta_url        ?? null,
+    // v12 multi-CTA + new fields
+    ctas:                 body.ctas                 ?? [],
+    lot_size_sqft:        body.lot_size_sqft        ?? null,
+    lot_width_ft:         body.lot_width_ft         ?? null,
+    lot_depth_ft:         body.lot_depth_ft         ?? null,
+    phase:                body.phase                ?? 1,
+    estimated_completion: body.estimated_completion ?? null,
+    virtual_tour_url:     body.virtual_tour_url     ?? null,
+    is_coming_soon:       body.is_coming_soon       ?? false,
   };
-  if (body.text_color != null) payload.text_color = body.text_color;
-  if (body.label_x != null) payload.label_x = body.label_x;
-  if (body.label_y != null) payload.label_y = body.label_y;
-  if (body.label_font_size != null) payload.label_font_size = body.label_font_size;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let { data, error } = await (supabase.from("lots") as any).insert(payload).select().single();
-
-  // If new columns don't exist yet, retry without them
-  if (error?.message?.includes("text_color") || error?.message?.includes("label_")) {
-    delete payload.text_color;
-    delete payload.label_x;
-    delete payload.label_y;
-    delete payload.label_font_size;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ({ data, error } = await (supabase.from("lots") as any).insert(payload).select().single());
-  }
+  const { data, error } = await (supabase.from("lots") as any).insert(payload).select().single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);
