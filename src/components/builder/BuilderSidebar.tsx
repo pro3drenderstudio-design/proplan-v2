@@ -150,7 +150,9 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
 
       const builder = builderRes.data as { company_name: string; plan_tier: string | null } | null;
       if (builder?.company_name) setCompanyName(builder.company_name);
-      if (builder?.plan_tier) setLegacyPlan(true);
+      // Legacy tiers (launch/studio/scale) bypass addon locking entirely
+      const LEGACY_TIERS = ["launch", "studio", "scale"];
+      if (builder?.plan_tier && LEGACY_TIERS.includes(builder.plan_tier)) setLegacyPlan(true);
 
       const addonData = addonsRes as { addon_slug: string }[];
       setActiveAddons(new Set(addonData.map(d => d.addon_slug)));
@@ -202,10 +204,7 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
         {NAV_ITEMS.map(item => {
           const isActive   = pathname.startsWith(item.href);
           const addonSlug  = ADDON_REQUIRED[item.href];
-          // Treat as legacy ONLY if plan_tier is set AND no addon records exist.
-          // If they have addon records they're on the modular system even if plan_tier is stale.
-          const effectiveLegacy = legacyPlan && (activeAddons === null || activeAddons.size === 0);
-          const isLocked   = !effectiveLegacy && addonSlug != null && activeAddons != null && (
+          const isLocked   = !legacyPlan && addonSlug != null && activeAddons != null && (
             addonSlug === "any" ? activeAddons.size === 0 : !activeAddons.has(addonSlug)
           );
 
@@ -253,7 +252,7 @@ export default function BuilderSidebar({ isOpen = false, onClose }: BuilderSideb
       </nav>
 
       {/* New Model CTA — only shown when subscribed to configurator (or legacy plan) */}
-      {((legacyPlan && (activeAddons === null || activeAddons.size === 0)) || (activeAddons !== null && activeAddons.has("configurator"))) && (
+      {(legacyPlan || (activeAddons !== null && activeAddons.has("configurator"))) && (
         <div className="px-2.5 pb-3">
           <Link
             href="/builder/projects?new=1"
