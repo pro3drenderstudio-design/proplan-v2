@@ -439,7 +439,7 @@ export default function CommunityEditorPage() {
       }),
     });
     if (res.ok) {
-      setCommunity(prev => prev ? { ...prev, ...metaForm, description: metaForm.description || null, company_slug: metaForm.company_slug || null } : null);
+      setCommunity(prev => prev ? { ...prev, ...metaForm, description: metaForm.description || null, company_slug: metaForm.company_slug || null, latitude: metaForm.latitude ? Number(metaForm.latitude) : null, longitude: metaForm.longitude ? Number(metaForm.longitude) : null, hoa_fee_monthly: metaForm.hoa_fee_monthly ? Number(metaForm.hoa_fee_monthly) : null } : null);
       setEditingMeta(false);
       showToast("Community updated");
     } else {
