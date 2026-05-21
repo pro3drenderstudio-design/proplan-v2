@@ -785,6 +785,25 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
 
   // ── Filter panel ──────────────────────────────────────────────────────────
   function FilterPanel() {
+    const [localPriceMin, setLocalPriceMin] = useState(filters.priceMin ?? 0);
+    const [localPriceMax, setLocalPriceMax] = useState(filters.priceMax ?? maxPriceVal);
+    const [localSqftMin,  setLocalSqftMin]  = useState(filters.sqftMin  ?? 0);
+
+    // Sync sliders when external reset fires
+    useEffect(() => { setLocalPriceMin(filters.priceMin ?? 0); },       [filters.priceMin]);
+    useEffect(() => { setLocalPriceMax(filters.priceMax ?? maxPriceVal); }, [filters.priceMax, maxPriceVal]);
+    useEffect(() => { setLocalSqftMin(filters.sqftMin ?? 0); },         [filters.sqftMin]);
+
+    function commitPriceMin(v: number) {
+      setFilters(f => ({ ...f, priceMin: v > 0 ? v : null, priceMax: f.priceMax != null && f.priceMax < v ? null : f.priceMax }));
+    }
+    function commitPriceMax(v: number) {
+      setFilters(f => ({ ...f, priceMax: v < maxPriceVal ? v : null, priceMin: f.priceMin != null && f.priceMin > v ? null : f.priceMin }));
+    }
+    function commitSqftMin(v: number) {
+      setFilters(f => ({ ...f, sqftMin: v > 0 ? v : null }));
+    }
+
     function toggleStatus(key: string) {
       setFilters(f => {
         const next = f.statuses.includes(key) ? f.statuses.filter(x => x !== key) : [...f.statuses, key];
@@ -902,32 +921,28 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] text-white/40">Min</span>
                   <span className="text-[11px] font-bold text-white/70">
-                    {filters.priceMin != null && filters.priceMin > 0 ? fmtPrice(filters.priceMin) : "Any"}
+                    {localPriceMin > 0 ? fmtPrice(localPriceMin) : "Any"}
                   </span>
                 </div>
-                <input type="range" className="filter-range" min={0} max={maxPriceVal} step={10000}
-                  value={filters.priceMin ?? 0}
-                  style={{ background: sliderTrack(((filters.priceMin ?? 0) / maxPriceVal) * 100) }}
-                  onChange={e => {
-                    const v = Number(e.target.value);
-                    setFilters(f => ({ ...f, priceMin: v > 0 ? v : null, priceMax: f.priceMax != null && f.priceMax < v ? null : f.priceMax }));
-                  }} />
+                <input type="range" className="filter-range" min={0} max={maxPriceVal} step={1}
+                  value={localPriceMin}
+                  style={{ background: sliderTrack((localPriceMin / maxPriceVal) * 100) }}
+                  onChange={e => setLocalPriceMin(Number(e.target.value))}
+                  onPointerUp={e => commitPriceMin(Number((e.target as HTMLInputElement).value))} />
               </div>
               {/* Max price */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] text-white/40">Max</span>
                   <span className="text-[11px] font-bold text-white/70">
-                    {filters.priceMax != null && filters.priceMax < maxPriceVal ? fmtPrice(filters.priceMax) : "No limit"}
+                    {localPriceMax < maxPriceVal ? fmtPrice(localPriceMax) : "No limit"}
                   </span>
                 </div>
-                <input type="range" className="filter-range" min={0} max={maxPriceVal} step={10000}
-                  value={filters.priceMax ?? maxPriceVal}
-                  style={{ background: sliderTrack(((filters.priceMax ?? maxPriceVal) / maxPriceVal) * 100) }}
-                  onChange={e => {
-                    const v = Number(e.target.value);
-                    setFilters(f => ({ ...f, priceMax: v < maxPriceVal ? v : null, priceMin: f.priceMin != null && f.priceMin > v ? null : f.priceMin }));
-                  }} />
+                <input type="range" className="filter-range" min={0} max={maxPriceVal} step={1}
+                  value={localPriceMax}
+                  style={{ background: sliderTrack((localPriceMax / maxPriceVal) * 100) }}
+                  onChange={e => setLocalPriceMax(Number(e.target.value))}
+                  onPointerUp={e => commitPriceMax(Number((e.target as HTMLInputElement).value))} />
               </div>
             </div>
           </div>
@@ -938,16 +953,14 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] text-white/40">Min</span>
               <span className="text-[11px] font-bold text-white/70">
-                {filters.sqftMin != null && filters.sqftMin > 0 ? `${filters.sqftMin.toLocaleString()} sqft` : "Any size"}
+                {localSqftMin > 0 ? `${localSqftMin.toLocaleString()} sqft` : "Any size"}
               </span>
             </div>
-            <input type="range" className="filter-range" min={0} max={maxSqftVal} step={100}
-              value={filters.sqftMin ?? 0}
-              style={{ background: sliderTrack(((filters.sqftMin ?? 0) / maxSqftVal) * 100) }}
-              onChange={e => {
-                const v = Number(e.target.value);
-                setFilters(f => ({ ...f, sqftMin: v > 0 ? v : null }));
-              }} />
+            <input type="range" className="filter-range" min={0} max={maxSqftVal} step={1}
+              value={localSqftMin}
+              style={{ background: sliderTrack((localSqftMin / maxSqftVal) * 100) }}
+              onChange={e => setLocalSqftMin(Number(e.target.value))}
+              onPointerUp={e => commitSqftMin(Number((e.target as HTMLInputElement).value))} />
           </div>
 
           {/* Move-in ready */}
