@@ -41,9 +41,9 @@ interface FilterState {
   minBeds: number | null;
   minBaths: number | null;
   minGarage: number | null;
-  priceMin: string;
-  priceMax: string;
-  sqftMin: string;
+  priceMin: number | null;
+  priceMax: number | null;
+  sqftMin: number | null;
   phases: number[];
   moveInReady: boolean;
 }
@@ -55,9 +55,9 @@ const DEFAULT_FILTERS: FilterState = {
   minBeds: null,
   minBaths: null,
   minGarage: null,
-  priceMin: "",
-  priceMax: "",
-  sqftMin: "",
+  priceMin: null,
+  priceMax: null,
+  sqftMin: null,
   phases: [],
   moveInReady: false,
 };
@@ -151,6 +151,21 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     return min === null ? total : Math.min(min, total);
   }, null), [lots]);
 
+  const maxPriceVal = useMemo(() => {
+    const prices = lots.map(l => {
+      const base = l.floorPlan?.base_price ?? (l.project?.base_price ?? null);
+      return base !== null ? base + (l.price_modifier ?? 0) : null;
+    }).filter((p): p is number => p !== null);
+    if (prices.length === 0) return 2000000;
+    return Math.ceil(Math.max(...prices) / 100000) * 100000;
+  }, [lots]);
+
+  const maxSqftVal = useMemo(() => {
+    const sqfts = lots.map(l => l.floorPlan?.sqft ?? l.project?.sqft ?? null).filter((s): s is number => s !== null);
+    if (sqfts.length === 0) return 5000;
+    return Math.ceil(Math.max(...sqfts) / 500) * 500;
+  }, [lots]);
+
   const filteredLotIds = useMemo(() => {
     const ids = new Set<string>();
     for (const lot of lots) {
@@ -164,12 +179,9 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         if (filters.minBaths  && (fp.baths         ?? 0) < filters.minBaths)  continue;
         if (filters.minGarage && (fp.garage_spaces ?? 0) < filters.minGarage) continue;
         const price = (fp.base_price ?? 0) + (lot.price_modifier ?? 0);
-        const pMin = parseFloat(filters.priceMin.replace(/[^0-9.]/g, ""));
-        const pMax = parseFloat(filters.priceMax.replace(/[^0-9.]/g, ""));
-        if (!isNaN(pMin) && price < pMin) continue;
-        if (!isNaN(pMax) && price > pMax) continue;
-        const sMin = parseFloat(filters.sqftMin.replace(/[^0-9.]/g, ""));
-        if (!isNaN(sMin) && (fp.sqft ?? 0) < sMin) continue;
+        if (filters.priceMin != null && price < filters.priceMin) continue;
+        if (filters.priceMax != null && price > filters.priceMax) continue;
+        if (filters.sqftMin  != null && (fp.sqft ?? 0) < filters.sqftMin) continue;
       }
       ids.add(lot.id);
     }
@@ -180,12 +192,12 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     let n = 0;
     if (filters.statuses.length < ALL_STATUSES.length) n++;
     if (filters.phases.length > 0) n++;
-    if (filters.minBeds)    n++;
-    if (filters.minBaths)   n++;
-    if (filters.minGarage)  n++;
-    if (filters.priceMin)   n++;
-    if (filters.priceMax)   n++;
-    if (filters.sqftMin)    n++;
+    if (filters.minBeds)         n++;
+    if (filters.minBaths)        n++;
+    if (filters.minGarage)       n++;
+    if (filters.priceMin != null) n++;
+    if (filters.priceMax != null) n++;
+    if (filters.sqftMin  != null) n++;
     if (filters.moveInReady) n++;
     return n;
   }, [filters]);
@@ -782,8 +794,11 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     function togglePhase(p: number) {
       setFilters(f => ({ ...f, phases: f.phases.includes(p) ? f.phases.filter(x => x !== p) : [...f.phases, p] }));
     }
-    const btnBase   = { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.35)" };
-    const btnActive = { background: "rgba(59,130,246,0.18)",  border: "1px solid rgba(59,130,246,0.4)",  color: "#93c5fd" };
+    const btnBase   = { background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.13)", color: "rgba(255,255,255,0.45)" };
+    const btnActive = { background: "rgba(59,130,246,0.2)",   border: "1px solid rgba(59,130,246,0.5)",  color: "#93c5fd" };
+
+    const sliderTrack = (pct: number) =>
+      `linear-gradient(to right, rgba(59,130,246,0.75) 0%, rgba(59,130,246,0.75) ${pct}%, rgba(255,255,255,0.15) ${pct}%, rgba(255,255,255,0.15) 100%)`;
 
     return (
       <div className="flex flex-col h-full">
@@ -803,7 +818,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
           {/* Status */}
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Status</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-2">Status</p>
             <div className="flex flex-wrap gap-1.5">
               {ALL_STATUSES.map(key => {
                 const st     = STATUS[key];
@@ -823,7 +838,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
           {/* Phases (only when multiple exist) */}
           {uniquePhases.length > 1 && (
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Phase</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-2">Phase</p>
               <div className="flex flex-wrap gap-1.5">
                 {uniquePhases.map(p => (
                   <button key={p} onClick={() => togglePhase(p)}
@@ -838,7 +853,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
 
           {/* Bedrooms */}
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Min. Bedrooms</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-2">Min. Bedrooms</p>
             <div className="flex gap-1.5">
               {[null, 1, 2, 3, 4].map(n => (
                 <button key={n ?? "any"} onClick={() => setFilters(f => ({ ...f, minBeds: n }))}
@@ -852,7 +867,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
 
           {/* Bathrooms */}
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Min. Bathrooms</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-2">Min. Bathrooms</p>
             <div className="flex gap-1.5">
               {[null, 1, 2, 3].map(n => (
                 <button key={n ?? "any"} onClick={() => setFilters(f => ({ ...f, minBaths: n }))}
@@ -866,7 +881,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
 
           {/* Garage */}
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Min. Garage</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-2">Min. Garage</p>
             <div className="flex gap-1.5">
               {[null, 1, 2, 3].map(n => (
                 <button key={n ?? "any"} onClick={() => setFilters(f => ({ ...f, minGarage: n }))}
@@ -880,30 +895,59 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
 
           {/* Price range */}
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Price Range</p>
-            <div className="flex gap-2">
-              {[
-                { key: "priceMin" as const, label: "Min", placeholder: "$0" },
-                { key: "priceMax" as const, label: "Max", placeholder: "No limit" },
-              ].map(({ key, label, placeholder }) => (
-                <div key={key} className="flex-1">
-                  <p className="text-[9px] text-white/25 mb-1">{label}</p>
-                  <input type="text" placeholder={placeholder} value={filters[key]}
-                    onChange={e => setFilters(f => ({ ...f, [key]: e.target.value }))}
-                    className="w-full px-2.5 py-2 rounded-lg text-xs text-white placeholder-white/20 outline-none"
-                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }} />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-3">Price Range</p>
+            <div className="space-y-4">
+              {/* Min price */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] text-white/40">Min</span>
+                  <span className="text-[11px] font-bold text-white/70">
+                    {filters.priceMin != null && filters.priceMin > 0 ? fmtPrice(filters.priceMin) : "Any"}
+                  </span>
                 </div>
-              ))}
+                <input type="range" className="filter-range" min={0} max={maxPriceVal} step={10000}
+                  value={filters.priceMin ?? 0}
+                  style={{ background: sliderTrack(((filters.priceMin ?? 0) / maxPriceVal) * 100) }}
+                  onChange={e => {
+                    const v = Number(e.target.value);
+                    setFilters(f => ({ ...f, priceMin: v > 0 ? v : null, priceMax: f.priceMax != null && f.priceMax < v ? null : f.priceMax }));
+                  }} />
+              </div>
+              {/* Max price */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] text-white/40">Max</span>
+                  <span className="text-[11px] font-bold text-white/70">
+                    {filters.priceMax != null && filters.priceMax < maxPriceVal ? fmtPrice(filters.priceMax) : "No limit"}
+                  </span>
+                </div>
+                <input type="range" className="filter-range" min={0} max={maxPriceVal} step={10000}
+                  value={filters.priceMax ?? maxPriceVal}
+                  style={{ background: sliderTrack(((filters.priceMax ?? maxPriceVal) / maxPriceVal) * 100) }}
+                  onChange={e => {
+                    const v = Number(e.target.value);
+                    setFilters(f => ({ ...f, priceMax: v < maxPriceVal ? v : null, priceMin: f.priceMin != null && f.priceMin > v ? null : f.priceMin }));
+                  }} />
+              </div>
             </div>
           </div>
 
           {/* Min sq ft */}
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Min. Square Footage</p>
-            <input type="text" placeholder="Any size" value={filters.sqftMin}
-              onChange={e => setFilters(f => ({ ...f, sqftMin: e.target.value }))}
-              className="w-full px-2.5 py-2 rounded-lg text-xs text-white placeholder-white/20 outline-none"
-              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }} />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-3">Min. Square Footage</p>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] text-white/40">Min</span>
+              <span className="text-[11px] font-bold text-white/70">
+                {filters.sqftMin != null && filters.sqftMin > 0 ? `${filters.sqftMin.toLocaleString()} sqft` : "Any size"}
+              </span>
+            </div>
+            <input type="range" className="filter-range" min={0} max={maxSqftVal} step={100}
+              value={filters.sqftMin ?? 0}
+              style={{ background: sliderTrack(((filters.sqftMin ?? 0) / maxSqftVal) * 100) }}
+              onChange={e => {
+                const v = Number(e.target.value);
+                setFilters(f => ({ ...f, sqftMin: v > 0 ? v : null }));
+              }} />
           </div>
 
           {/* Move-in ready */}
@@ -914,7 +958,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
               <div className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
                 style={{ left: filters.moveInReady ? "calc(100% - 18px)" : 2 }} />
             </div>
-            <span className="text-xs font-semibold text-white/60">Move-in ready only</span>
+            <span className="text-xs font-semibold text-white/70">Move-in ready only</span>
           </button>
         </div>
 
@@ -932,6 +976,11 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
   // ── Main render ───────────────────────────────────────────────────────────
   return (
     <div className="relative h-screen bg-[#080808] overflow-hidden">
+      <style>{`
+        .filter-range { -webkit-appearance: none; appearance: none; width: 100%; height: 3px; border-radius: 3px; outline: none; cursor: pointer; }
+        .filter-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; cursor: pointer; border: 2px solid rgba(59,130,246,0.9); box-shadow: 0 1px 6px rgba(0,0,0,0.6); }
+        .filter-range::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; cursor: pointer; border: 2px solid rgba(59,130,246,0.9); box-shadow: 0 1px 6px rgba(0,0,0,0.6); }
+      `}</style>
 
       {/* Map canvas */}
       <div
