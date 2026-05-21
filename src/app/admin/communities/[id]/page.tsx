@@ -296,7 +296,7 @@ export default function CommunityEditorPage() {
         setCommunity(prev => prev ? {
           ...prev,
           lots: prev.lots.map(l => l.id === selectedLot.id
-            ? { ...l, ...lotForm, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), phase: Number(lotForm.phase) || 1 }
+            ? { ...l, ...lotForm, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), phase: Number(lotForm.phase) || 1, lot_size_sqft: lotForm.lot_size_sqft ? Number(lotForm.lot_size_sqft) : null, lot_width_ft: lotForm.lot_width_ft ? Number(lotForm.lot_width_ft) : null, lot_depth_ft: lotForm.lot_depth_ft ? Number(lotForm.lot_depth_ft) : null }
             : l),
         } : null);
         showToast("Lot saved");
