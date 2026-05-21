@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { getCommunityById } from "@/lib/admin-api";
 import { CommunityWithLots, Lot, LotStatus, LotCta, MapSettings, FloorPlan } from "@/types/database";
 import { getBuilderBySlug } from "@/lib/supabase";
@@ -70,6 +70,7 @@ const DEFAULT_LOT_FORM: Omit<LotFormState, "lot_number"> = {
 
 export default function BuilderCommunityEditorPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   const [community,   setCommunity]   = useState<CommunityWithLots | null>(null);
   const [floorPlans,  setFloorPlans]  = useState<FloorPlan[]>([]);
@@ -419,6 +420,14 @@ export default function BuilderCommunityEditorPage() {
     setSavingMapSettings(false);
   }
 
+  async function handleDeleteCommunity() {
+    if (!community) return;
+    if (!confirm(`Delete "${community.name}" and all ${community.lots.length} lots? This cannot be undone.`)) return;
+    const res = await fetch(`/api/communities/${community.id}`, { method: "DELETE" });
+    if (res.ok) router.push("/builder/communities");
+    else showToast("Delete failed");
+  }
+
   if (loading) return (
     <div className="flex items-center justify-center h-full">
       <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -521,7 +530,8 @@ export default function BuilderCommunityEditorPage() {
                       onClick={e => { e.stopPropagation(); if (!hasDragged.current) selectLot(lot); }}>
                       <polygon points={pointsToSvgPoly(lot.polygon, w, h)}
                         fill={col.fill} stroke={isSelected ? "#fff" : col.stroke}
-                        strokeWidth={isSelected ? 2 : (mapSettings.stroke_width ?? 1.5)} strokeDasharray={isSelected ? "5 3" : undefined} />
+                        strokeWidth={isSelected ? 2 : (mapSettings.stroke_width ?? 1.5)}
+                        strokeDasharray={isSelected || lot.is_coming_soon ? "5 3" : undefined} />
                       {mapSettings.show_labels !== false && lot.polygon.length >= 3 && (() => {
                         const centX = (lot.polygon.reduce((s, [x]) => s + x, 0) / lot.polygon.length / 100) * w;
                         const centY = (lot.polygon.reduce((s, [, y]) => s + y, 0) / lot.polygon.length / 100) * h;
@@ -967,9 +977,13 @@ export default function BuilderCommunityEditorPage() {
                     const statusKey = lot.is_coming_soon ? "coming_soon" : lot.status;
                     const col = LOT_COLORS[statusKey] ?? LOT_COLORS.available;
                     const fp  = floorPlans.find(p => p.id === lot.floor_plan_id);
-                    const fpUrl = fp?.project_id && community.company_slug
+                    const configuratorUrl = fp?.project_id && community.company_slug
                       ? `${window.location.origin}/project/${community.company_slug}/${fp.project_id}?lotId=${lot.id}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${community.slug}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${lot.price_modifier ?? 0}&utm_source=qr`
                       : null;
+                    const lotPageUrl = community.company_slug && community.slug
+                      ? `${window.location.origin}/community/${community.company_slug}/${community.slug}?lot=${lot.id}&utm_source=qr`
+                      : null;
+                    const qrUrl = configuratorUrl ?? lotPageUrl;
                     return (
                       <div key={lot.id} className="flex items-center gap-1">
                         <button onClick={() => selectLot(lot)}
@@ -983,19 +997,19 @@ export default function BuilderCommunityEditorPage() {
                           </div>
                           <span className="text-[10px] font-medium flex-shrink-0" style={{ color: col.stroke }}>{col.label}</span>
                         </button>
-                        {fpUrl && (
+                        {qrUrl && (
                           <button onClick={e => { e.stopPropagation(); setLotQrOpen(lot.id); }}
-                            className="flex-shrink-0 w-7 h-7 rounded-md bg-white/4 hover:bg-white/10 border border-white/8 flex items-center justify-center transition-colors" title="QR Code">
+                            className="flex-shrink-0 w-7 h-7 rounded-md bg-white/4 hover:bg-white/10 border border-white/8 flex items-center justify-center transition-colors" title="Yard Sign QR">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5 text-white/40">
                               <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
                               <path strokeLinecap="round" d="M14 14h2m3 0h1M14 17h1m2 0h2M14 20h3m2 0h1"/>
                             </svg>
                           </button>
                         )}
-                        {lotQrOpen === lot.id && fpUrl && fp && (
-                          <QRModal url={fpUrl} label={`Lot ${lot.lot_number}`} sublabel={fp.name}
+                        {lotQrOpen === lot.id && qrUrl && (
+                          <QRModal url={qrUrl} label={`Lot ${lot.lot_number}`} sublabel={fp?.name ?? community.name}
                             builderLogo={builderLogo} accentColor={accentColor} builderName={builderNameState}
-                            thumbnailUrl={fp.thumbnail_url} onClose={() => setLotQrOpen(null)} />
+                            thumbnailUrl={fp?.thumbnail_url ?? null} onClose={() => setLotQrOpen(null)} />
                         )}
                       </div>
                     );
@@ -1031,6 +1045,14 @@ export default function BuilderCommunityEditorPage() {
                 </button>
               </div>
             )}
+
+            {/* Delete community */}
+            <div className="border-t border-white/8 px-4 py-3 flex-shrink-0">
+              <button onClick={handleDeleteCommunity}
+                className="w-full py-2 rounded-lg border border-red-500/20 text-red-400/50 hover:text-red-400 hover:border-red-500/40 text-xs transition-colors">
+                Delete Community
+              </button>
+            </div>
 
             {qrOpen && community.slug && community.company_slug && (() => {
               const communityUrl = `${window.location.origin}/community/${community.company_slug}/${community.slug}?utm_source=qr`;

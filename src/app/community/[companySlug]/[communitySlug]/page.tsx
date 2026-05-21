@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Community, Lot, MapSettings, FloorPlan, LotCta } from "@/types/database";
 
@@ -102,6 +103,7 @@ function effectiveLotStatus(lot: LotWithData): string {
 }
 
 export default function CommunityMapPage({ params }: { params: Promise<{ companySlug: string; communitySlug: string }> }) {
+  const searchParams = useSearchParams();
   const [companySlug,   setCompanySlug]   = useState("");
   const [communitySlug, setCommunitySlug] = useState("");
   const [community,     setCommunity]     = useState<Community | null>(null);
@@ -281,6 +283,15 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
       return next;
     });
   }
+
+  // ── Auto-select lot from URL param (?lot=<id>) ────────────────────────────
+  useEffect(() => {
+    if (lots.length === 0) return;
+    const lotParam = searchParams.get("lot");
+    if (!lotParam) return;
+    const match = lots.find(l => l.id === lotParam);
+    if (match) setSelectedLot(match);
+  }, [lots, searchParams]);
 
   // ── Map interaction ───────────────────────────────────────────────────────
   function handleMapWheel(e: React.WheelEvent) {
@@ -1079,19 +1090,27 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
             ))}
           </div>
 
-          {/* Filter button */}
+          {/* Filter / Search Homes button */}
           <button onClick={() => setFilterOpen(v => !v)}
-            className="relative flex items-center gap-1.5 px-3 py-2 rounded-xl transition-colors"
+            className="relative flex items-center gap-2 rounded-xl transition-all"
             style={filterOpen
-              ? { background: "rgba(59,130,246,0.2)", border: "1px solid rgba(59,130,246,0.4)", backdropFilter: "blur(24px)" }
-              : { ...GLASS, borderRadius: 12 }}>
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke={filterOpen ? "#93c5fd" : "rgba(255,255,255,0.5)"} strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+              ? { background: "rgba(37,99,235,0.28)", border: "1px solid rgba(59,130,246,0.55)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", padding: "8px 14px", boxShadow: "0 0 0 1px rgba(59,130,246,0.2)" }
+              : { background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", padding: "8px 14px", boxShadow: "0 2px 12px rgba(0,0,0,0.4)" }}>
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke={filterOpen ? "#93c5fd" : "rgba(255,255,255,0.85)"} strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
             </svg>
-            <span className="text-xs font-semibold" style={{ color: filterOpen ? "#93c5fd" : "rgba(255,255,255,0.5)" }}>Filter</span>
-            {activeFilterCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-500 text-[9px] font-bold text-white flex items-center justify-center">
+            <span className="text-sm font-semibold" style={{ color: filterOpen ? "#93c5fd" : "rgba(255,255,255,0.9)" }}>
+              <span className="hidden sm:inline">Search Homes</span>
+              <span className="sm:hidden">Search</span>
+            </span>
+            {activeFilterCount > 0 ? (
+              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-500 text-[10px] font-bold text-white flex-shrink-0">
                 {activeFilterCount}
+              </span>
+            ) : (
+              <span className="hidden sm:flex items-center justify-center px-1.5 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0"
+                style={{ background: "rgba(34,197,94,0.2)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.3)" }}>
+                {stats.available}
               </span>
             )}
           </button>

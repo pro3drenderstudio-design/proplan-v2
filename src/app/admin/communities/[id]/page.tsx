@@ -4,13 +4,14 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getCommunityById, getAllProjects, getAllBuildersBySlug } from "@/lib/admin-api";
-import { CommunityWithLots, Lot, LotStatus, MapSettings, Project, Builder, FloorPlan } from "@/types/database";
+import { CommunityWithLots, Lot, LotStatus, MapSettings, Project, Builder, FloorPlan, LotCta } from "@/types/database";
 import QRModal, { QRLot } from "@/components/QRModal";
 
-const LOT_COLORS: Record<LotStatus, { fill: string; stroke: string; label: string }> = {
-  available: { fill: "rgba(34,197,94,0.25)",  stroke: "#22c55e", label: "Available" },
-  reserved:  { fill: "rgba(251,191,36,0.25)", stroke: "#fbbf24", label: "Reserved"  },
-  sold:      { fill: "rgba(239,68,68,0.15)",   stroke: "rgba(239,68,68,0.7)",   label: "Sold" },
+const LOT_COLORS: Record<LotStatus | "coming_soon", { fill: string; stroke: string; label: string }> = {
+  available:   { fill: "rgba(34,197,94,0.25)",   stroke: "#22c55e",               label: "Available"   },
+  reserved:    { fill: "rgba(251,191,36,0.25)",  stroke: "#fbbf24",               label: "Reserved"    },
+  sold:        { fill: "rgba(239,68,68,0.15)",   stroke: "rgba(239,68,68,0.7)",   label: "Sold"        },
+  coming_soon: { fill: "rgba(148,163,184,0.10)", stroke: "rgba(148,163,184,0.5)", label: "Coming Soon" },
 };
 
 type DrawingPoint = [number, number];
@@ -41,7 +42,7 @@ export default function CommunityEditorPage() {
 
   // Selection / editing
   const [selectedLot,    setSelectedLot]    = useState<Lot | null>(null);
-  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; floor_plan_id: string; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number; cta_type: "configurator" | "external" | "contact" | "none"; cta_label: string; cta_url: string; phase: string; is_coming_soon: boolean } | null>(null);
+  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; floor_plan_id: string; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number; ctas: LotCta[]; phase: string; is_coming_soon: boolean; lot_size_sqft: string; lot_width_ft: string; lot_depth_ft: string; virtual_tour_url: string; estimated_completion: string } | null>(null);
   const [savingLot,      setSavingLot]      = useState(false);
   const [deletingLot,    setDeletingLot]    = useState(false);
 
@@ -210,7 +211,7 @@ export default function CommunityEditorPage() {
     setMousePos(null);
     // Open the lot form for this new polygon
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", floor_plan_id: "", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11, cta_type: "configurator", cta_label: "", cta_url: "", phase: "1", is_coming_soon: false });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", floor_plan_id: "", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11, ctas: [{ type: "configurator", label: "" }], phase: "1", is_coming_soon: false, lot_size_sqft: "", lot_width_ft: "", lot_depth_ft: "", virtual_tour_url: "", estimated_completion: "" });
     // Store drawing points for save
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
@@ -230,23 +231,32 @@ export default function CommunityEditorPage() {
     if (isDrawing) return;
     setPendingPolygon(null);
     setSelectedLot(lot);
-    const anyLot = lot as Lot & { cta_type?: string; cta_label?: string; cta_url?: string; floor_plan_id?: string; phase?: number; is_coming_soon?: boolean };
+    const anyLot = lot as Lot & { cta_type?: string; cta_label?: string; cta_url?: string; floor_plan_id?: string; phase?: number; is_coming_soon?: boolean; lot_size_sqft?: number; lot_width_ft?: number; lot_depth_ft?: number; virtual_tour_url?: string; estimated_completion?: string };
+    // Resolve CTAs: use new ctas array if non-empty, else convert legacy
+    const resolvedCtas: LotCta[] = lot.ctas?.length
+      ? lot.ctas
+      : anyLot.cta_type && anyLot.cta_type !== "none"
+        ? [{ type: anyLot.cta_type as LotCta["type"], label: anyLot.cta_label ?? "", url: anyLot.cta_url ?? undefined }]
+        : [{ type: "configurator", label: "" }];
     setLotForm({
-      lot_number:      lot.lot_number,
-      status:          lot.status,
-      floor_plan_id:   anyLot.floor_plan_id ?? "",
-      project_id:      lot.project_id ?? "",
-      price_modifier:  String(lot.price_modifier ?? 0),
-      notes:           lot.notes ?? "",
-      text_color:      lot.text_color ?? "#ffffff",
-      label_x:         lot.label_x ?? null,
-      label_y:         lot.label_y ?? null,
-      label_font_size: lot.label_font_size ?? 11,
-      cta_type:        (anyLot.cta_type ?? "configurator") as "configurator" | "external" | "contact" | "none",
-      cta_label:       anyLot.cta_label ?? "",
-      cta_url:         anyLot.cta_url ?? "",
-      phase:           String(anyLot.phase ?? 1),
-      is_coming_soon:  anyLot.is_coming_soon ?? false,
+      lot_number:           lot.lot_number,
+      status:               lot.status,
+      floor_plan_id:        anyLot.floor_plan_id ?? "",
+      project_id:           lot.project_id ?? "",
+      price_modifier:       String(lot.price_modifier ?? 0),
+      notes:                lot.notes ?? "",
+      text_color:           lot.text_color ?? "#ffffff",
+      label_x:              lot.label_x ?? null,
+      label_y:              lot.label_y ?? null,
+      label_font_size:      lot.label_font_size ?? 11,
+      ctas:                 resolvedCtas,
+      phase:                String(anyLot.phase ?? 1),
+      is_coming_soon:       anyLot.is_coming_soon ?? false,
+      lot_size_sqft:        anyLot.lot_size_sqft != null ? String(anyLot.lot_size_sqft) : "",
+      lot_width_ft:         anyLot.lot_width_ft  != null ? String(anyLot.lot_width_ft)  : "",
+      lot_depth_ft:         anyLot.lot_depth_ft  != null ? String(anyLot.lot_depth_ft)  : "",
+      virtual_tour_url:     anyLot.virtual_tour_url     ?? "",
+      estimated_completion: anyLot.estimated_completion ?? "",
     });
   }
 
@@ -262,21 +272,24 @@ export default function CommunityEditorPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lot_number:      lotForm.lot_number,
-          status:          lotForm.status,
-          floor_plan_id:   lotForm.floor_plan_id || null,
-          project_id:      lotForm.project_id || null,
-          price_modifier:  Number(lotForm.price_modifier),
-          notes:           lotForm.notes || null,
-          text_color:      lotForm.text_color || null,
-          label_x:         lotForm.label_x,
-          label_y:         lotForm.label_y,
-          label_font_size: lotForm.label_font_size,
-          cta_type:        lotForm.cta_type,
-          cta_label:       lotForm.cta_label || null,
-          cta_url:         lotForm.cta_url || null,
-          phase:           Number(lotForm.phase) || 1,
-          is_coming_soon:  lotForm.is_coming_soon,
+          lot_number:           lotForm.lot_number,
+          status:               lotForm.status,
+          floor_plan_id:        lotForm.floor_plan_id || null,
+          project_id:           lotForm.project_id || null,
+          price_modifier:       Number(lotForm.price_modifier),
+          notes:                lotForm.notes || null,
+          text_color:           lotForm.text_color || null,
+          label_x:              lotForm.label_x,
+          label_y:              lotForm.label_y,
+          label_font_size:      lotForm.label_font_size,
+          ctas:                 lotForm.ctas.filter(c => c.type),
+          phase:                Number(lotForm.phase) || 1,
+          is_coming_soon:       lotForm.is_coming_soon,
+          lot_size_sqft:        lotForm.lot_size_sqft  ? Number(lotForm.lot_size_sqft)  : null,
+          lot_width_ft:         lotForm.lot_width_ft   ? Number(lotForm.lot_width_ft)   : null,
+          lot_depth_ft:         lotForm.lot_depth_ft   ? Number(lotForm.lot_depth_ft)   : null,
+          virtual_tour_url:     lotForm.virtual_tour_url || null,
+          estimated_completion: lotForm.estimated_completion || null,
         }),
       });
       if (res.ok) {
@@ -298,22 +311,25 @@ export default function CommunityEditorPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lot_number:      lotForm.lot_number,
-          polygon:         pendingPolygon,
-          status:          lotForm.status,
-          floor_plan_id:   lotForm.floor_plan_id || null,
-          project_id:      lotForm.project_id || null,
-          price_modifier:  Number(lotForm.price_modifier),
-          notes:           lotForm.notes || null,
-          text_color:      lotForm.text_color || null,
-          label_x:         lotForm.label_x,
-          label_y:         lotForm.label_y,
-          label_font_size: lotForm.label_font_size,
-          cta_type:        lotForm.cta_type,
-          cta_label:       lotForm.cta_label || null,
-          cta_url:         lotForm.cta_url || null,
-          phase:           Number(lotForm.phase) || 1,
-          is_coming_soon:  lotForm.is_coming_soon,
+          lot_number:           lotForm.lot_number,
+          polygon:              pendingPolygon,
+          status:               lotForm.status,
+          floor_plan_id:        lotForm.floor_plan_id || null,
+          project_id:           lotForm.project_id || null,
+          price_modifier:       Number(lotForm.price_modifier),
+          notes:                lotForm.notes || null,
+          text_color:           lotForm.text_color || null,
+          label_x:              lotForm.label_x,
+          label_y:              lotForm.label_y,
+          label_font_size:      lotForm.label_font_size,
+          ctas:                 lotForm.ctas.filter(c => c.type),
+          phase:                Number(lotForm.phase) || 1,
+          is_coming_soon:       lotForm.is_coming_soon,
+          lot_size_sqft:        lotForm.lot_size_sqft  ? Number(lotForm.lot_size_sqft)  : null,
+          lot_width_ft:         lotForm.lot_width_ft   ? Number(lotForm.lot_width_ft)   : null,
+          lot_depth_ft:         lotForm.lot_depth_ft   ? Number(lotForm.lot_depth_ft)   : null,
+          virtual_tour_url:     lotForm.virtual_tour_url || null,
+          estimated_completion: lotForm.estimated_completion || null,
         }),
       });
       if (res.ok) {
@@ -471,12 +487,23 @@ export default function CommunityEditorPage() {
     setSavingMapSettings(false);
   }
 
+  async function handleDeleteCommunity() {
+    if (!community) return;
+    if (!confirm(`Delete "${community.name}" and all ${community.lots.length} lots? This cannot be undone.`)) return;
+    const res = await fetch(`/api/communities/${community.id}`, { method: "DELETE" });
+    if (res.ok) window.location.href = "/admin/communities";
+    else showToast("Delete failed");
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>;
   }
   if (!community) {
     return <div className="flex flex-col items-center justify-center h-full gap-3"><p className="text-white/40 text-sm">Community not found.</p><Link href="/admin/communities" className="text-xs text-blue-400 hover:underline">← Back</Link></div>;
   }
+
+  // Projects filtered to this community's builder only
+  const builderProjects = projects.filter(p => p.company_slug === community.company_slug);
 
   const { w, h } = svgSize;
 
@@ -606,7 +633,9 @@ export default function CommunityEditorPage() {
               >
                 {/* Saved lots */}
                 {community.lots.map(lot => {
-                  const col = LOT_COLORS[lot.status];
+                  const anyLot = lot as Lot & { is_coming_soon?: boolean };
+                  const statusKey = anyLot.is_coming_soon ? "coming_soon" : lot.status;
+                  const col = LOT_COLORS[statusKey] ?? LOT_COLORS.available;
                   const isSelected = selectedLot?.id === lot.id;
                   const isEditingThis = editingVerticesLotId === lot.id;
                   const displayPoly = isEditingThis ? editedPolygon : lot.polygon;
@@ -619,7 +648,7 @@ export default function CommunityEditorPage() {
                         fill={isEditingThis ? "rgba(251,191,36,0.2)" : col.fill}
                         stroke={isEditingThis ? "#fbbf24" : isSelected ? "#fff" : col.stroke}
                         strokeWidth={isEditingThis ? 2 : isSelected ? 2 : (mapSettings.stroke_width ?? 1.5)}
-                        strokeDasharray={isEditingThis ? "6 3" : isSelected ? "5 3" : undefined}
+                        strokeDasharray={isEditingThis ? "6 3" : isSelected || anyLot.is_coming_soon ? "5 3" : undefined}
                       />
                       {/* Vertex handles — only when editing this lot */}
                       {isEditingThis && editedPolygon.map(([x, y], idx) => (
@@ -803,19 +832,67 @@ export default function CommunityEditorPage() {
                   onChange={e => setLotForm(f => f && ({ ...f, project_id: e.target.value }))}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 focus:outline-none focus:border-blue-500/60 transition-colors">
                   <option value="">— None —</option>
-                  {projects.map(p => (
+                  {builderProjects.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
               </div>
+
+              {/* Lot Size */}
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Lot Size</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-3">
+                    <input type="number" value={lotForm.lot_size_sqft} onChange={e => setLotForm(f => f && ({ ...f, lot_size_sqft: e.target.value }))}
+                      placeholder="Total sqft" className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                  </div>
+                  <input type="number" value={lotForm.lot_width_ft} onChange={e => setLotForm(f => f && ({ ...f, lot_width_ft: e.target.value }))}
+                    placeholder="Width (ft)" className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                  <span className="flex items-center justify-center text-white/30 text-sm">×</span>
+                  <input type="number" value={lotForm.lot_depth_ft} onChange={e => setLotForm(f => f && ({ ...f, lot_depth_ft: e.target.value }))}
+                    placeholder="Depth (ft)" className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                </div>
+              </div>
+
+              {/* Phase + Completion + Coming Soon */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Phase</label>
+                  <input type="number" min={1} value={lotForm.phase}
+                    onChange={e => setLotForm(f => f && ({ ...f, phase: e.target.value }))}
+                    className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Est. Completion</label>
+                  <input type="date" value={lotForm.estimated_completion} onChange={e => setLotForm(f => f && ({ ...f, estimated_completion: e.target.value }))}
+                    className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-[9px] font-bold uppercase tracking-widest text-white/25">Coming Soon</label>
+                <button onClick={() => setLotForm(f => f && ({ ...f, is_coming_soon: !f.is_coming_soon }))}
+                  className={`w-9 h-5 rounded-full border transition-colors relative ${lotForm.is_coming_soon ? "bg-slate-500 border-slate-400" : "bg-white/8 border-white/15"}`}>
+                  <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-all ${lotForm.is_coming_soon ? "left-4" : "left-0.5"}`} />
+                </button>
+              </div>
+
               <div>
                 <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Price Modifier ($)</label>
                 <input type="number" value={lotForm.price_modifier}
                   onChange={e => setLotForm(f => f && ({ ...f, price_modifier: e.target.value }))}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors"
                   placeholder="0" />
-                <p className="text-[10px] text-white/25 mt-1">Added to the model's base price for this lot</p>
+                <p className="text-[10px] text-white/25 mt-1">Added to the floor plan's base price</p>
               </div>
+
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Virtual Tour URL</label>
+                <input type="url" value={lotForm.virtual_tour_url} onChange={e => setLotForm(f => f && ({ ...f, virtual_tour_url: e.target.value }))}
+                  placeholder="https://my.matterport.com/…"
+                  className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+              </div>
+
               <div>
                 <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Notes</label>
                 <textarea value={lotForm.notes ?? ""}
@@ -823,59 +900,51 @@ export default function CommunityEditorPage() {
                   rows={2}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors resize-none" />
               </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Phase</p>
-                  <input type="number" min={1} value={lotForm.phase}
-                    onChange={e => setLotForm(f => f && ({ ...f, phase: e.target.value }))}
-                    className="mt-1.5 w-20 bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+
+              {/* CTAs (up to 3) */}
+              <div className="pt-1 border-t border-white/8 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-white/25">Calls to Action</label>
+                  {lotForm.ctas.length < 3 && (
+                    <button onClick={() => setLotForm(f => f && ({ ...f, ctas: [...f.ctas, { type: "contact", label: "" }] }))}
+                      className="text-[10px] text-blue-400/70 hover:text-blue-400 transition-colors">+ Add CTA</button>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/25">Coming Soon</p>
-                  <button onClick={() => setLotForm(f => f && ({ ...f, is_coming_soon: !f.is_coming_soon }))}
-                    className={`w-9 h-5 rounded-full border transition-colors relative ${lotForm.is_coming_soon ? "bg-slate-500 border-slate-400" : "bg-white/8 border-white/15"}`}>
-                    <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-all ${lotForm.is_coming_soon ? "left-4" : "left-0.5"}`} />
-                  </button>
-                </div>
-              </div>
-              {/* CTA */}
-              <div>
-                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Call to Action</label>
-                <div className="grid grid-cols-2 gap-1 mb-2">
-                  {([
-                    { value: "configurator", label: "Configurator" },
-                    { value: "external",     label: "External Link" },
-                    { value: "contact",      label: "Lead Form" },
-                    { value: "none",         label: "None" },
-                  ] as const).map(opt => (
-                    <button key={opt.value} type="button"
-                      onClick={() => setLotForm(f => f && ({ ...f, cta_type: opt.value }))}
-                      className="py-1.5 rounded-lg text-[10px] font-semibold border transition-colors"
-                      style={{
-                        background: lotForm.cta_type === opt.value ? "rgba(59,130,246,0.2)" : "transparent",
-                        borderColor: lotForm.cta_type === opt.value ? "rgba(59,130,246,0.5)" : "rgba(255,255,255,0.1)",
-                        color: lotForm.cta_type === opt.value ? "#93c5fd" : "rgba(255,255,255,0.4)",
-                      }}>
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                {(lotForm.cta_type === "configurator" || lotForm.cta_type === "external" || lotForm.cta_type === "contact") && (
-                  <input value={lotForm.cta_label}
-                    onChange={e => setLotForm(f => f && ({ ...f, cta_label: e.target.value }))}
-                    placeholder={
-                      lotForm.cta_type === "configurator" ? "Configure this home (default)" :
-                      lotForm.cta_type === "contact"      ? "Request Info (default)" :
-                                                            "Button label…"
-                    }
-                    className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors mb-1.5" />
-                )}
-                {lotForm.cta_type === "external" && (
-                  <input value={lotForm.cta_url}
-                    onChange={e => setLotForm(f => f && ({ ...f, cta_url: e.target.value }))}
-                    placeholder="https://…"
-                    className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 font-mono focus:outline-none focus:border-blue-500/60 transition-colors" />
-                )}
+                {lotForm.ctas.map((cta, idx) => (
+                  <div key={idx} className="bg-[#1a1a1a] border border-white/8 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-bold uppercase tracking-widest text-white/30">{idx === 0 ? "Primary" : idx === 1 ? "Secondary" : "Tertiary"}</span>
+                      {idx > 0 && (
+                        <button onClick={() => setLotForm(f => f && ({ ...f, ctas: f.ctas.filter((_, i) => i !== idx) }))}
+                          className="text-white/25 hover:text-red-400 transition-colors text-xs">Remove</button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {([
+                        { value: "configurator", label: "3D Configurator" },
+                        { value: "external",     label: "External Link"   },
+                        { value: "contact",      label: "Lead Form"       },
+                        { value: "schedule",     label: "Schedule Tour"   },
+                      ] as const).map(ct => (
+                        <button key={ct.value}
+                          onClick={() => setLotForm(f => f && ({ ...f, ctas: f.ctas.map((c, i) => i === idx ? { ...c, type: ct.value } : c) }))}
+                          className={`py-1 px-2 rounded-lg text-[10px] font-semibold border transition-colors text-left ${cta.type === ct.value ? "bg-blue-600/20 border-blue-500/50 text-blue-300" : "bg-white/4 border-white/10 text-white/40 hover:text-white/60"}`}>
+                          {ct.label}
+                        </button>
+                      ))}
+                    </div>
+                    <input value={cta.label}
+                      onChange={e => setLotForm(f => f && ({ ...f, ctas: f.ctas.map((c, i) => i === idx ? { ...c, label: e.target.value } : c) }))}
+                      placeholder={cta.type === "configurator" ? "Configure this home" : cta.type === "contact" ? "Request Info" : cta.type === "schedule" ? "Schedule a Tour" : "Button label"}
+                      className="w-full bg-[#111] border border-white/8 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    {(cta.type === "external" || cta.type === "schedule") && (
+                      <input value={cta.url ?? ""}
+                        onChange={e => setLotForm(f => f && ({ ...f, ctas: f.ctas.map((c, i) => i === idx ? { ...c, url: e.target.value } : c) }))}
+                        placeholder="https://…" type="url"
+                        className="w-full bg-[#111] border border-white/8 rounded-lg px-3 py-2 text-sm text-white/70 font-mono focus:outline-none focus:border-blue-500/60 transition-colors" />
+                    )}
+                  </div>
+                ))}
               </div>
 
               <div>
@@ -1152,11 +1221,18 @@ export default function CommunityEditorPage() {
               ) : (
                 <div className="space-y-1.5">
                   {community.lots.map(lot => {
-                    const col = LOT_COLORS[lot.status];
+                    const anyLotItem = lot as Lot & { is_coming_soon?: boolean; floor_plan_id?: string };
+                    const statusKeyItem = anyLotItem.is_coming_soon ? "coming_soon" : lot.status;
+                    const col = LOT_COLORS[statusKeyItem] ?? LOT_COLORS.available;
+                    const fp  = floorPlans.find(p => p.id === anyLotItem.floor_plan_id);
                     const proj = projects.find(p => p.id === lot.project_id);
-                    const lotUrl = proj && proj.slug && proj.company_slug
+                    const configuratorUrl = proj?.slug && proj?.company_slug
                       ? `${window.location.origin}/project/${proj.company_slug}/${proj.slug}?lotId=${lot.id}&lotNumber=${encodeURIComponent(lot.lot_number)}&communitySlug=${community.slug}&communityName=${encodeURIComponent(community.name)}&lotPriceModifier=${lot.price_modifier ?? 0}&utm_source=qr`
                       : null;
+                    const lotPageUrl = community.company_slug && community.slug
+                      ? `${window.location.origin}/community/${community.company_slug}/${community.slug}?lot=${lot.id}&utm_source=qr`
+                      : null;
+                    const qrUrl = configuratorUrl ?? lotPageUrl;
                     const builder = community.company_slug ? builders[community.company_slug] : null;
                     return (
                       <div key={lot.id} className="flex items-center gap-1">
@@ -1165,15 +1241,15 @@ export default function CommunityEditorPage() {
                           <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: col.stroke }} />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-white/80">{lot.lot_number}</p>
-                            <p className="text-[10px] text-white/30 truncate">{proj?.name ?? "No model assigned"}</p>
+                            <p className="text-[10px] text-white/30 truncate">{fp?.name ?? proj?.name ?? "No floor plan"}</p>
                           </div>
                           <span className="text-[10px] font-medium flex-shrink-0" style={{ color: col.stroke }}>{col.label}</span>
                         </button>
-                        {lotUrl && (
+                        {qrUrl && (
                           <button
                             onClick={e => { e.stopPropagation(); setLotQrOpen(lot.id); }}
                             className="flex-shrink-0 w-7 h-7 rounded-md bg-white/4 hover:bg-white/10 border border-white/8 flex items-center justify-center transition-colors"
-                            title="QR Code"
+                            title="Yard Sign QR"
                           >
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5 text-white/40">
                               <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
@@ -1181,15 +1257,15 @@ export default function CommunityEditorPage() {
                             </svg>
                           </button>
                         )}
-                        {lotQrOpen === lot.id && lotUrl && (
+                        {lotQrOpen === lot.id && qrUrl && (
                           <QRModal
-                            url={lotUrl}
+                            url={qrUrl}
                             label={`Lot ${lot.lot_number}`}
-                            sublabel={proj?.name}
+                            sublabel={fp?.name ?? proj?.name}
                             builderLogo={builder?.logo_url}
                             accentColor={builder?.accent_color}
                             builderName={builder?.company_name}
-                            thumbnailUrl={proj?.thumbnail_url}
+                            thumbnailUrl={fp?.thumbnail_url ?? proj?.thumbnail_url}
                             onClose={() => setLotQrOpen(null)}
                           />
                         )}
@@ -1250,6 +1326,14 @@ export default function CommunityEditorPage() {
                 </button>
               </div>
             )}
+
+            {/* Delete community */}
+            <div className="border-t border-white/8 px-4 py-3 flex-shrink-0">
+              <button onClick={handleDeleteCommunity}
+                className="w-full py-2 rounded-lg border border-red-500/20 text-red-400/50 hover:text-red-400 hover:border-red-500/40 text-xs transition-colors">
+                Delete Community
+              </button>
+            </div>
 
             {qrOpen && community.slug && community.company_slug && (() => {
               const builder = builders[community.company_slug];

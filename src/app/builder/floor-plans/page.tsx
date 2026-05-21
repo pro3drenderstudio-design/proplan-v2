@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { FloorPlan, HomeStyle, Project } from "@/types/database";
-import { getAllProjects } from "@/lib/admin-api";
+import { getBuilderProjects } from "@/lib/builder-api";
 import { supabase } from "@/lib/supabase";
 
 const HOME_STYLES: { value: HomeStyle; label: string }[] = [
@@ -54,6 +54,11 @@ export default function FloorPlansPage() {
   const [thumbUrl, setThumbUrl]   = useState<string | null>(null);
   const [thumbBusy, setThumbBusy] = useState(false);
 
+  // Per-floor plan images
+  const [floorImages, setFloorImages] = useState<(string | null)[]>([]);
+  const [floorBusy,   setFloorBusy]   = useState<boolean[]>([]);
+  const floorRefs = useRef<(HTMLInputElement | null)[]>([]);
+
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(""), 3000); }
 
   useEffect(() => {
@@ -69,7 +74,7 @@ export default function FloorPlansPage() {
 
       const [plansRes, projs] = await Promise.all([
         fetch(`/api/builder/floor-plans?builderId=${bid}`).then(r => r.json()),
-        getAllProjects(),
+        getBuilderProjects(),
       ]);
       setPlans(plansRes as FloorPlan[]);
       setProjects((projs as Project[]).filter(p => p.status === "live" || p.status === "in_development"));
@@ -81,11 +86,15 @@ export default function FloorPlansPage() {
     setEditing(null);
     setForm(EMPTY_FORM);
     setThumbUrl(null);
+    setFloorImages([]);
+    setFloorBusy([]);
     setModalOpen(true);
   }
 
   function openEdit(fp: FloorPlan) {
     setEditing(fp);
+    const floorsNum = fp.floors ?? 0;
+    const imgs = (fp.floor_plan_images ?? []) as { url: string; label?: string }[];
     setForm({
       name:          fp.name,
       description:   fp.description ?? "",
@@ -99,6 +108,8 @@ export default function FloorPlansPage() {
       project_id:    fp.project_id ?? "",
     });
     setThumbUrl(fp.thumbnail_url);
+    setFloorImages(Array.from({ length: floorsNum }, (_, i) => imgs[i]?.url ?? null));
+    setFloorBusy(Array.from({ length: floorsNum }, () => false));
     setModalOpen(true);
   }
 
@@ -109,8 +120,7 @@ export default function FloorPlansPage() {
     setThumbBusy(true);
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("bucket", "floor-plan-thumbnails");
-    fd.append("path", `${builderId}/${Date.now()}_${file.name}`);
+    fd.append("path", `floor-plan-thumbnails/${builderId}/${Date.now()}_${file.name}`);
     const res = await fetch("/api/upload", { method: "POST", body: fd });
     if (res.ok) {
       const { url } = await res.json() as { url: string };
@@ -119,22 +129,47 @@ export default function FloorPlansPage() {
     setThumbBusy(false);
   }
 
+  async function uploadFloorImage(file: File, floorIdx: number) {
+    if (!builderId) return;
+    setFloorBusy(prev => { const next = [...prev]; next[floorIdx] = true; return next; });
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("path", `floor-plan-images/${builderId}/${Date.now()}_floor${floorIdx + 1}_${file.name}`);
+    const res = await fetch("/api/upload", { method: "POST", body: fd });
+    if (res.ok) {
+      const { url } = await res.json() as { url: string };
+      setFloorImages(prev => { const next = [...prev]; next[floorIdx] = url; return next; });
+    }
+    setFloorBusy(prev => { const next = [...prev]; next[floorIdx] = false; return next; });
+  }
+
+  function onFloorsChange(val: string) {
+    const n = Math.max(0, Math.min(10, parseInt(val) || 0));
+    setFloorImages(prev => Array.from({ length: n }, (_, i) => prev[i] ?? null));
+    setFloorBusy(prev => Array.from({ length: n }, (_, i) => prev[i] ?? false));
+    setForm(f => ({ ...f, floors: val }));
+  }
+
   async function handleSave() {
     if (!form.name.trim()) return;
     setSaving(true);
 
+    const floorsNum = form.floors ? Number(form.floors) : 0;
     const payload = {
-      name:          form.name.trim(),
-      description:   form.description || null,
-      beds:          form.beds          ? Number(form.beds)          : null,
-      baths:         form.baths         ? Number(form.baths)         : null,
-      floors:        form.floors        ? Number(form.floors)        : null,
-      sqft:          form.sqft          ? Number(form.sqft)          : null,
-      garage_spaces: form.garage_spaces ? Number(form.garage_spaces) : null,
-      home_style:    form.home_style    || null,
-      base_price:    form.base_price    ? Math.round(Number(form.base_price) * 100) : null,
-      project_id:    form.project_id    || null,
-      thumbnail_url: thumbUrl,
+      name:              form.name.trim(),
+      description:       form.description || null,
+      beds:              form.beds          ? Number(form.beds)          : null,
+      baths:             form.baths         ? Number(form.baths)         : null,
+      floors:            floorsNum || null,
+      sqft:              form.sqft          ? Number(form.sqft)          : null,
+      garage_spaces:     form.garage_spaces ? Number(form.garage_spaces) : null,
+      home_style:        form.home_style    || null,
+      base_price:        form.base_price    ? Math.round(Number(form.base_price) * 100) : null,
+      project_id:        form.project_id    || null,
+      thumbnail_url:     thumbUrl,
+      floor_plan_images: floorImages
+        .map((url, i) => url ? { url, label: `Floor ${i + 1}` } : null)
+        .filter((x): x is { url: string; label: string } => x !== null),
     };
 
     if (editing) {
@@ -367,7 +402,6 @@ export default function FloorPlansPage() {
                 {([
                   { key: "beds",          label: "Bedrooms",      placeholder: "3"       },
                   { key: "baths",         label: "Bathrooms",     placeholder: "2.5"     },
-                  { key: "floors",        label: "Floors",        placeholder: "2"       },
                   { key: "sqft",          label: "Sq Ft",         placeholder: "2400"    },
                   { key: "garage_spaces", label: "Garage Spaces", placeholder: "2"       },
                   { key: "base_price",    label: "Base Price ($)", placeholder: "450000" },
@@ -379,7 +413,60 @@ export default function FloorPlansPage() {
                       placeholder={placeholder} className={inputCls} />
                   </div>
                 ))}
+                <div>
+                  <label className={labelCls}>Floors</label>
+                  <input type="number" min={0} max={10} value={form.floors}
+                    onChange={e => onFloorsChange(e.target.value)}
+                    placeholder="2" className={inputCls} />
+                </div>
               </div>
+
+              {/* Per-floor plan images */}
+              {floorImages.length > 0 && (
+                <div>
+                  <label className={labelCls}>Floor Plan Images</label>
+                  <p className="text-[10px] text-white/25 mb-3">Upload a top-down floor plan image for each floor</p>
+                  <div className="space-y-2">
+                    {floorImages.map((url, i) => (
+                      <div key={i} className="flex items-center gap-3 p-3 bg-[#1a1a1a] border border-white/8 rounded-xl">
+                        <div className="w-16 h-12 rounded-lg bg-[#111] border border-white/8 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                          {url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={url} alt={`Floor ${i + 1}`} className="w-full h-full object-cover" />
+                          ) : (
+                            <svg className="w-5 h-5 text-white/12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-white/60">Floor {i + 1}</p>
+                          <input
+                            type="file" accept="image/*" className="hidden"
+                            ref={el => { floorRefs.current[i] = el; }}
+                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadFloorImage(f, i); e.target.value = ""; }}
+                          />
+                          <button
+                            onClick={() => floorRefs.current[i]?.click()}
+                            disabled={floorBusy[i]}
+                            className="text-[11px] text-blue-400/70 hover:text-blue-400 transition-colors mt-0.5 disabled:opacity-40">
+                            {floorBusy[i] ? "Uploading…" : url ? "Replace image" : "Upload image"}
+                          </button>
+                        </div>
+                        {url && (
+                          <button
+                            onClick={() => setFloorImages(prev => { const next = [...prev]; next[i] = null; return next; })}
+                            className="text-white/20 hover:text-red-400 transition-colors flex-shrink-0">
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* 3D Configurator link */}
               <div>
