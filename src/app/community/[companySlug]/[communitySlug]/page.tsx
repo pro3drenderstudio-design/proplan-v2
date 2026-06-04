@@ -134,6 +134,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
   const [contactBusy, setContactBusy] = useState(false);
   const [contactDone, setContactDone] = useState(false);
   const [contactErr,  setContactErr]  = useState("");
+  const [lightboxImg, setLightboxImg] = useState<string | null>(null);
 
   const imgRef       = useRef<HTMLImageElement>(null);
   const mapWrapRef   = useRef<HTMLDivElement>(null);
@@ -148,20 +149,28 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     [...new Set(lots.filter(l => l.phase).map(l => l.phase!))].sort((a, b) => a - b),
   [lots]);
 
+  // fp.base_price is stored in cents; proj.base_price and lot.price_modifier are in dollars
+  function fpBasePrice(lot: LotWithData): number | null {
+    if (lot.floorPlan?.base_price != null) return lot.floorPlan.base_price / 100;
+    return lot.project?.base_price ?? null;
+  }
+
   const minPrice = useMemo(() => lots.reduce((min: number | null, lot) => {
-    const bp = lot.floorPlan?.base_price ?? (lot.project?.base_price ?? null);
+    const bp = fpBasePrice(lot);
     if (bp === null) return min;
     const total = bp + (lot.price_modifier ?? 0);
     return min === null ? total : Math.min(min, total);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, null), [lots]);
 
   const maxPriceVal = useMemo(() => {
     const prices = lots.map(l => {
-      const base = l.floorPlan?.base_price ?? (l.project?.base_price ?? null);
+      const base = fpBasePrice(l);
       return base !== null ? base + (l.price_modifier ?? 0) : null;
     }).filter((p): p is number => p !== null);
     if (prices.length === 0) return 2000000;
     return Math.ceil(Math.max(...prices) / 100000) * 100000;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lots]);
 
   const maxSqftVal = useMemo(() => {
@@ -186,7 +195,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         if (filters.minBeds   && (fp.beds          ?? 0) < filters.minBeds)   continue;
         if (filters.minBaths  && (fp.baths         ?? 0) < filters.minBaths)  continue;
         if (filters.minGarage && (fp.garage_spaces ?? 0) < filters.minGarage) continue;
-        const price = (fp.base_price ?? 0) + (lot.price_modifier ?? 0);
+        const price = (fp.base_price != null ? fp.base_price / 100 : 0) + (lot.price_modifier ?? 0);
         if (filters.priceMin != null && price < filters.priceMin) continue;
         if (filters.priceMax != null && price > filters.priceMax) continue;
         const fpSqftMin = fp.sqft_min ?? fp.sqft ?? null;
@@ -506,7 +515,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     const sqftMax      = fp?.sqft_max      ?? proj?.sqft_max       ?? null;
     const sqft         = sqftMin;
     const garage       = fp?.garage_spaces ?? null;
-    const basePrice    = fp?.base_price    ?? (proj ? proj.base_price : null);
+    const basePrice    = fp?.base_price != null ? fp.base_price / 100 : (proj ? proj.base_price : null);
     const totalPrice   = basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null;
 
     const rawCtas      = getEffectiveCtas(lot);
@@ -637,13 +646,12 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
             )}
 
             {/* Specs */}
-            {(beds || baths || floors || sqft || garage) && (
-              <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${[beds, baths, floors, sqft, garage].filter(x => x != null).length}, 1fr)` }}>
+            {(beds || baths || floors || garage) && (
+              <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${[beds, baths, floors, garage].filter(x => x != null).length}, 1fr)` }}>
                 {[
                   { label: "Bed",    value: beds },
                   { label: "Bath",   value: baths },
                   { label: "Floor",  value: floors },
-                  { label: "Sqft",   value: sqft ? (sqftMax && sqftMax !== sqft ? `${fmtSqft(sqft)}–${fmtSqft(sqftMax)}` : fmtSqft(sqft)) : null },
                   { label: "Garage", value: garage },
                 ].filter(x => x.value != null).map(spec => (
                   <div key={spec.label} className="flex flex-col items-center py-2.5 rounded-xl"
@@ -652,6 +660,17 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                     <p className="text-[9px] uppercase tracking-wider text-white/30 mt-0.5">{spec.label}</p>
                   </div>
                 ))}
+              </div>
+            )}
+            {sqft != null && (
+              <div className="flex items-center justify-between px-4 py-2.5 rounded-xl"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <p className="text-[10px] uppercase tracking-wider text-white/30 font-bold">Square Footage</p>
+                <p className="text-sm font-bold text-white">
+                  {sqftMax && sqftMax !== sqft
+                    ? `${sqft.toLocaleString()} – ${sqftMax.toLocaleString()} sqft`
+                    : `${sqft.toLocaleString()} sqft`}
+                </p>
               </div>
             )}
 
@@ -708,6 +727,37 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                     </svg>
                   </a>
                 )}
+              </div>
+            )}
+
+            {/* Floor plan images */}
+            {fp && (fp.floor_plan_images ?? []).length > 0 && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Floor Plans</p>
+                <div className={`grid gap-2 ${(fp.floor_plan_images ?? []).length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                  {(fp.floor_plan_images as { url: string; label?: string }[]).map((img, i) => (
+                    <button key={i} onClick={() => setLightboxImg(img.url)}
+                      className="relative overflow-hidden rounded-xl border border-white/8 hover:border-white/20 transition-colors group"
+                      style={{ aspectRatio: "4/3" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt={img.label ?? `Floor ${i + 1}`}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+                      <div className="absolute bottom-0 left-0 right-0 px-2.5 py-1.5"
+                        style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7), transparent)" }}>
+                        <p className="text-[10px] font-semibold text-white/80">{img.label ?? `Floor ${i + 1}`}</p>
+                      </div>
+                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="w-6 h-6 rounded-md flex items-center justify-center"
+                          style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}>
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                          </svg>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1417,7 +1467,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         const sqftMaxT    = fp?.sqft_max ?? proj?.sqft_max ?? null;
         const sqft        = sqftMinT != null ? (sqftMaxT && sqftMaxT !== sqftMinT ? `${fmtSqft(sqftMinT)}–${fmtSqft(sqftMaxT)}` : fmtSqft(sqftMinT)) : null;
         const floors      = fp?.floors ?? proj?.floors ?? null;
-        const basePrice   = fp?.base_price ?? (proj ? proj.base_price : null);
+        const basePrice   = fp?.base_price != null ? fp.base_price / 100 : (proj ? proj.base_price : null);
         const totalPrice  = basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null;
         const isDimmed    = !filteredLotIds.has(lot.id);
 
@@ -1525,6 +1575,25 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
       </div>
       {isMobile && selectedLot && (
         <div className="sm:hidden fixed inset-0 z-30 bg-black/40" onClick={() => setSelectedLot(null)} />
+      )}
+
+      {/* Floor plan image lightbox */}
+      {lightboxImg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8"
+          style={{ background: "rgba(0,0,0,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}
+          onClick={() => setLightboxImg(null)}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={lightboxImg} alt="Floor plan"
+            className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
+            onClick={e => e.stopPropagation()} />
+          <button onClick={() => setLightboxImg(null)}
+            className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center rounded-full text-white/60 hover:text-white transition-colors"
+            style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }}>
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       )}
 
       {/* Contact / Request Info modal */}
