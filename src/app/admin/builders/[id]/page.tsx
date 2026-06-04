@@ -851,11 +851,18 @@ export default function BuilderDetailPage() {
                 <h2 className="text-sm font-bold text-white">Floor Plans</h2>
                 <p className="text-xs text-white/35 mt-0.5">{floorPlans.length} floor plan{floorPlans.length !== 1 ? "s" : ""} for {builder.company_name}</p>
               </div>
-              <a href={`/builder/floor-plans`} target="_blank" rel="noreferrer"
-                onClick={() => { if (typeof window !== "undefined") window.localStorage.setItem(IMPERSONATE_KEY, builder.id); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-400 border border-amber-500/30 rounded-lg hover:bg-amber-500/10 transition-colors">
-                Edit as Builder ↗
-              </a>
+              <div className="flex items-center gap-2">
+                <Link href={`/admin/floor-plans?builder=${builder.id}&new=1`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white font-semibold bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>
+                  New Floor Plan
+                </Link>
+                <a href={`/builder/floor-plans`} target="_blank" rel="noreferrer"
+                  onClick={() => { if (typeof window !== "undefined") window.localStorage.setItem(IMPERSONATE_KEY, builder.id); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-400 border border-amber-500/30 rounded-lg hover:bg-amber-500/10 transition-colors">
+                  Edit as Builder ↗
+                </a>
+              </div>
             </div>
 
             {floorPlans.length === 0 ? (
