@@ -13,7 +13,11 @@ import {
 } from "@/lib/admin-api";
 import { Builder, Project, Lead, CategoryWithOptions, FloorPlan } from "@/types/database";
 
-type Tab = "overview" | "quotes" | "projects" | "floor-plans" | "categories" | "settings";
+type Tab = "overview" | "quotes" | "projects" | "floor-plans" | "communities" | "notes" | "activity" | "categories" | "settings";
+
+interface BuilderNote { id: string; content: string; created_by: string; created_at: string; }
+interface Community   { id: string; name: string; slug: string; site_map_url: string | null; created_at: string; }
+interface ActivityItem { label: string; time: string; type: "floor_plan" | "community" | "lead" | "project"; }
 
 const PLAN_LABEL: Record<string, string> = {
   launch:     "Launch",
@@ -105,6 +109,23 @@ export default function BuilderDetailPage() {
   const [newPassword,     setNewPassword]     = useState("");
   const [authBusy,        setAuthBusy]        = useState(false);
   const [authMsg,         setAuthMsg]         = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  // Notes
+  const [notes,         setNotes]         = useState<BuilderNote[]>([]);
+  const [noteInput,     setNoteInput]     = useState("");
+  const [noteSaving,    setNoteSaving]    = useState(false);
+  const [notesLoaded,   setNotesLoaded]   = useState(false);
+  // Communities
+  const [communities,      setCommunities]      = useState<Community[]>([]);
+  const [communitiesLoaded, setCommunitiesLoaded] = useState(false);
+  // Last active
+  const [lastSignIn,    setLastSignIn]    = useState<string | null>(null);
+  const [loginEmail,    setLoginEmail]    = useState<string | null>(null);
+  // Email modal
+  const [showEmail,     setShowEmail]     = useState(false);
+  const [emailSubject,  setEmailSubject]  = useState("");
+  const [emailBody,     setEmailBody]     = useState("");
+  const [emailSending,  setEmailSending]  = useState(false);
+  const [emailSent,     setEmailSent]     = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const loadData = useCallback(async () => {
@@ -116,13 +137,17 @@ export default function BuilderDetailPage() {
     const projs = await getBuilderProjects(b.company_slug);
     setProjects(projs);
 
-    const [leadsData, fpRes, ...catArrays] = await Promise.all([
+    const [leadsData, fpRes, lastActiveRes, ...catArrays] = await Promise.all([
       getBuilderLeads(projs.map(p => p.id)),
       fetch(`/api/builder/floor-plans?builderId=${b.id}`).then(r => r.json()),
+      fetch(`/api/admin/builders/${b.id}/last-active`).then(r => r.json()),
       ...projs.map(p => getCategoriesWithOptions(p.id)),
     ]);
     setLeads(leadsData);
     setFloorPlans(Array.isArray(fpRes) ? fpRes as FloorPlan[] : []);
+    const la = lastActiveRes as { lastSignIn?: string | null; email?: string | null };
+    setLastSignIn(la.lastSignIn ?? null);
+    setLoginEmail(la.email ?? null);
     setCategories(catArrays.flat());
     setLoading(false);
   }, [id]);
@@ -185,6 +210,63 @@ export default function BuilderDetailPage() {
       setDeleteError(body.error ?? "Failed to delete builder. Please try again.");
       setDeleting(false);
     }
+  }
+
+  async function loadNotes() {
+    if (notesLoaded || !builder) return;
+    const res  = await fetch(`/api/admin/builders/${builder.id}/notes`);
+    const data = await res.json();
+    setNotes(Array.isArray(data) ? data : []);
+    setNotesLoaded(true);
+  }
+  async function addNote() {
+    if (!builder || !noteInput.trim()) return;
+    setNoteSaving(true);
+    const res  = await fetch(`/api/admin/builders/${builder.id}/notes`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: noteInput }),
+    });
+    const data = await res.json() as BuilderNote & { error?: string };
+    if (res.ok) { setNotes(prev => [data, ...prev]); setNoteInput(""); }
+    setNoteSaving(false);
+  }
+  async function deleteNote(noteId: string) {
+    if (!builder) return;
+    await fetch(`/api/admin/builders/${builder.id}/notes`, {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ noteId }),
+    });
+    setNotes(prev => prev.filter(n => n.id !== noteId));
+  }
+
+  async function loadCommunities() {
+    if (communitiesLoaded || !builder) return;
+    const { createClient } = await import("@supabase/supabase-js");
+    const sb = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (sb.from("communities") as any)
+      .select("id, name, slug, site_map_url, created_at")
+      .eq("company_slug", builder.company_slug)
+      .order("created_at", { ascending: false });
+    setCommunities((data ?? []) as Community[]);
+    setCommunitiesLoaded(true);
+  }
+
+  async function sendBuilderEmail() {
+    if (!builder || !emailSubject.trim() || !emailBody.trim()) return;
+    setEmailSending(true);
+    const res = await fetch(`/api/admin/builders/${builder.id}/email`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subject: emailSubject, body: emailBody }),
+    });
+    if (res.ok) {
+      setEmailSent(true);
+      setTimeout(() => { setShowEmail(false); setEmailSent(false); setEmailSubject(""); setEmailBody(""); }, 2000);
+    }
+    setEmailSending(false);
   }
 
   async function handleMagicLink() {
@@ -266,6 +348,11 @@ export default function BuilderDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setShowEmail(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-white/12 text-xs text-white/50 rounded-lg hover:text-white hover:border-white/25 transition-colors"
+              title="Send email to builder">
+              <MailSendIcon className="w-3.5 h-3.5" /> Email
+            </button>
             <button
               onClick={() => {
                 if (typeof window !== "undefined") {
@@ -310,12 +397,16 @@ export default function BuilderDetailPage() {
         </p>
 
         {/* Tabs */}
-        <div className="flex items-center gap-0 mt-4 -mb-4 border-b border-white/8">
-          {(["overview", "quotes", "projects", "floor-plans", "categories", "settings"] as Tab[]).map(t => (
+        <div className="flex items-center gap-0 mt-4 -mb-4 border-b border-white/8 overflow-x-auto scrollbar-none">
+          {(["overview", "quotes", "projects", "floor-plans", "communities", "notes", "activity", "categories", "settings"] as Tab[]).map(t => (
             <button
               key={t}
-              onClick={() => setTab(t)}
-              className={`px-4 py-2.5 text-xs font-medium border-b-2 transition-colors capitalize ${
+              onClick={() => {
+                setTab(t);
+                if (t === "notes")       loadNotes();
+                if (t === "communities") loadCommunities();
+              }}
+              className={`px-4 py-2.5 text-xs font-medium border-b-2 transition-colors capitalize whitespace-nowrap ${
                 tab === t
                   ? "border-blue-500 text-blue-400"
                   : "border-transparent text-white/40 hover:text-white"
@@ -323,10 +414,13 @@ export default function BuilderDetailPage() {
             >
               {t === "categories"   ? "Categories & Finishes"
                : t === "floor-plans" ? "Floor Plans"
+               : t === "notes"       ? "Notes"
+               : t === "activity"    ? "Activity"
                : t}
-              {t === "quotes"       && leads.length      > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{leads.length}</span>}
-              {t === "projects"     && projects.length   > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{projects.length}</span>}
-              {t === "floor-plans"  && floorPlans.length > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{floorPlans.length}</span>}
+              {t === "quotes"       && leads.length       > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{leads.length}</span>}
+              {t === "projects"     && projects.length    > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{projects.length}</span>}
+              {t === "floor-plans"  && floorPlans.length  > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{floorPlans.length}</span>}
+              {t === "notes"        && notes.length       > 0 && <span className="ml-1.5 text-[9px] bg-amber-400/20 text-amber-400 px-1.5 py-0.5 rounded-full">{notes.length}</span>}
             </button>
           ))}
         </div>
@@ -385,6 +479,52 @@ export default function BuilderDetailPage() {
                   {builder.ein && <p className="text-[10px] text-white/25 mt-0.5">EIN: {builder.ein}</p>}
                 </div>
               </div>
+
+              {/* Onboarding Checklist */}
+              <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
+                <h3 className="text-xs font-bold text-white mb-4">Onboarding</h3>
+                {[
+                  { label: "Logo uploaded",        done: !!builder.logo_url },
+                  { label: "Company info complete", done: !!(builder.primary_contact_name && builder.contact_email && builder.phone) },
+                  { label: "Floor plan created",   done: floorPlans.length > 0 },
+                  { label: "3D model linked",       done: floorPlans.some(fp => !!fp.project_id) },
+                  { label: "Community created",     done: projects.length > 0 || leads.length > 0 },
+                  { label: "First lead received",   done: leads.length > 0 },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-2.5 mb-2.5 last:mb-0">
+                    <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${item.done ? "bg-green-500/20 border border-green-500/40" : "bg-white/5 border border-white/12"}`}>
+                      {item.done && (
+                        <svg className="w-2.5 h-2.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                    <p className={`text-xs ${item.done ? "text-white/60" : "text-white/30"}`}>{item.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Last Active */}
+              {(lastSignIn || loginEmail) && (
+                <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
+                  <h3 className="text-xs font-bold text-white mb-3">Login Activity</h3>
+                  {loginEmail && (
+                    <div className="mb-2">
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Login Email</p>
+                      <p className="text-xs text-white/60 font-mono">{loginEmail}</p>
+                    </div>
+                  )}
+                  {lastSignIn && (
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1">Last Sign In</p>
+                      <p className="text-xs text-white/60">
+                        {new Date(lastSignIn).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                      <p className="text-[10px] text-white/25 mt-0.5">{timeAgo(lastSignIn)}</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Usage Limits */}
               <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
@@ -770,6 +910,154 @@ export default function BuilderDetailPage() {
             )}
           </div>
         )}
+
+        {/* ── COMMUNITIES ── */}
+        {tab === "communities" && (
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-sm font-bold text-white">Communities</h2>
+                <p className="text-xs text-white/35 mt-0.5">{communities.length} communit{communities.length !== 1 ? "ies" : "y"}</p>
+              </div>
+              <Link href={`/admin/communities`}
+                className="text-[10px] text-blue-400 hover:underline">
+                View all communities →
+              </Link>
+            </div>
+            {!communitiesLoaded ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : communities.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 border border-white/8 rounded-xl text-center">
+                <p className="text-sm text-white/25">No communities yet</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {communities.map(c => (
+                  <div key={c.id} className="bg-[#1a1a1a] border border-white/8 rounded-xl px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${c.site_map_url ? "bg-green-400" : "bg-white/20"}`} />
+                      <div>
+                        <p className="text-sm font-semibold text-white">{c.name}</p>
+                        <p className="text-[10px] text-white/30 mt-0.5">
+                          {c.site_map_url ? "Site map uploaded" : "No site map yet"} · Created {new Date(c.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {c.site_map_url && (
+                        <a href={`/community/${builder.company_slug}/${c.slug}`} target="_blank" rel="noreferrer"
+                          className="text-[10px] text-white/30 hover:text-white/60 border border-white/8 px-2.5 py-1 rounded-lg transition-colors">
+                          View ↗
+                        </a>
+                      )}
+                      <Link href={`/admin/communities/${c.id}`}
+                        className="text-[10px] text-blue-400 border border-blue-500/25 px-2.5 py-1 rounded-lg hover:bg-blue-500/10 transition-colors">
+                        Edit
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── NOTES ── */}
+        {tab === "notes" && (
+          <div className="p-6 max-w-2xl">
+            <h2 className="text-sm font-bold text-white mb-1">Internal Notes</h2>
+            <p className="text-xs text-white/35 mb-5">Private CRM notes — visible to admin only.</p>
+
+            {/* Add note */}
+            <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-4 mb-5">
+              <textarea
+                rows={3}
+                placeholder="Add a note... (follow-up reminders, deal context, anything relevant)"
+                value={noteInput}
+                onChange={e => setNoteInput(e.target.value)}
+                className="w-full bg-transparent text-xs text-white placeholder-white/25 outline-none resize-none leading-relaxed"
+              />
+              <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/8">
+                <span className="text-[10px] text-white/20">{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                <button onClick={addNote} disabled={noteSaving || !noteInput.trim()}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs text-white font-semibold rounded-lg disabled:opacity-40 transition-colors">
+                  {noteSaving ? "Saving..." : "Add Note"}
+                </button>
+              </div>
+            </div>
+
+            {/* Notes list */}
+            {!notesLoaded ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : notes.length === 0 ? (
+              <p className="text-center text-xs text-white/20 py-8">No notes yet</p>
+            ) : (
+              <div className="space-y-3">
+                {notes.map(note => (
+                  <div key={note.id} className="bg-[#1a1a1a] border border-white/8 rounded-xl p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs text-white/70 leading-relaxed flex-1">{note.content}</p>
+                      <button onClick={() => deleteNote(note.id)}
+                        className="text-white/20 hover:text-red-400 transition-colors flex-shrink-0 mt-0.5">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-white/20 mt-2">
+                      {note.created_by} · {new Date(note.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── ACTIVITY ── */}
+        {tab === "activity" && (() => {
+          const items: ActivityItem[] = [
+            ...floorPlans.map(fp => ({ label: `Floor plan "${fp.name}" ${fp.created_at === fp.updated_at ? "created" : "updated"}`, time: fp.updated_at, type: "floor_plan" as const })),
+            ...projects.map(p  => ({ label: `3D project "${p.name}" — ${(p.status ?? "").replace(/_/g, " ")}`, time: p.updated_at, type: "project" as const })),
+            ...leads.map(l     => ({ label: `Lead from ${l.first_name} ${l.last_name}`, time: l.created_at, type: "lead" as const })),
+          ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 40);
+
+          const typeColor: Record<ActivityItem["type"], string> = {
+            floor_plan: "bg-blue-400",
+            community:  "bg-green-400",
+            lead:       "bg-amber-400",
+            project:    "bg-violet-400",
+          };
+
+          return (
+            <div className="p-6 max-w-2xl">
+              <h2 className="text-sm font-bold text-white mb-1">Activity</h2>
+              <p className="text-xs text-white/35 mb-5">Recent actions across floor plans, projects, and leads.</p>
+              {items.length === 0 ? (
+                <p className="text-center text-xs text-white/20 py-8">No activity yet</p>
+              ) : (
+                <div className="space-y-0">
+                  {items.map((item, i) => (
+                    <div key={i} className="flex items-start gap-3 pb-4">
+                      <div className="flex flex-col items-center flex-shrink-0 mt-1">
+                        <div className={`w-2 h-2 rounded-full ${typeColor[item.type]}`} />
+                        {i < items.length - 1 && <div className="w-px h-full min-h-[24px] bg-white/8 mt-1" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-white/60 leading-snug">{item.label}</p>
+                        <p className="text-[10px] text-white/25 mt-0.5">{timeAgo(item.time)} · {new Date(item.time).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── SETTINGS ── */}
         {tab === "settings" && (
@@ -1253,6 +1541,55 @@ export default function BuilderDetailPage() {
         )}
       </div>
 
+      {/* Email modal */}
+      {showEmail && builder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg bg-[#111] border border-white/12 rounded-2xl shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+              <div>
+                <h2 className="text-sm font-bold text-white">Email {builder.company_name}</h2>
+                <p className="text-[10px] text-white/30 mt-0.5">Sends to {builder.contact_email}</p>
+              </div>
+              <button onClick={() => setShowEmail(false)} className="text-white/30 hover:text-white transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <input
+                placeholder="Subject"
+                value={emailSubject}
+                onChange={e => setEmailSubject(e.target.value)}
+                className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500/50 placeholder-white/20"
+              />
+              <textarea
+                rows={6}
+                placeholder="Write your message..."
+                value={emailBody}
+                onChange={e => setEmailBody(e.target.value)}
+                className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500/50 placeholder-white/20 resize-none leading-relaxed"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-white/8">
+              <button onClick={() => setShowEmail(false)}
+                className="px-4 py-2 text-xs text-white/40 hover:text-white transition-colors">
+                Cancel
+              </button>
+              <button onClick={sendBuilderEmail}
+                disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg disabled:opacity-40 transition-colors flex items-center gap-2">
+                {emailSent ? (
+                  <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg> Sent!</>
+                ) : emailSending ? "Sending..." : (
+                  <><MailSendIcon className="w-3.5 h-3.5" /> Send Email</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete confirmation modal */}
       {showDeleteModal && builder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -1328,6 +1665,13 @@ function EditIcon({ className }: { className?: string }) {
 }
 function ExternalIcon({ className }: { className?: string }) {
   return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>;
+}
+function MailSendIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+    </svg>
+  );
 }
 function MailIcon({ className }: { className?: string }) {
   return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>;

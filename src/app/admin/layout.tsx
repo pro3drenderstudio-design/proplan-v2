@@ -15,6 +15,7 @@ const NAV_MAIN_ALL = [
   { href: "/admin/requests",      label: "Models",           icon: QueueIcon,    badge: true,  roles: ["super_admin","manager","editor","viewer","customer_service","artist"] },
   { href: "/admin/builders",      label: "Builder CRM",      icon: BuildingIcon,               roles: ["super_admin","manager","editor"] },
   { href: "/admin/communities",   label: "Site Maps",        icon: MapIcon,                    roles: ["super_admin","manager","editor"] },
+  { href: "/admin/floor-plans",   label: "Floor Plans",      icon: FloorPlanIcon,              roles: ["super_admin","manager","editor"] },
   { href: "/admin/analytics",     label: "Analytics",        icon: ChartIcon,                  roles: ["super_admin","manager","editor","viewer"] },
   { href: "/admin/support",       label: "Support Tickets",  icon: TicketIcon,                 roles: ["super_admin","manager","customer_service"] },
 ];
@@ -531,6 +532,13 @@ function MapIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
+    </svg>
+  );
+}
+function FloorPlanIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
     </svg>
   );
 }
