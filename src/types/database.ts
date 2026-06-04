@@ -663,6 +663,7 @@ export interface Lot {
   /** Array of [x, y] percentage points (0–100) relative to the site map image */
   polygon: [number, number][];
   price_modifier: number;
+  lot_price: number | null;   // full price override — replaces base_price + modifier when set
   notes: string | null;
   text_color: string | null;
   label_x: number | null;

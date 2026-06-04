@@ -34,6 +34,7 @@ type LotFormState = {
   status: LotStatus;
   floor_plan_id: string;
   price_modifier: string;
+  lot_price: string;
   notes: string;
   text_color: string;
   label_x: number | null;
@@ -53,6 +54,7 @@ const DEFAULT_LOT_FORM: Omit<LotFormState, "lot_number"> = {
   status: "available",
   floor_plan_id: "",
   price_modifier: "0",
+  lot_price: "",
   notes: "",
   text_color: "#ffffff",
   label_x: null,
@@ -271,6 +273,7 @@ export default function BuilderCommunityEditorPage() {
       status:               lot.status,
       floor_plan_id:        lot.floor_plan_id ?? "",
       price_modifier:       String(lot.price_modifier ?? 0),
+      lot_price:            lot.lot_price != null ? String(lot.lot_price) : "",
       notes:                lot.notes ?? "",
       text_color:           lot.text_color ?? "#ffffff",
       label_x:              lot.label_x ?? null,
@@ -300,6 +303,7 @@ export default function BuilderCommunityEditorPage() {
       status:               form.status,
       floor_plan_id:        form.floor_plan_id || null,
       price_modifier:       Number(form.price_modifier),
+      lot_price:            form.lot_price ? Number(form.lot_price) : null,
       notes:                form.notes || null,
       text_color:           form.text_color || null,
       label_x:              form.label_x,
@@ -695,11 +699,18 @@ export default function BuilderCommunityEditorPage() {
                 </div>
               </div>
 
-              {/* Price modifier */}
+              {/* Pricing */}
+              <div>
+                <label className={labelCls}>Lot Price Override ($)</label>
+                <input type="number" min={0} value={lotForm.lot_price}
+                  onChange={e => setLotForm(f => f && ({ ...f, lot_price: e.target.value }))}
+                  className={inputCls} placeholder="e.g. 489900" />
+                <p className="text-[10px] text-white/25 mt-1">Sets the full lot price, replacing the floor plan base price. Leave blank to use floor plan pricing.</p>
+              </div>
               <div>
                 <label className={labelCls}>Lot Premium / Discount ($)</label>
                 <input type="number" value={lotForm.price_modifier} onChange={e => setLotForm(f => f && ({ ...f, price_modifier: e.target.value }))} className={inputCls} placeholder="0" />
-                <p className="text-[10px] text-white/25 mt-1">Added to the floor plan's base price</p>
+                <p className="text-[10px] text-white/25 mt-1">Added to the floor plan's base price. Ignored when Lot Price Override is set.</p>
               </div>
 
               {/* Virtual Tour */}

@@ -150,25 +150,26 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     [...new Set(lots.filter(l => l.phase).map(l => l.phase!))].sort((a, b) => a - b),
   [lots]);
 
-  // fp.base_price is stored in cents; proj.base_price and lot.price_modifier are in dollars
+  // fp.base_price is in cents; proj.base_price / price_modifier / lot_price are in dollars
   function fpBasePrice(lot: LotWithData): number | null {
     if (lot.floorPlan?.base_price != null) return lot.floorPlan.base_price / 100;
     return lot.project?.base_price ?? null;
   }
+  function effectivePrice(lot: LotWithData): number | null {
+    if (lot.lot_price != null) return lot.lot_price;
+    const base = fpBasePrice(lot);
+    return base !== null ? base + (lot.price_modifier ?? 0) : null;
+  }
 
   const minPrice = useMemo(() => lots.reduce((min: number | null, lot) => {
-    const bp = fpBasePrice(lot);
-    if (bp === null) return min;
-    const total = bp + (lot.price_modifier ?? 0);
+    const total = effectivePrice(lot);
+    if (total === null) return min;
     return min === null ? total : Math.min(min, total);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, null), [lots]);
 
   const maxPriceVal = useMemo(() => {
-    const prices = lots.map(l => {
-      const base = fpBasePrice(l);
-      return base !== null ? base + (l.price_modifier ?? 0) : null;
-    }).filter((p): p is number => p !== null);
+    const prices = lots.map(l => effectivePrice(l)).filter((p): p is number => p !== null);
     if (prices.length === 0) return 2000000;
     return Math.ceil(Math.max(...prices) / 100000) * 100000;
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -196,7 +197,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         if (filters.minBeds   && (fp.beds          ?? 0) < filters.minBeds)   continue;
         if (filters.minBaths  && (fp.baths         ?? 0) < filters.minBaths)  continue;
         if (filters.minGarage && (fp.garage_spaces ?? 0) < filters.minGarage) continue;
-        const price = (fp.base_price != null ? fp.base_price / 100 : 0) + (lot.price_modifier ?? 0);
+        const price = effectivePrice(lot) ?? 0;
         if (filters.priceMin != null && price < filters.priceMin) continue;
         if (filters.priceMax != null && price > filters.priceMax) continue;
         const fpSqftMin = fp.sqft_min ?? fp.sqft ?? null;
@@ -524,7 +525,8 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     const sqft         = sqftMin;
     const garage       = fp?.garage_spaces ?? null;
     const basePrice    = fp?.base_price != null ? fp.base_price / 100 : (proj ? proj.base_price : null);
-    const totalPrice   = basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null;
+    const isLotPriceOverride = lot.lot_price != null;
+    const totalPrice   = isLotPriceOverride ? lot.lot_price : (basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null);
 
     const rawCtas      = getEffectiveCtas(lot);
     const effectiveCtas: LotCta[] = rawCtas.length === 0 && configProj
@@ -686,9 +688,11 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
             {totalPrice !== null && (
               <div className="rounded-xl px-4 py-3.5"
                 style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1">Starting Price</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-1">
+                  {isLotPriceOverride ? "Lot Price" : "Starting Price"}
+                </p>
                 <p className="text-3xl font-bold text-white">{fmtPrice(totalPrice)}</p>
-                {(lot.price_modifier ?? 0) !== 0 && (
+                {!isLotPriceOverride && (lot.price_modifier ?? 0) !== 0 && (
                   <div className="flex items-center gap-1.5 mt-1.5">
                     <span className="text-[11px] text-white/30">{fmtPrice(basePrice!)} base</span>
                     <span className="text-[11px] text-white/20">·</span>
@@ -1467,7 +1471,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         const sqft        = sqftMinT != null ? (sqftMaxT && sqftMaxT !== sqftMinT ? `${fmtSqft(sqftMinT)}–${fmtSqft(sqftMaxT)}` : fmtSqft(sqftMinT)) : null;
         const floors      = fp?.floors ?? proj?.floors ?? null;
         const basePrice   = fp?.base_price != null ? fp.base_price / 100 : (proj ? proj.base_price : null);
-        const totalPrice  = basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null;
+        const totalPrice  = lot.lot_price != null ? lot.lot_price : (basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null);
         const isDimmed    = !filteredLotIds.has(lot.id);
 
         const cardW = 252, margin = 14;
@@ -1511,12 +1515,11 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                   {homeType && <p className="text-[10px] text-white/35 mt-0.5 capitalize">{homeType.replace(/_/g, " ")}</p>}
                 </div>
               )}
-              {(beds || baths || sqft || floors) && (
-                <div className="grid grid-cols-4 gap-1.5">
+              {(beds || baths || floors) && (
+                <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${[beds, baths, floors].filter(x => x != null).length}, 1fr)` }}>
                   {[
-                    { v: beds,   l: "Bed" },
-                    { v: baths,  l: "Bath" },
-                    { v: sqft, l: "Sqft" },
+                    { v: beds,   l: "Bed"   },
+                    { v: baths,  l: "Bath"  },
                     { v: floors, l: "Floor" },
                   ].filter(x => x.v != null).map(({ v, l }) => (
                     <div key={l} className="flex flex-col items-center py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
@@ -1525,6 +1528,13 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                     </div>
                   ))}
                 </div>
+              )}
+              {sqftMinT != null && (
+                <p className="text-[10px] text-white/40">
+                  {sqftMaxT && sqftMaxT !== sqftMinT
+                    ? `${sqftMinT.toLocaleString()} – ${sqftMaxT.toLocaleString()} sqft`
+                    : `${sqftMinT.toLocaleString()} sqft`}
+                </p>
               )}
               {totalPrice !== null && !thumbUrl && (
                 <div className="flex items-baseline justify-between pt-1">

@@ -42,7 +42,7 @@ export default function CommunityEditorPage() {
 
   // Selection / editing
   const [selectedLot,    setSelectedLot]    = useState<Lot | null>(null);
-  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; floor_plan_id: string; project_id: string; price_modifier: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number; ctas: LotCta[]; phase: string; is_coming_soon: boolean; lot_size_sqft: string; lot_width_ft: string; lot_depth_ft: string; virtual_tour_url: string; estimated_completion: string } | null>(null);
+  const [lotForm,        setLotForm]        = useState<{ lot_number: string; status: LotStatus; floor_plan_id: string; project_id: string; price_modifier: string; lot_price: string; notes: string; text_color: string; label_x: number | null; label_y: number | null; label_font_size: number; ctas: LotCta[]; phase: string; is_coming_soon: boolean; lot_size_sqft: string; lot_width_ft: string; lot_depth_ft: string; virtual_tour_url: string; estimated_completion: string } | null>(null);
   const [savingLot,      setSavingLot]      = useState(false);
   const [deletingLot,    setDeletingLot]    = useState(false);
 
@@ -211,7 +211,7 @@ export default function CommunityEditorPage() {
     setMousePos(null);
     // Open the lot form for this new polygon
     setSelectedLot(null);
-    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", floor_plan_id: "", project_id: "", price_modifier: "0", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11, ctas: [{ type: "configurator", label: "" }], phase: "1", is_coming_soon: false, lot_size_sqft: "", lot_width_ft: "", lot_depth_ft: "", virtual_tour_url: "", estimated_completion: "" });
+    setLotForm({ lot_number: `Lot ${(community?.lots.length ?? 0) + 1}`, status: "available", floor_plan_id: "", project_id: "", price_modifier: "0", lot_price: "", notes: "", text_color: mapSettings.default_label_color ?? "#ffffff", label_x: null, label_y: null, label_font_size: mapSettings.default_label_size ?? 11, ctas: [{ type: "configurator", label: "" }], phase: "1", is_coming_soon: false, lot_size_sqft: "", lot_width_ft: "", lot_depth_ft: "", virtual_tour_url: "", estimated_completion: "" });
     // Store drawing points for save
     setPendingPolygon(drawingPoints);
     setDrawingPoints([]);
@@ -244,6 +244,7 @@ export default function CommunityEditorPage() {
       floor_plan_id:        anyLot.floor_plan_id ?? "",
       project_id:           lot.project_id ?? "",
       price_modifier:       String(lot.price_modifier ?? 0),
+      lot_price:            (lot as any).lot_price != null ? String((lot as any).lot_price) : "",
       notes:                lot.notes ?? "",
       text_color:           lot.text_color ?? "#ffffff",
       label_x:              lot.label_x ?? null,
@@ -277,6 +278,7 @@ export default function CommunityEditorPage() {
           floor_plan_id:        lotForm.floor_plan_id || null,
           project_id:           lotForm.project_id || null,
           price_modifier:       Number(lotForm.price_modifier),
+          lot_price:            lotForm.lot_price ? Number(lotForm.lot_price) : null,
           notes:                lotForm.notes || null,
           text_color:           lotForm.text_color || null,
           label_x:              lotForm.label_x,
@@ -296,7 +298,7 @@ export default function CommunityEditorPage() {
         setCommunity(prev => prev ? {
           ...prev,
           lots: prev.lots.map(l => l.id === selectedLot.id
-            ? { ...l, ...lotForm, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), phase: Number(lotForm.phase) || 1, lot_size_sqft: lotForm.lot_size_sqft ? Number(lotForm.lot_size_sqft) : null, lot_width_ft: lotForm.lot_width_ft ? Number(lotForm.lot_width_ft) : null, lot_depth_ft: lotForm.lot_depth_ft ? Number(lotForm.lot_depth_ft) : null }
+            ? { ...l, ...lotForm, project_id: lotForm.project_id || null, price_modifier: Number(lotForm.price_modifier), lot_price: lotForm.lot_price ? Number(lotForm.lot_price) : null, phase: Number(lotForm.phase) || 1, lot_size_sqft: lotForm.lot_size_sqft ? Number(lotForm.lot_size_sqft) : null, lot_width_ft: lotForm.lot_width_ft ? Number(lotForm.lot_width_ft) : null, lot_depth_ft: lotForm.lot_depth_ft ? Number(lotForm.lot_depth_ft) : null }
             : l),
         } : null);
         showToast("Lot saved");
@@ -317,6 +319,7 @@ export default function CommunityEditorPage() {
           floor_plan_id:        lotForm.floor_plan_id || null,
           project_id:           lotForm.project_id || null,
           price_modifier:       Number(lotForm.price_modifier),
+          lot_price:            lotForm.lot_price ? Number(lotForm.lot_price) : null,
           notes:                lotForm.notes || null,
           text_color:           lotForm.text_color || null,
           label_x:              lotForm.label_x,
@@ -878,12 +881,20 @@ export default function CommunityEditorPage() {
               </div>
 
               <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Lot Price Override ($)</label>
+                <input type="number" min={0} value={lotForm.lot_price}
+                  onChange={e => setLotForm(f => f && ({ ...f, lot_price: e.target.value }))}
+                  className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors"
+                  placeholder="e.g. 489900" />
+                <p className="text-[10px] text-white/25 mt-1">Sets the full price for this lot, replacing the floor plan base price. Leave blank to use floor plan pricing.</p>
+              </div>
+              <div>
                 <label className="block text-[9px] font-bold uppercase tracking-widest text-white/25 mb-1.5">Price Modifier ($)</label>
                 <input type="number" value={lotForm.price_modifier}
                   onChange={e => setLotForm(f => f && ({ ...f, price_modifier: e.target.value }))}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80 focus:outline-none focus:border-blue-500/60 transition-colors"
                   placeholder="0" />
-                <p className="text-[10px] text-white/25 mt-1">Added to the floor plan's base price</p>
+                <p className="text-[10px] text-white/25 mt-1">Added to the floor plan's base price. Ignored when Lot Price Override is set.</p>
               </div>
 
               <div>
