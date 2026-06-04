@@ -265,13 +265,13 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         .select("*").eq("community_id", comm.id);
       const rawLots = (lotData ?? []) as Lot[];
 
-      // Load floor plans
+      // Load floor plans via service-role API (anon client blocked by RLS on floor_plans table)
       const fpIds = [...new Set(rawLots.filter(l => l.floor_plan_id).map(l => l.floor_plan_id!))];
       const fpMap: Record<string, FloorPlan> = {};
       if (fpIds.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: fps } = await (supabase.from("floor_plans") as any).select("*").in("id", fpIds);
-        if (fps) for (const fp of fps as FloorPlan[]) fpMap[fp.id] = fp;
+        const fps = await fetch(`/api/community/floor-plans?ids=${fpIds.join(",")}`)
+          .then(r => r.json()) as FloorPlan[];
+        if (Array.isArray(fps)) for (const fp of fps) fpMap[fp.id] = fp;
       }
 
       // Load projects (legacy lot.project_id + floor_plan.project_id for configurator links)
