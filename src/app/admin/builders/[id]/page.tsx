@@ -11,9 +11,9 @@ import {
   getBuilderLeads,
   getCategoriesWithOptions,
 } from "@/lib/admin-api";
-import { Builder, Project, Lead, CategoryWithOptions } from "@/types/database";
+import { Builder, Project, Lead, CategoryWithOptions, FloorPlan } from "@/types/database";
 
-type Tab = "overview" | "quotes" | "projects" | "categories" | "settings";
+type Tab = "overview" | "quotes" | "projects" | "floor-plans" | "categories" | "settings";
 
 const PLAN_LABEL: Record<string, string> = {
   launch:     "Launch",
@@ -86,6 +86,7 @@ export default function BuilderDetailPage() {
   const [projects,   setProjects]   = useState<Project[]>([]);
   const [leads,      setLeads]      = useState<Lead[]>([]);
   const [categories, setCategories] = useState<CategoryWithOptions[]>([]);
+  const [floorPlans, setFloorPlans] = useState<FloorPlan[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [editing,      setEditing]      = useState(false);
   const [editForm,     setEditForm]     = useState<Partial<Builder>>({});
@@ -96,6 +97,14 @@ export default function BuilderDetailPage() {
   const [deleteConfirm,   setDeleteConfirm]   = useState("");
   const [deleting,        setDeleting]        = useState(false);
   const [deleteError,     setDeleteError]     = useState<string | null>(null);
+  // Auth management
+  const [magicLink,       setMagicLink]       = useState<string | null>(null);
+  const [magicLinkEmail,  setMagicLinkEmail]  = useState<string | null>(null);
+  const [magicLinkBusy,   setMagicLinkBusy]   = useState(false);
+  const [newEmail,        setNewEmail]        = useState("");
+  const [newPassword,     setNewPassword]     = useState("");
+  const [authBusy,        setAuthBusy]        = useState(false);
+  const [authMsg,         setAuthMsg]         = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const loadData = useCallback(async () => {
@@ -107,11 +116,13 @@ export default function BuilderDetailPage() {
     const projs = await getBuilderProjects(b.company_slug);
     setProjects(projs);
 
-    const [leadsData, ...catArrays] = await Promise.all([
+    const [leadsData, fpRes, ...catArrays] = await Promise.all([
       getBuilderLeads(projs.map(p => p.id)),
+      fetch(`/api/builder/floor-plans?builderId=${b.id}`).then(r => r.json()),
       ...projs.map(p => getCategoriesWithOptions(p.id)),
     ]);
     setLeads(leadsData);
+    setFloorPlans(Array.isArray(fpRes) ? fpRes as FloorPlan[] : []);
     setCategories(catArrays.flat());
     setLoading(false);
   }, [id]);
@@ -174,6 +185,43 @@ export default function BuilderDetailPage() {
       setDeleteError(body.error ?? "Failed to delete builder. Please try again.");
       setDeleting(false);
     }
+  }
+
+  async function handleMagicLink() {
+    if (!builder) return;
+    setMagicLinkBusy(true);
+    setMagicLink(null);
+    const res = await fetch(`/api/admin/builders/${builder.id}/magic-link`, { method: "POST" });
+    const data = await res.json() as { link?: string; email?: string; error?: string };
+    if (res.ok && data.link) {
+      setMagicLink(data.link);
+      setMagicLinkEmail(data.email ?? null);
+    } else {
+      alert(data.error ?? "Failed to generate magic link");
+    }
+    setMagicLinkBusy(false);
+  }
+
+  async function handleAuthChange(action: "change_email" | "change_password") {
+    if (!builder) return;
+    const value = action === "change_email" ? newEmail : newPassword;
+    if (!value.trim()) return;
+    setAuthBusy(true);
+    setAuthMsg(null);
+    const res = await fetch(`/api/admin/builders/${builder.id}/auth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, value }),
+    });
+    const data = await res.json() as { ok?: boolean; error?: string };
+    if (res.ok) {
+      setAuthMsg({ type: "ok", text: action === "change_email" ? "Email updated successfully" : "Password updated successfully" });
+      if (action === "change_email") setNewEmail("");
+      else setNewPassword("");
+    } else {
+      setAuthMsg({ type: "err", text: data.error ?? "Update failed" });
+    }
+    setAuthBusy(false);
   }
 
   if (loading) {
@@ -263,7 +311,7 @@ export default function BuilderDetailPage() {
 
         {/* Tabs */}
         <div className="flex items-center gap-0 mt-4 -mb-4 border-b border-white/8">
-          {(["overview", "quotes", "projects", "categories", "settings"] as Tab[]).map(t => (
+          {(["overview", "quotes", "projects", "floor-plans", "categories", "settings"] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -273,9 +321,12 @@ export default function BuilderDetailPage() {
                   : "border-transparent text-white/40 hover:text-white"
               }`}
             >
-              {t === "categories" ? "Categories & Finishes" : t}
-              {t === "quotes"    && leads.length    > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{leads.length}</span>}
-              {t === "projects"  && projects.length > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{projects.length}</span>}
+              {t === "categories"   ? "Categories & Finishes"
+               : t === "floor-plans" ? "Floor Plans"
+               : t}
+              {t === "quotes"       && leads.length      > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{leads.length}</span>}
+              {t === "projects"     && projects.length   > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{projects.length}</span>}
+              {t === "floor-plans"  && floorPlans.length > 0 && <span className="ml-1.5 text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">{floorPlans.length}</span>}
             </button>
           ))}
         </div>
@@ -647,6 +698,74 @@ export default function BuilderDetailPage() {
             {projects.every(p => categories.filter(c => c.project_id === p.id).length === 0) && (
               <div className="py-16 text-center text-white/25 text-sm">
                 No categories configured for any project yet.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── FLOOR PLANS ── */}
+        {tab === "floor-plans" && (
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-sm font-bold text-white">Floor Plans</h2>
+                <p className="text-xs text-white/35 mt-0.5">{floorPlans.length} floor plan{floorPlans.length !== 1 ? "s" : ""} for {builder.company_name}</p>
+              </div>
+              <a href={`/builder/floor-plans`} target="_blank" rel="noreferrer"
+                onClick={() => { if (typeof window !== "undefined") window.localStorage.setItem(IMPERSONATE_KEY, builder.id); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-400 border border-amber-500/30 rounded-lg hover:bg-amber-500/10 transition-colors">
+                Edit as Builder ↗
+              </a>
+            </div>
+
+            {floorPlans.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 border border-white/8 rounded-xl text-center">
+                <p className="text-sm text-white/25">No floor plans yet</p>
+                <p className="text-xs text-white/15 mt-1">This builder hasn&apos;t created any floor plans</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+                {floorPlans.map(fp => (
+                  <div key={fp.id} className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">
+                    {fp.thumbnail_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={fp.thumbnail_url} alt={fp.name} className="w-full h-32 object-cover" />
+                    ) : (
+                      <div className="w-full h-32 flex items-center justify-center bg-white/3">
+                        <svg className="w-8 h-8 text-white/10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+                        </svg>
+                      </div>
+                    )}
+                    <div className="p-3.5">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <p className="text-xs font-bold text-white leading-tight">{fp.name}</p>
+                        {fp.project_id && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/25 flex-shrink-0">3D</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {[
+                          fp.beds    != null && `${fp.beds} bd`,
+                          fp.baths   != null && `${fp.baths} ba`,
+                          fp.sqft    != null && `${fp.sqft.toLocaleString()} sqft`,
+                          fp.floors  != null && `${fp.floors} fl`,
+                          fp.garage_spaces != null && `${fp.garage_spaces} gar`,
+                        ].filter(Boolean).map(s => (
+                          <span key={s as string} className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded">{s}</span>
+                        ))}
+                      </div>
+                      {fp.base_price != null && (
+                        <p className="text-xs font-bold text-white/70">
+                          {fp.base_price.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}
+                        </p>
+                      )}
+                      {fp.home_style && (
+                        <p className="text-[10px] text-white/30 mt-0.5 capitalize">{fp.home_style.replace(/_/g, " ")}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1049,6 +1168,76 @@ export default function BuilderDetailPage() {
                 </button>
               </div>
             )}
+
+            {/* Authentication */}
+            <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-5">
+              <h3 className="text-xs font-bold text-white mb-1">Authentication</h3>
+              <p className="text-xs text-white/35 mb-5">Manage login credentials and generate magic links for this builder.</p>
+
+              {/* Magic link */}
+              <div className="mb-5 pb-5 border-b border-white/8">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Magic Link</p>
+                <p className="text-xs text-white/40 mb-3">Generate a one-time login link to send to the builder directly — no password needed.</p>
+                <button onClick={handleMagicLink} disabled={magicLinkBusy}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-40 border-blue-500/30 text-blue-400 hover:bg-blue-500/10">
+                  {magicLinkBusy ? "Generating..." : "Generate Magic Link"}
+                </button>
+                {magicLink && (
+                  <div className="mt-3 p-3 bg-[#111] border border-white/10 rounded-lg">
+                    <p className="text-[10px] text-white/30 mb-1.5">Login link for <span className="text-white/60">{magicLinkEmail}</span> — valid for 1 hour</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[11px] text-blue-400 truncate flex-1 font-mono">{magicLink}</p>
+                      <button onClick={() => { navigator.clipboard.writeText(magicLink); }}
+                        className="text-[10px] px-2.5 py-1 rounded border border-white/12 text-white/40 hover:text-white flex-shrink-0 transition-colors">
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Change login email */}
+              <div className="mb-5 pb-5 border-b border-white/8">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Change Login Email</p>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    placeholder="New login email address"
+                    value={newEmail}
+                    onChange={e => setNewEmail(e.target.value)}
+                    className="flex-1 bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60 placeholder-white/20"
+                  />
+                  <button onClick={() => handleAuthChange("change_email")} disabled={authBusy || !newEmail.trim()}
+                    className="px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition-colors flex-shrink-0">
+                    Update
+                  </button>
+                </div>
+              </div>
+
+              {/* Change password */}
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-widest text-white/25 mb-2">Set New Password</p>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    placeholder="New password (min 8 characters)"
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                    className="flex-1 bg-[#111] border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500/60 placeholder-white/20"
+                  />
+                  <button onClick={() => handleAuthChange("change_password")} disabled={authBusy || newPassword.length < 8}
+                    className="px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition-colors flex-shrink-0">
+                    Set
+                  </button>
+                </div>
+              </div>
+
+              {authMsg && (
+                <p className={`text-xs mt-3 ${authMsg.type === "ok" ? "text-green-400" : "text-red-400"}`}>
+                  {authMsg.text}
+                </p>
+              )}
+            </div>
 
             {/* Danger Zone */}
             <div className="bg-[#1a1a1a] border border-red-500/20 rounded-xl p-5">

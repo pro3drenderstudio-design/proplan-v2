@@ -12,7 +12,7 @@ import { supabase } from "@/lib/supabase";
 // viewer: dashboard + analytics only
 const NAV_MAIN_ALL = [
   { href: "/admin",               label: "Mission Control",  icon: GridIcon,     exact: true,  roles: ["super_admin","manager","editor","viewer"] },
-  { href: "/admin/requests",      label: "Production Queue", icon: QueueIcon,    badge: true,  roles: ["super_admin","manager","editor","viewer","customer_service","artist"] },
+  { href: "/admin/requests",      label: "Models",           icon: QueueIcon,    badge: true,  roles: ["super_admin","manager","editor","viewer","customer_service","artist"] },
   { href: "/admin/builders",      label: "Builder CRM",      icon: BuildingIcon,               roles: ["super_admin","manager","editor"] },
   { href: "/admin/communities",   label: "Site Maps",        icon: MapIcon,                    roles: ["super_admin","manager","editor"] },
   { href: "/admin/analytics",     label: "Analytics",        icon: ChartIcon,                  roles: ["super_admin","manager","editor","viewer"] },
