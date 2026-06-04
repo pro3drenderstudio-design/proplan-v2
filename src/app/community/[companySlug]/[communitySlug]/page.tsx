@@ -151,12 +151,14 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
   [lots]);
 
   // fp.base_price is in cents; proj.base_price / price_modifier / lot_price are in dollars
+  // Treat 0 as "not set" — floor plans without a price have base_price = 0 or null
   function fpBasePrice(lot: LotWithData): number | null {
-    if (lot.floorPlan?.base_price != null) return lot.floorPlan.base_price / 100;
-    return lot.project?.base_price ?? null;
+    if (lot.floorPlan?.base_price != null && lot.floorPlan.base_price > 0) return lot.floorPlan.base_price / 100;
+    if (lot.project?.base_price != null && lot.project.base_price > 0) return lot.project.base_price;
+    return null;
   }
   function effectivePrice(lot: LotWithData): number | null {
-    if (lot.lot_price != null) return lot.lot_price;
+    if (lot.lot_price != null && lot.lot_price > 0) return lot.lot_price;
     const base = fpBasePrice(lot);
     return base !== null ? base + (lot.price_modifier ?? 0) : null;
   }
@@ -524,8 +526,8 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     const sqftMax      = fp?.sqft_max      ?? proj?.sqft_max       ?? null;
     const sqft         = sqftMin;
     const garage       = fp?.garage_spaces ?? null;
-    const basePrice    = fp?.base_price != null ? fp.base_price / 100 : (proj ? proj.base_price : null);
-    const isLotPriceOverride = lot.lot_price != null;
+    const basePrice    = (fp?.base_price != null && fp.base_price > 0) ? fp.base_price / 100 : ((proj?.base_price != null && proj.base_price > 0) ? proj.base_price : null);
+    const isLotPriceOverride = lot.lot_price != null && lot.lot_price > 0;
     const totalPrice   = isLotPriceOverride ? lot.lot_price : (basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null);
 
     const rawCtas      = getEffectiveCtas(lot);
@@ -806,15 +808,15 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
               </div>
             )}
 
-            {/* Directions */}
-            {directionsUrl && (
-              <a href={directionsUrl} target="_blank" rel="noopener noreferrer"
+            {/* View on map */}
+            {mapsUrl && (
+              <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 w-full py-2.5 px-3 rounded-xl text-xs text-white/40 hover:text-white/70 transition-colors"
                 style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
                 <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0zM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
                 </svg>
-                <span className="flex-1">Get Directions</span>
+                <span className="flex-1">View on Map</span>
                 <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
                 </svg>
@@ -1352,12 +1354,12 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
               )}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
-              {directionsUrl && (
-                <a href={directionsUrl} target="_blank" rel="noopener noreferrer"
+              {mapsUrl && (
+                <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-white/35 hover:text-white/70 transition-colors hover:bg-white/8"
-                  title="Get Directions">
+                  title="View on Map">
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 20.25L3.75 12 9 3.75M15 3.75L20.25 12 15 20.25" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0zM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
                   </svg>
                 </a>
               )}
@@ -1440,13 +1442,13 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
               ? <p className="text-[10px] text-white/30">From <span className="font-bold text-white/50">{fmtPrice(minPrice)}</span></p>
               : <p className="text-[10px] text-white/25">Tap a lot on the map to explore</p>
             }
-            {directionsUrl && (
-              <a href={directionsUrl} target="_blank" rel="noopener noreferrer"
+            {mapsUrl && (
+              <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/60">
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0zM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
                 </svg>
-                Directions
+                Map
               </a>
             )}
           </div>
@@ -1470,8 +1472,8 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         const sqftMaxT    = fp?.sqft_max ?? proj?.sqft_max ?? null;
         const sqft        = sqftMinT != null ? (sqftMaxT && sqftMaxT !== sqftMinT ? `${fmtSqft(sqftMinT)}–${fmtSqft(sqftMaxT)}` : fmtSqft(sqftMinT)) : null;
         const floors      = fp?.floors ?? proj?.floors ?? null;
-        const basePrice   = fp?.base_price != null ? fp.base_price / 100 : (proj ? proj.base_price : null);
-        const totalPrice  = lot.lot_price != null ? lot.lot_price : (basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null);
+        const basePrice   = (fp?.base_price != null && fp.base_price > 0) ? fp.base_price / 100 : ((proj?.base_price != null && proj.base_price > 0) ? proj.base_price : null);
+        const totalPrice  = (lot.lot_price != null && lot.lot_price > 0) ? lot.lot_price : (basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null);
         const isDimmed    = !filteredLotIds.has(lot.id);
 
         const cardW = 252, margin = 14;
