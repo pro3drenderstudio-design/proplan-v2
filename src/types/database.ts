@@ -696,7 +696,9 @@ export interface FloorPlan {
   beds: number | null;
   baths: number | null;
   floors: number | null;
-  sqft: number | null;
+  sqft: number | null;        // legacy single value — prefer sqft_min/sqft_max
+  sqft_min: number | null;
+  sqft_max: number | null;
   garage_spaces: number | null;
   home_style: HomeStyle | null;
   base_price: number | null;        // cents

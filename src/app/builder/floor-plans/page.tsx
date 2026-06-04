@@ -26,7 +26,8 @@ const EMPTY_FORM = {
   beds: "",
   baths: "",
   floors: "",
-  sqft: "",
+  sqft_min: "",
+  sqft_max: "",
   garage_spaces: "",
   home_style: "" as HomeStyle | "",
   base_price: "",
@@ -101,7 +102,8 @@ export default function FloorPlansPage() {
       beds:          fp.beds != null    ? String(fp.beds)          : "",
       baths:         fp.baths != null   ? String(fp.baths)         : "",
       floors:        fp.floors != null  ? String(fp.floors)        : "",
-      sqft:          fp.sqft != null    ? String(fp.sqft)          : "",
+      sqft_min:      fp.sqft_min != null ? String(fp.sqft_min)      : (fp.sqft != null ? String(fp.sqft) : ""),
+      sqft_max:      fp.sqft_max != null ? String(fp.sqft_max)      : "",
       garage_spaces: fp.garage_spaces != null ? String(fp.garage_spaces) : "",
       home_style:    fp.home_style ?? "",
       base_price:    fp.base_price != null ? String(fp.base_price / 100) : "",
@@ -161,7 +163,9 @@ export default function FloorPlansPage() {
       beds:              form.beds          ? Number(form.beds)          : null,
       baths:             form.baths         ? Number(form.baths)         : null,
       floors:            floorsNum || null,
-      sqft:              form.sqft          ? Number(form.sqft)          : null,
+      sqft_min:          form.sqft_min      ? Number(form.sqft_min)      : null,
+      sqft_max:          form.sqft_max      ? Number(form.sqft_max)      : null,
+      sqft:              form.sqft_min      ? Number(form.sqft_min)      : null,
       garage_spaces:     form.garage_spaces ? Number(form.garage_spaces) : null,
       home_style:        form.home_style    || null,
       base_price:        form.base_price    ? Math.round(Number(form.base_price) * 100) : null,
@@ -299,7 +303,12 @@ export default function FloorPlansPage() {
                   <div className="flex items-center gap-3 text-[10px] text-white/35 mb-3">
                     {fp.beds    != null && <span>{fp.beds} bd</span>}
                     {fp.baths   != null && <span>{fp.baths} ba</span>}
-                    {fp.sqft    != null && <span>{fp.sqft.toLocaleString()} sqft</span>}
+                    {(fp.sqft_min != null || fp.sqft != null) && (
+                      <span>
+                        {(fp.sqft_min ?? fp.sqft)!.toLocaleString()}
+                        {fp.sqft_max != null && fp.sqft_max !== fp.sqft_min ? ` – ${fp.sqft_max.toLocaleString()}` : ""} sqft
+                      </span>
+                    )}
                     {fp.floors  != null && <span>{fp.floors} fl</span>}
                     {fp.garage_spaces != null && <span>{fp.garage_spaces} gar</span>}
                   </div>
@@ -402,7 +411,6 @@ export default function FloorPlansPage() {
                 {([
                   { key: "beds",          label: "Bedrooms",      placeholder: "3"       },
                   { key: "baths",         label: "Bathrooms",     placeholder: "2.5"     },
-                  { key: "sqft",          label: "Sq Ft",         placeholder: "2400"    },
                   { key: "garage_spaces", label: "Garage Spaces", placeholder: "2"       },
                   { key: "base_price",    label: "Base Price ($)", placeholder: "450000" },
                 ] as const).map(({ key, label, placeholder }) => (
@@ -419,6 +427,21 @@ export default function FloorPlansPage() {
                     onChange={e => onFloorsChange(e.target.value)}
                     placeholder="2" className={inputCls} />
                 </div>
+              </div>
+
+              {/* Sq ft range */}
+              <div>
+                <label className={labelCls}>Square Footage Range</label>
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} value={form.sqft_min}
+                    onChange={e => setForm(f => ({ ...f, sqft_min: e.target.value }))}
+                    placeholder="Min (e.g. 1700)" className={inputCls} />
+                  <span className="text-white/30 text-xs flex-shrink-0">to</span>
+                  <input type="number" min={0} value={form.sqft_max}
+                    onChange={e => setForm(f => ({ ...f, sqft_max: e.target.value }))}
+                    placeholder="Max (e.g. 1800)" className={inputCls} />
+                </div>
+                <p className="text-[10px] text-white/25 mt-1">Leave Max blank if there&apos;s no range</p>
               </div>
 
               {/* Per-floor plan images */}

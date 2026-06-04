@@ -25,6 +25,8 @@ interface Project {
   baths: number | null;
   floors: number | null;
   sqft: number | null;
+  sqft_min: number | null;
+  sqft_max: number | null;
   base_price: number;
   thumbnail_url: string | null;
   home_type: string | null;
@@ -44,6 +46,7 @@ interface FilterState {
   priceMin: number | null;
   priceMax: number | null;
   sqftMin: number | null;
+  sqftMax: number | null;
   phases: number[];
   moveInReady: boolean;
 }
@@ -58,6 +61,7 @@ const DEFAULT_FILTERS: FilterState = {
   priceMin: null,
   priceMax: null,
   sqftMin: null,
+  sqftMax: null,
   phases: [],
   moveInReady: false,
 };
@@ -161,7 +165,11 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
   }, [lots]);
 
   const maxSqftVal = useMemo(() => {
-    const sqfts = lots.map(l => l.floorPlan?.sqft ?? l.project?.sqft ?? null).filter((s): s is number => s !== null);
+    const sqfts = lots.map(l => {
+      const fp   = l.floorPlan;
+      const proj = l.project;
+      return fp?.sqft_max ?? fp?.sqft_min ?? fp?.sqft ?? proj?.sqft_max ?? proj?.sqft_min ?? proj?.sqft ?? null;
+    }).filter((s): s is number => s !== null);
     if (sqfts.length === 0) return 5000;
     return Math.ceil(Math.max(...sqfts) / 500) * 500;
   }, [lots]);
@@ -181,7 +189,10 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         const price = (fp.base_price ?? 0) + (lot.price_modifier ?? 0);
         if (filters.priceMin != null && price < filters.priceMin) continue;
         if (filters.priceMax != null && price > filters.priceMax) continue;
-        if (filters.sqftMin  != null && (fp.sqft ?? 0) < filters.sqftMin) continue;
+        const fpSqftMin = fp.sqft_min ?? fp.sqft ?? null;
+        const fpSqftMax = fp.sqft_max ?? fp.sqft ?? fpSqftMin;
+        if (filters.sqftMin != null && fpSqftMax != null && fpSqftMax < filters.sqftMin) continue;
+        if (filters.sqftMax != null && fpSqftMin != null && fpSqftMin > filters.sqftMax) continue;
       }
       ids.add(lot.id);
     }
@@ -198,6 +209,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     if (filters.priceMin != null) n++;
     if (filters.priceMax != null) n++;
     if (filters.sqftMin  != null) n++;
+    if (filters.sqftMax  != null) n++;
     if (filters.moveInReady) n++;
     return n;
   }, [filters]);
@@ -262,7 +274,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
       if (projIds.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: projs } = await (supabase.from("projects") as any)
-          .select("id,name,slug,company_slug,beds,baths,floors,sqft,base_price,thumbnail_url,home_type,description")
+          .select("id,name,slug,company_slug,beds,baths,floors,sqft,sqft_min,sqft_max,base_price,thumbnail_url,home_type,description")
           .in("id", projIds);
         if (projs) for (const p of projs as Project[]) projMap[p.id] = p;
       }
@@ -490,7 +502,9 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     const beds         = fp?.beds          ?? proj?.beds           ?? null;
     const baths        = fp?.baths         ?? proj?.baths          ?? null;
     const floors       = fp?.floors        ?? proj?.floors         ?? null;
-    const sqft         = fp?.sqft          ?? proj?.sqft           ?? null;
+    const sqftMin      = fp?.sqft_min      ?? fp?.sqft             ?? proj?.sqft_min ?? proj?.sqft ?? null;
+    const sqftMax      = fp?.sqft_max      ?? proj?.sqft_max       ?? null;
+    const sqft         = sqftMin;
     const garage       = fp?.garage_spaces ?? null;
     const basePrice    = fp?.base_price    ?? (proj ? proj.base_price : null);
     const totalPrice   = basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null;
@@ -629,7 +643,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                   { label: "Bed",    value: beds },
                   { label: "Bath",   value: baths },
                   { label: "Floor",  value: floors },
-                  { label: "Sqft",   value: sqft ? fmtSqft(sqft) : null },
+                  { label: "Sqft",   value: sqft ? (sqftMax && sqftMax !== sqft ? `${fmtSqft(sqft)}–${fmtSqft(sqftMax)}` : fmtSqft(sqft)) : null },
                   { label: "Garage", value: garage },
                 ].filter(x => x.value != null).map(spec => (
                   <div key={spec.label} className="flex flex-col items-center py-2.5 rounded-xl"
@@ -788,11 +802,13 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     const [localPriceMin, setLocalPriceMin] = useState(filters.priceMin ?? 0);
     const [localPriceMax, setLocalPriceMax] = useState(filters.priceMax ?? maxPriceVal);
     const [localSqftMin,  setLocalSqftMin]  = useState(filters.sqftMin  ?? 0);
+    const [localSqftMax,  setLocalSqftMax]  = useState(filters.sqftMax  ?? maxSqftVal);
 
     // Sync sliders when external reset fires
     useEffect(() => { setLocalPriceMin(filters.priceMin ?? 0); },       [filters.priceMin]);
     useEffect(() => { setLocalPriceMax(filters.priceMax ?? maxPriceVal); }, [filters.priceMax, maxPriceVal]);
-    useEffect(() => { setLocalSqftMin(filters.sqftMin ?? 0); },         [filters.sqftMin]);
+    useEffect(() => { setLocalSqftMin(filters.sqftMin ?? 0); },                          [filters.sqftMin]);
+    useEffect(() => { setLocalSqftMax(filters.sqftMax ?? maxSqftVal); }, [filters.sqftMax, maxSqftVal]);
 
     function commitPriceMin(v: number) {
       setFilters(f => ({ ...f, priceMin: v > 0 ? v : null, priceMax: f.priceMax != null && f.priceMax < v ? null : f.priceMax }));
@@ -802,6 +818,9 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
     }
     function commitSqftMin(v: number) {
       setFilters(f => ({ ...f, sqftMin: v > 0 ? v : null }));
+    }
+    function commitSqftMax(v: number) {
+      setFilters(f => ({ ...f, sqftMax: v < maxSqftVal ? v : null }));
     }
 
     function toggleStatus(key: string) {
@@ -947,20 +966,37 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
             </div>
           </div>
 
-          {/* Min sq ft */}
+          {/* Sqft range */}
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-3">Min. Square Footage</p>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] text-white/40">Min</span>
-              <span className="text-[11px] font-bold text-white/70">
-                {localSqftMin > 0 ? `${localSqftMin.toLocaleString()} sqft` : "Any size"}
-              </span>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/45 mb-3">Square Footage</p>
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] text-white/40">Min</span>
+                  <span className="text-[11px] font-bold text-white/70">
+                    {localSqftMin > 0 ? `${localSqftMin.toLocaleString()} sqft` : "Any"}
+                  </span>
+                </div>
+                <input type="range" className="filter-range" min={0} max={maxSqftVal} step={1}
+                  value={localSqftMin}
+                  style={{ background: sliderTrack((localSqftMin / maxSqftVal) * 100) }}
+                  onChange={e => setLocalSqftMin(Number(e.target.value))}
+                  onPointerUp={e => commitSqftMin(Number((e.target as HTMLInputElement).value))} />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] text-white/40">Max</span>
+                  <span className="text-[11px] font-bold text-white/70">
+                    {localSqftMax < maxSqftVal ? `${localSqftMax.toLocaleString()} sqft` : "No limit"}
+                  </span>
+                </div>
+                <input type="range" className="filter-range" min={0} max={maxSqftVal} step={1}
+                  value={localSqftMax}
+                  style={{ background: sliderTrack((localSqftMax / maxSqftVal) * 100) }}
+                  onChange={e => setLocalSqftMax(Number(e.target.value))}
+                  onPointerUp={e => commitSqftMax(Number((e.target as HTMLInputElement).value))} />
+              </div>
             </div>
-            <input type="range" className="filter-range" min={0} max={maxSqftVal} step={1}
-              value={localSqftMin}
-              style={{ background: sliderTrack((localSqftMin / maxSqftVal) * 100) }}
-              onChange={e => setLocalSqftMin(Number(e.target.value))}
-              onPointerUp={e => commitSqftMin(Number((e.target as HTMLInputElement).value))} />
           </div>
 
           {/* Move-in ready */}
@@ -1377,7 +1413,9 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
         const homeType    = fp?.home_style ?? proj?.home_type ?? null;
         const beds        = fp?.beds ?? proj?.beds ?? null;
         const baths       = fp?.baths ?? proj?.baths ?? null;
-        const sqft        = fp?.sqft ?? proj?.sqft ?? null;
+        const sqftMinT    = fp?.sqft_min ?? fp?.sqft ?? proj?.sqft_min ?? proj?.sqft ?? null;
+        const sqftMaxT    = fp?.sqft_max ?? proj?.sqft_max ?? null;
+        const sqft        = sqftMinT != null ? (sqftMaxT && sqftMaxT !== sqftMinT ? `${fmtSqft(sqftMinT)}–${fmtSqft(sqftMaxT)}` : fmtSqft(sqftMinT)) : null;
         const floors      = fp?.floors ?? proj?.floors ?? null;
         const basePrice   = fp?.base_price ?? (proj ? proj.base_price : null);
         const totalPrice  = basePrice !== null ? basePrice + (lot.price_modifier ?? 0) : null;
@@ -1429,7 +1467,7 @@ export default function CommunityMapPage({ params }: { params: Promise<{ company
                   {[
                     { v: beds,   l: "Bed" },
                     { v: baths,  l: "Bath" },
-                    { v: sqft ? fmtSqft(sqft) : null, l: "Sqft" },
+                    { v: sqft, l: "Sqft" },
                     { v: floors, l: "Floor" },
                   ].filter(x => x.v != null).map(({ v, l }) => (
                     <div key={l} className="flex flex-col items-center py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
