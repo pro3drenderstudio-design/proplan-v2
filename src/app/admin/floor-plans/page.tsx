@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { getAllBuilders } from "@/lib/admin-api";
@@ -43,6 +43,18 @@ function fmtPrice(cents: number) {
 }
 
 export default function AdminFloorPlansPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-full">
+        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <FloorPlansInner />
+    </Suspense>
+  );
+}
+
+function FloorPlansInner() {
   const searchParams                      = useSearchParams();
   const [plans,         setPlans]         = useState<FloorPlanRow[]>([]);
   const [builders,      setBuilders]      = useState<Builder[]>([]);
